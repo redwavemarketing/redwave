@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Redwave ERP / HRM</title>
+    <!--
+      No-flash theme boot: runs BEFORE the app so the very first paint uses the correct theme.
+      Mirrors src/theme — reads the stored preference (default 'system'), resolves via the OS,
+      and sets <html data-theme>. Keep the storage key in sync with theme.types.ts (THEME_STORAGE_KEY).
+    -->
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('redwave-theme') || 'system';
+          var dark =
+            pref === 'dark' ||
+            (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,67 @@
+/**
+ * Commission Config query hooks — tier schedules, flat rates, holdback split, the (sticky) holdback-release
+ * setting, and incentives. Each effective-dated list carries a server-derived `status`. TanStack Query over
+ * the typed client via `unwrap<T>()` (the playbook). Responses are `never`-typed → cast to hand types.
+ * RATE reads are ONLY /v1/commission/* + /v1/incentives (#3); the client picker (useClients) is a reference.
+ */
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../../api/client';
+import { unwrap } from '../../../lib/query/unwrap';
+import { commissionKeys } from './keys';
+import type { RateStatus } from '../../../components/ui';
+import type { FlatRate, HoldbackConfig, HoldbackReleaseSetting, Incentive, IncentiveStatus, TierConfig } from '../commission.types';
+
+export function useTierSchedules(enabled = true) {
+  return useQuery({
+    queryKey: commissionKeys.tiers(),
+    queryFn: () => unwrap<TierConfig[]>(api.GET('/v1/commission/tiers')),
+    enabled,
+  });
+}
+
+export function useFlatRates(status: RateStatus | 'all' = 'all', enabled = true) {
+  return useQuery({
+    queryKey: commissionKeys.flatRates(status),
+    queryFn: () => unwrap<FlatRate[]>(api.GET('/v1/commission/flat-rates', { params: { query: { status } } })),
+    enabled,
+  });
+}
+
+export function useHoldbackConfig(enabled = true) {
+  return useQuery({
+    queryKey: commissionKeys.holdback(),
+    queryFn: () => unwrap<HoldbackConfig[]>(api.GET('/v1/commission/holdback-config')),
+    enabled,
+  });
+}
+
+export function useReleaseSetting(enabled = true) {
+  return useQuery({
+    queryKey: commissionKeys.release(),
+    queryFn: () => unwrap<HoldbackReleaseSetting | null>(api.GET('/v1/commission/holdback-release-setting')),
+    enabled,
+  });
+}
+
+export function useIncentives(status: IncentiveStatus | 'all' = 'all', enabled = true) {
+  return useQuery({
+    queryKey: commissionKeys.incentives(status),
+    queryFn: () => unwrap<Incentive[]>(api.GET('/v1/incentives', { params: { query: { status } } })),
+    enabled,
+  });
+}
+
+/** Clients for the incentive scope picker — a REFERENCE only (not a rate-stream join, #3). Gated clients:view. */
+export interface ClientLite {
+  id: string;
+  client_code: string;
+  name: string;
+}
+export function useClients(enabled = true) {
+  return useQuery({
+    queryKey: ['clients', 'list'],
+    queryFn: () => unwrap<ClientLite[]>(api.GET('/v1/clients')),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}

@@ -1,0 +1,4 @@
+# Frontend-local ignores (root .gitignore covers most of this too)
+node_modules/
+dist/
+*.local

@@ -1,0 +1,54 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.body {
+  width: 100%;
+}
+
+/* Token-styled recharts tooltip (replaces the library default white box). */
+.tooltip {
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-2);
+  padding: var(--space-2) var(--space-3);
+  min-width: 120px;
+}
+
+.tipLabel {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.tipValue {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}

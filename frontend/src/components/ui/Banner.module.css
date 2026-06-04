@@ -1,0 +1,57 @@
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-size: var(--text-sm);
+}
+
+.icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.title {
+  font-weight: var(--weight-semibold);
+  margin-bottom: 2px;
+  color: var(--text-primary);
+}
+
+.body {
+  color: var(--text-secondary);
+}
+
+.info {
+  background-color: var(--info-bg);
+  border-color: var(--info);
+}
+.info .icon {
+  color: var(--info);
+}
+
+.success {
+  background-color: var(--success-bg);
+  border-color: var(--success);
+}
+.success .icon {
+  color: var(--success);
+}
+
+.warning {
+  background-color: var(--warning-bg);
+  border-color: var(--warning);
+}
+.warning .icon {
+  color: var(--warning);
+}
+
+.danger {
+  background-color: var(--danger-bg);
+  border-color: var(--danger);
+}
+.danger .icon {
+  color: var(--danger);
+}

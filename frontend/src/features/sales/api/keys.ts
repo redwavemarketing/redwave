@@ -1,0 +1,14 @@
+/** Query-key factories — the reusable convention (mutations invalidate `salesKeys.all`). */
+import type { SalesFilters } from '../sales.types';
+
+export const salesKeys = {
+  all: ['sales'] as const,
+  list: (filters: SalesFilters) => ['sales', 'list', filters] as const,
+  detail: (id: string) => ['sales', 'detail', id] as const,
+};
+
+export const clientsKeys = {
+  all: ['clients'] as const,
+  list: () => ['clients', 'list'] as const,
+  products: (clientId: string) => ['clients', clientId, 'products'] as const,
+};

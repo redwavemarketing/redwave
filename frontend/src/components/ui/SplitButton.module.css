@@ -1,0 +1,14 @@
+.group {
+  display: inline-flex;
+}
+
+.main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.toggle {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}

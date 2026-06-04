@@ -1,0 +1,94 @@
+/*
+ * Base element styling — consumes tokens only. Sets the app's typographic + colour ground,
+ * the global focus ring (§9), tabular figures for mono (§4), the skeleton shimmer, and the
+ * reduced-motion guard (§5.4 / §9).
+ */
+html {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  color: var(--text-primary);
+  background-color: var(--surface-1);
+}
+
+body {
+  font-size: var(--text-base);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-body);
+  color: var(--text-primary);
+  background-color: var(--surface-1);
+}
+
+/* Headings use the same humanist family, heavier weights (§4). */
+h1,
+h2,
+h3,
+h4 {
+  line-height: var(--leading-heading);
+  font-weight: var(--weight-semibold);
+}
+
+/* Tabular monospace for all numeric/money/code so columns align (§4). */
+.mono,
+code,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Visible accent focus ring on every focusable element (§9). */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Don't show the ring for mouse clicks that don't need it. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Selection uses the accent tint. */
+::selection {
+  background: var(--accent-50);
+}
+
+/* Skip-to-content link (§9) — visible only when focused. */
+.skip-link {
+  position: absolute;
+  left: var(--space-3);
+  top: calc(-1 * var(--space-10));
+  z-index: var(--z-tooltip);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  transition: top var(--motion-fast) var(--ease-out);
+}
+.skip-link:focus {
+  top: var(--space-3);
+}
+
+/* Skeleton shimmer (§7 loading) — static when reduced-motion. */
+@keyframes rw-shimmer {
+  0% {
+    background-position: -480px 0;
+  }
+  100% {
+    background-position: 480px 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

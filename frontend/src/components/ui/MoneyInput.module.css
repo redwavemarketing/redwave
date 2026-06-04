@@ -1,0 +1,57 @@
+.wrap {
+  display: flex;
+  align-items: center;
+  height: var(--field-height);
+  background-color: var(--surface-0);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.wrap:hover {
+  border-color: var(--text-secondary);
+}
+
+.wrap:focus-within {
+  border-color: var(--accent-600);
+  box-shadow: 0 0 0 3px var(--accent-50);
+}
+
+.wrap:focus-within:has([data-invalid]),
+.wrap:has([data-invalid]) {
+  border-color: var(--danger);
+}
+
+.prefix {
+  padding: 0 var(--space-2) 0 var(--space-3);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 var(--space-3) 0 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  text-align: right; /* §4: right-align numeric/money */
+}
+
+.input:focus {
+  outline: none;
+}
+
+.disabled {
+  background-color: var(--surface-2);
+  cursor: not-allowed;
+}
+.disabled .input {
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}

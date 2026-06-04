@@ -1,0 +1,30 @@
+.nav {
+  font-size: var(--text-sm);
+}
+
+.list {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.item {
+  display: inline-flex;
+}
+
+.link {
+  color: var(--text-secondary);
+}
+
+.link:hover {
+  color: var(--accent-600);
+}
+
+.current {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.sep {
+  color: var(--text-secondary);
+}

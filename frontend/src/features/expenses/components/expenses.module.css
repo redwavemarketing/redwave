@@ -1,0 +1,268 @@
+/* Shared styles for the Expenses feature components. Tokens only. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.receiptRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.receiptRef {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* ── Filter bar (Sales shape) ───────────────────────────────────────────── */
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+}
+
+.control {
+  min-width: 160px;
+}
+
+.dateInput {
+  width: 160px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--surface-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+}
+
+.chipX {
+  display: inline-flex;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+/* ── Entry form ─────────────────────────────────────────────────────────── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.reportRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+.itemsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.itemsTitle {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.itemsError {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
+.itemCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.itemTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.itemGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+/* ── KM fields ──────────────────────────────────────────────────────────── */
+.stops {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.stopRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stopOrder {
+  width: 20px;
+  text-align: right;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.stopAddress {
+  flex: 1;
+}
+
+.preview {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background-color: var(--accent-50);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.previewAmount {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-bold);
+  color: var(--text-primary);
+}
+
+.previewNote {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* ── Approval queue card ────────────────────────────────────────────────── */
+.queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 760px;
+}
+
+.reviewHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.reviewIdentity {
+  flex: 1;
+  min-width: 0;
+}
+
+.reviewName {
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.reviewMeta {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.reviewItems {
+  margin: var(--space-3) 0;
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.reviewItem {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* ── Detail ─────────────────────────────────────────────────────────────── */
+.detailHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.dl dt {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.dl dd {
+  margin: 0;
+}
+
+.kmBreakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.kmBreakdown strong {
+  color: var(--text-primary);
+}

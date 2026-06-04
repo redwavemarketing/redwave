@@ -1,0 +1,114 @@
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-family: var(--font-sans);
+  font-weight: var(--weight-medium);
+  font-size: var(--text-base);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.fullWidth {
+  width: 100%;
+}
+
+.label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ── Sizes (§6.1: sm 28 / md 38 / lg 44) ───────────────────────────────────── */
+.sm {
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+.md {
+  height: var(--field-height); /* 38 */
+  padding: 0 var(--space-4);
+}
+.lg {
+  height: 44px;
+  padding: 0 var(--space-5);
+  font-size: var(--text-md);
+}
+
+/* ── Variants ──────────────────────────────────────────────────────────────── */
+.primary {
+  background-color: var(--accent-600);
+  color: var(--on-accent);
+}
+.primary:hover:not(:disabled) {
+  background-color: var(--accent-700);
+}
+.primary:active:not(:disabled) {
+  background-color: var(--accent-700);
+}
+
+.secondary {
+  background-color: var(--surface-0);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+.secondary:hover:not(:disabled) {
+  background-color: var(--surface-1);
+  border-color: var(--text-secondary);
+}
+
+.tertiary {
+  background-color: transparent;
+  color: var(--accent-600);
+}
+.tertiary:hover:not(:disabled) {
+  background-color: var(--accent-50);
+}
+
+.destructive {
+  background-color: var(--danger);
+  color: var(--on-accent);
+}
+.destructive:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+/* ── Loading (label hidden for width stability; spinner centred) ────────────── */
+.loading .label,
+.loading .icon {
+  visibility: hidden;
+}
+
+.spinner {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: var(--radius-full);
+  animation: btn-spin 0.6s linear infinite;
+}
+
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,41 @@
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.iconBtn:hover:not(:disabled) {
+  background-color: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.iconBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.outline {
+  border-color: var(--border);
+  background-color: var(--surface-0);
+}
+
+.sm {
+  width: 28px;
+  height: 28px;
+}
+.md {
+  width: var(--field-height);
+  height: var(--field-height);
+}
+.lg {
+  width: 44px;
+  height: 44px;
+}

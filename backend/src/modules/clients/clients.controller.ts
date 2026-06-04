@@ -1,0 +1,110 @@
+/**
+ * ClientsController — /v1/clients and its nested products & billing-rates. — arch §6.3
+ * Every route declares its (clients, action) permission; the global guard enforces it server-side.
+ */
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ClientsService } from './clients.service';
+import { ProductsService } from './products.service';
+import { BillingRatesService } from './billing-rates.service';
+import { CreateClientDto, ListClientsQuery, UpdateClientDto } from './dto/client.dto';
+import { CreateProductDto, ListProductsQuery } from './dto/product.dto';
+import { CreateBillingRateDto, ListBillingRatesQuery } from './dto/billing-rate.dto';
+
+@ApiTags('Clients & Products')
+@ApiBearerAuth()
+@Controller('clients')
+export class ClientsController {
+  constructor(
+    private readonly clients: ClientsService,
+    private readonly products: ProductsService,
+    private readonly billingRates: BillingRatesService,
+  ) {}
+
+  @Get()
+  @RequirePermission('clients', 'view')
+  @ApiOperation({ summary: 'List clients', description: 'Requires clients:view. ?status filter.' })
+  list(@Query() query: ListClientsQuery) {
+    return this.clients.findAll(query);
+  }
+
+  @Post()
+  @RequirePermission('clients', 'create')
+  @ApiOperation({
+    summary: 'Create a client',
+    description: 'Requires clients:create. Unique code → 409.',
+  })
+  create(@Body() dto: CreateClientDto, @CurrentUser('id') actorId: string) {
+    return this.clients.create(dto, actorId);
+  }
+
+  @Get(':id')
+  @RequirePermission('clients', 'view')
+  @ApiOperation({ summary: 'Get a client', description: 'Requires clients:view.' })
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
+    return this.clients.findOne(id);
+  }
+
+  @Patch(':id')
+  @RequirePermission('clients', 'edit')
+  @ApiOperation({
+    summary: 'Edit / deactivate a client',
+    description: 'Requires clients:edit. is_active=false soft-deactivates.',
+  })
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateClientDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.clients.update(id, dto, actorId);
+  }
+
+  // ── Nested: products ────────────────────────────────────────────────────────────────────────
+
+  @Get(':id/products')
+  @RequirePermission('clients', 'view')
+  @ApiOperation({ summary: "List a client's products", description: 'Requires clients:view.' })
+  listProducts(@Param('id', ParseUUIDPipe) id: string, @Query() query: ListProductsQuery) {
+    return this.products.findAllForClient(id, query);
+  }
+
+  @Post(':id/products')
+  @RequirePermission('clients', 'edit')
+  @ApiOperation({ summary: 'Create a per-client product', description: 'Requires clients:edit.' })
+  createProduct(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateProductDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.products.create(id, dto, actorId);
+  }
+
+  // ── Nested: billing rates (effective-dated) ─────────────────────────────────────────────────
+
+  @Get(':id/billing-rates')
+  @RequirePermission('clients', 'view')
+  @ApiOperation({
+    summary: "List a client's billing rates (current + pending)",
+    description:
+      'Requires clients:view. ?effectiveOn returns the rate in force per scope on a date.',
+  })
+  listBillingRates(@Param('id', ParseUUIDPipe) id: string, @Query() query: ListBillingRatesQuery) {
+    return this.billingRates.list(id, query);
+  }
+
+  @Post(':id/billing-rates')
+  @RequirePermission('clients', 'edit')
+  @ApiOperation({
+    summary: 'Add an effective-dated billing rate',
+    description: 'Requires clients:edit. Supersedes the scope’s pending rate; back-dating → 422.',
+  })
+  createBillingRate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateBillingRateDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.billingRates.create(id, dto, actorId);
+  }
+}

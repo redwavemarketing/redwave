@@ -1,0 +1,52 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.passwordRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.passwordField {
+  flex: 1;
+  font-family: var(--font-mono);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.roleBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.userCell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.userName {
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+}
+
+.youTag {
+  margin-left: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}

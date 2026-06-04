@@ -1,0 +1,23 @@
+import { Module } from '@nestjs/common';
+import { EngineModule } from '../engine/engine.module';
+import { CommissionModule } from '../commission/commission.module';
+import { ClawbackModule } from '../clawback/clawback.module';
+import { ExpensesModule } from '../expenses/expenses.module';
+import {
+  PayPeriodController,
+  PayRunController,
+  HoldbackLedgerController,
+} from './pay-run.controller';
+import { PayPeriodService } from './pay-period.service';
+import { PayRunService } from './pay-run.service';
+
+@Module({
+  // Composes the pure engine + the config provider (does not reimplement their logic).
+  // ClawbackModule + ExpensesModule supply the real CLAWBACK_TOTAL_PROVIDER / EXPENSE_TOTAL_PROVIDER
+  // (re-binding the seams Pay Run left open). Pay Run's own finalize logic is unchanged.
+  imports: [EngineModule, CommissionModule, ClawbackModule, ExpensesModule],
+  controllers: [PayPeriodController, PayRunController, HoldbackLedgerController],
+  providers: [PayPeriodService, PayRunService],
+  exports: [PayRunService],
+})
+export class PayRunModule {}

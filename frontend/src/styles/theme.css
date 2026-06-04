@@ -1,0 +1,183 @@
+/*
+ * Redwave design tokens — the SINGLE SOURCE OF TRUTH. Every component references these CSS
+ * variables (var(--token)) and NEVER hard-codes hex/px/font. Theme switching swaps token values
+ * only — zero component changes. Values transcribed exactly from docs/design-system.md §3–§5.
+ *
+ * Structure:
+ *   :root                       — theme-INDEPENDENT tokens (type scale, spacing, radius, motion, z, fonts)
+ *   :root, [data-theme='light'] — LIGHT colour + shadow tokens (the default; the [data-theme='light']
+ *                                 mirror re-asserts light inside a nested dark region — used by the showcase)
+ *   [data-theme='dark']         — DARK colour + shadow overrides (§3.5), co-equal
+ *
+ * This is the ONLY file permitted to contain raw hex (stylelint enforces var-only elsewhere).
+ */
+
+:root {
+  /* ── Typography (§4) ───────────────────────────────────────────────────── */
+  --font-sans: 'Figtree', 'Figtree Fallback', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'JetBrains Mono Fallback', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* Type scale (§4.1) — rem on a 16px base */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.8125rem; /* 13px */
+  --text-base: 0.875rem; /* 14px — operations default */
+  --text-md: 1rem; /* 16px */
+  --text-lg: 1.25rem; /* 20px */
+  --text-xl: 1.625rem; /* 26px */
+  --text-2xl: 2.125rem; /* 34px — KPI numbers */
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --leading-body: 1.45; /* §4: 1.4–1.5 body */
+  --leading-heading: 1.2; /* headings + KPI numbers */
+
+  /* ── Spacing (§5.1) — 4px base ─────────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-8: 48px;
+  --space-10: 64px;
+
+  /* ── Radius (§5.3) ─────────────────────────────────────────────────────── */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  /* ── Motion (§5.4) ─────────────────────────────────────────────────────── */
+  --motion-fast: 140ms; /* hovers/toggles 120–180ms */
+  --motion-panel: 220ms; /* panels/modals 200–260ms */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ── Sizing / density (§5.2) ───────────────────────────────────────────── */
+  --field-height: 38px;
+  --row-height-comfortable: 40px;
+  --row-height-dense: 32px;
+  --content-max-width: 1440px;
+  --sidebar-width: 248px;
+  --sidebar-width-collapsed: 64px;
+  --topbar-height: 56px;
+
+  /* Static colour — white text on the accent fill, identical in both themes. */
+  --on-accent: #ffffff;
+
+  /* ── Z-index scale ─────────────────────────────────────────────────────── */
+  --z-sticky: 100;
+  --z-dropdown: 1000;
+  --z-overlay: 1100;
+  --z-modal: 1200;
+  --z-popover: 1300;
+  --z-toast: 1400;
+  --z-tooltip: 1500;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * LIGHT (default). The [data-theme='light'] mirror lets a nested light panel
+ * re-assert light inside a dark page (showcase side-by-side).
+ * ════════════════════════════════════════════════════════════════════════════ */
+:root,
+[data-theme='light'] {
+  /* Brand & accent (§3.1) */
+  --brand-900: #13213d;
+  --brand-700: #1e335c;
+  --accent-600: #2563eb;
+  --accent-700: #1d4fd7;
+  --accent-50: #eaf1fe;
+
+  /* Neutrals — surfaces & text (§3.2) */
+  --surface-0: #ffffff;
+  --surface-1: #f6f8fb;
+  --surface-2: #edf1f6;
+  --border: #d8e0ea;
+  --text-secondary: #5b6b80;
+  --text-primary: #1b2536;
+
+  /* Semantic status (§3.3) */
+  --success: #047857;
+  --success-bg: #e7f5ef;
+  --warning: #b45309;
+  --warning-bg: #fef3e2;
+  --danger: #b91c1c;
+  --danger-bg: #fbeaea;
+  --info: #1e66a8;
+  --info-bg: #e6f0f8; /* companion to --info (status pill background) */
+
+  /* Data-viz palette (§3.4) — kept separate from semantic status */
+  --chart-1: #2563eb;
+  --chart-2: #0e9f8e;
+  --chart-3: #c026d3;
+  --chart-4: #d97706;
+  --chart-5: #475569;
+
+  /* Chrome text (light text on the navy sidebar/top bar — same in both themes) */
+  --on-brand: #f3f6fc;
+  --on-brand-muted: #aebbd0;
+  --on-brand-border: #2a3c63;
+
+  /* Focus ring + modal scrim */
+  --focus-ring: #2563eb;
+  --scrim: rgba(7, 12, 24, 0.55);
+
+  /* Elevation (§5.3) — restrained; borders carry most separation */
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 1px rgba(16, 24, 40, 0.04);
+  --shadow-2: 0 4px 14px rgba(16, 24, 40, 0.1);
+  --shadow-3: 0 16px 40px rgba(16, 24, 40, 0.18);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * DARK (co-equal, §3.5). Surfaces tuned for low-light; semantic hues preserved;
+ * accent lightened; brand navy → deep near-black chrome.
+ * ════════════════════════════════════════════════════════════════════════════ */
+[data-theme='dark'] {
+  /* Brand chrome → deep near-black navy (§3.5 narrative) */
+  --brand-900: #0b1120;
+  --brand-700: #131c30;
+  --accent-600: #3b82f6; /* lightened for dark */
+  --accent-700: #2d6fe0;
+  --accent-50: #16243f; /* selected-row tint on dark */
+
+  /* Neutrals (§3.5) */
+  --surface-0: #0e1525;
+  --surface-1: #151d30;
+  --surface-2: #1e283d;
+  --border: #2c3850;
+  --text-secondary: #9aa8bd;
+  --text-primary: #e8edf4;
+
+  /* Semantic — hues preserved, backgrounds darkened (§3.5) */
+  --success: #34d399;
+  --success-bg: #1b2d22;
+  --warning: #f59e0b;
+  --warning-bg: #33260f;
+  --danger: #f87171;
+  --danger-bg: #341a1a;
+  --info: #60a5fa;
+  --info-bg: #16263a;
+
+  /* Data-viz palette (§3.4) — lightened for legibility on the near-black dark surface
+     (same hue order as light; the slate 'other' especially needs lifting). */
+  --chart-1: #60a5fa;
+  --chart-2: #2dd4bf;
+  --chart-3: #e879f9;
+  --chart-4: #fbbf24;
+  --chart-5: #94a3b8;
+
+  /* Chrome text */
+  --on-brand: #e8edf4;
+  --on-brand-muted: #9aa8bd;
+  --on-brand-border: #243149;
+
+  --focus-ring: #3b82f6;
+  --scrim: rgba(0, 0, 0, 0.65);
+
+  /* Elevation — deeper on dark */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 1px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 18px 44px rgba(0, 0, 0, 0.6);
+}

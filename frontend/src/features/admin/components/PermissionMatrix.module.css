@@ -1,0 +1,72 @@
+.scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.table th,
+.table td {
+  padding: var(--space-2) var(--space-3);
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.colHead {
+  color: var(--text-secondary);
+  font-weight: var(--weight-semibold);
+  text-transform: capitalize;
+}
+
+.colHeadInner {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Sticky first column = the module name + its row select-all. */
+.rowHead {
+  position: sticky;
+  left: 0;
+  z-index: var(--z-sticky);
+  text-align: left;
+  background-color: var(--surface-1);
+  border-right: 1px solid var(--border);
+}
+
+.theadRow .rowHead {
+  background-color: var(--surface-2);
+}
+
+.moduleCell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.moduleName {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.theadRow th {
+  background-color: var(--surface-2);
+  position: sticky;
+  top: 0;
+}
+
+.tr:hover td,
+.tr:hover .rowHead {
+  background-color: var(--surface-2);
+}
+
+.empty {
+  color: var(--text-secondary);
+}

@@ -1,0 +1,1086 @@
+// Redwave ERP/HRM — Prisma schema.
+//
+// Full data model: 48 entities across 12 modules, translated from docs/data-model.md
+// (the authoritative data dictionary). The visual ERD is docs/Redwave_Data_Model.drawio.
+//
+// ───────────────────────────────────────────────────────────────────────────────
+// SCHEMA CONVENTIONS (decided & recorded in CLAUDE.md):
+//   • Models are PascalCase, mapped to the dictionary's snake_case tables via @@map.
+//     Columns stay snake_case (1:1 with the dictionary). Client is idiomatic (prisma.user).
+//   • Surrogate PKs: id String @id @default(uuid()) @db.Uuid. Business keys are @unique;
+//     join tables use composite @@id. Rep codes never reused (rep_code @unique). — §3 #11
+//
+// MONEY CONVENTION (CLAUDE.md §3 #1 — exact-decimal money, never floats):
+//   • Every monetary column is `Decimal @db.Decimal(12, 2)` (Postgres NUMERIC), surfaced
+//     in TypeScript as `Prisma.Decimal`. NEVER `Float` / `number`.
+//   • Do arithmetic with Prisma.Decimal methods (.plus/.minus/.times), never JS float math.
+//   • Non-money decimals use targeted precision: pct (5,4), *_km (10,2), rate_per_km (6,3),
+//     lat/lng (9,6).
+//   • Effective-dated config rows carry effective_from / effective_to (CLAUDE.md §3 #10).
+//   • sale_items snapshot fields (tier_at_payment, rate_applied, commission_paid,
+//     incentive_amount) are written ONCE at payment and immutable thereafter (§3 #2);
+//     they are nullable until paid.
+//   • The two rate streams (client_billing_rates vs commission_*) never join (§3 #3).
+//   • Pay-run finalize (#8) and import commit run inside Prisma INTERACTIVE TRANSACTIONS
+//     (`prisma.$transaction(async (tx) => { ... })`) for atomic, idempotent writes.
+// ───────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// ENUMS (one per dictionary "enum" field)
+// ════════════════════════════════════════════════════════════════════════════════
+
+enum ThemePreference {
+  light
+  dark
+  system
+}
+
+enum UserStatus {
+  active
+  inactive
+}
+
+enum PermissionAction {
+  view
+  create
+  edit
+  approve
+  delete
+  export
+}
+
+enum ProfileChangeStatus {
+  pending
+  approved
+  rejected
+}
+
+enum RepStatus {
+  active
+  terminated
+}
+
+enum EquipmentStatus {
+  assigned
+  returned
+  withheld
+}
+
+enum Market {
+  CA
+  US
+}
+
+enum ProductType {
+  internet
+  greenfield_internet
+  tv
+  home_phone
+}
+
+enum RateKind {
+  product
+  tv_addon
+  hp_addon
+  bundle_bonus
+  spiff
+}
+
+enum IncentiveTargetType {
+  per_activation
+  target_based
+}
+
+enum IncentiveStatus {
+  active
+  ended
+}
+
+enum SaleStatus {
+  entered
+  validated
+  in_pay_run
+  paid
+  clawed_back
+  deleted
+}
+
+enum SaleItemStatus {
+  active
+  cancelled
+  clawed_back
+}
+
+enum PayPeriodStatus {
+  open
+  closed
+  paid
+}
+
+enum PayRunStatus {
+  draft
+  finalized
+  exported
+}
+
+enum HoldbackReleaseStatus {
+  held
+  scheduled
+  released
+}
+
+enum ClawbackStatus {
+  pending
+  applied
+}
+
+enum ExpenseReportStatus {
+  draft
+  submitted
+  approved
+  rejected
+  sent_back
+}
+
+enum ExpenseCategory {
+  km
+  meals
+  hotel
+  flight
+  rental
+  gas
+  other
+}
+
+enum TripType {
+  single
+  round
+}
+
+enum ExportFormat {
+  pdf
+  excel
+}
+
+enum DocumentType {
+  compensation_agreement
+  rate_notice
+  equipment
+  other
+}
+
+enum DocumentStatus {
+  draft
+  shared
+  partially_signed
+  completed
+  declined
+}
+
+enum SignatureRequestStatus {
+  pending
+  completed
+  declined
+  cancelled
+}
+
+enum SignatureStatus {
+  pending
+  signed
+  declined
+}
+
+enum TargetType {
+  daily
+  weekly
+  monthly
+}
+
+enum NotificationChannel {
+  in_app
+  email
+}
+
+enum ChatbotRole {
+  user
+  assistant
+}
+
+enum ImportSourceType {
+  client_report
+  master_migration
+  balance_migration
+}
+
+enum ImportType {
+  reps
+  clients
+  products
+  sales
+  holdback
+  clawback
+  mixed
+}
+
+enum ImportBatchStatus {
+  staged
+  committed
+  failed
+  cancelled
+}
+
+enum MatchStatus {
+  matched
+  unmatched
+  duplicate
+  error
+  ignored
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 1 — Auth & RBAC
+// ════════════════════════════════════════════════════════════════════════════════
+
+model User {
+  id               String          @id @default(uuid()) @db.Uuid
+  email            String          @unique
+  password_hash    String
+  full_name        String
+  phone            String?
+  avatar_url       String?
+  theme_preference ThemePreference
+  status           UserStatus
+  created_at       DateTime        @default(now())
+  updated_at       DateTime        @updatedAt
+
+  // back-relations (all FKs that reference users.id)
+  roles_created                 Role[]                     @relation("RoleCreatedBy")
+  user_roles                    UserRole[]
+  audit_logs                    AuditLog[]                 @relation("AuditActor")
+  profile_changes_subject       ProfileChangeRequest[]     @relation("ProfileSubject")
+  profile_changes_requested     ProfileChangeRequest[]     @relation("ProfileRequestedBy")
+  profile_changes_reviewed      ProfileChangeRequest[]     @relation("ProfileReviewedBy")
+  rep_login                     Rep?                       @relation("RepLogin")
+  reps_managed                  Rep[]                      @relation("RepFieldManager")
+  billing_rates_created         ClientBillingRate[]        @relation("BillingRateCreatedBy")
+  tier_configs_created          CommissionTierConfig[]     @relation("TierConfigCreatedBy")
+  flat_rates_created            CommissionFlatRate[]       @relation("FlatRateCreatedBy")
+  holdback_release_set          HoldbackReleaseSetting[]   @relation("HoldbackReleaseSetBy")
+  incentives_created            Incentive[]                @relation("IncentiveCreatedBy")
+  sales_validated               Sale[]                     @relation("SaleValidatedBy")
+  pay_runs_executed             PayRun[]                   @relation("PayRunExecutedBy")
+  clawbacks_entered             Clawback[]                 @relation("ClawbackEnteredBy")
+  expense_reports_submitted     ExpenseReport[]            @relation("ExpenseSubmittedBy")
+  expense_reports_approved      ExpenseReport[]            @relation("ExpenseApprovedBy")
+  expense_field_configs_created ExpenseFieldConfig[]       @relation("ExpenseFieldConfigCreatedBy")
+  expense_exports_generated     ExpenseExport[]            @relation("ExpenseExportGeneratedBy")
+  statements_generated          ClientStatement[]          @relation("StatementGeneratedBy")
+  documents_owned               Document[]                 @relation("DocumentOwner")
+  signature_requests_sent       SignatureRequest[]         @relation("SignatureRequestedBy")
+  document_signatures           DocumentSignature[]        @relation("SignatureRecipient")
+  notif_settings_updated        NotificationEventSetting[] @relation("NotifSettingUpdatedBy")
+  notifications                 Notification[]
+  chatbot_conversations         ChatbotConversation[]
+  chatbot_configs_updated       ChatbotConfig[]            @relation("ChatbotConfigUpdatedBy")
+  sales_targets_set             SalesTarget[]              @relation("SalesTargetSetBy")
+  import_batches_run            ImportBatch[]              @relation("ImportBatchRunBy")
+  import_mappings_created       ImportFieldMapping[]       @relation("ImportMappingCreatedBy")
+  import_rows_resolved          ImportRow[]                @relation("ImportRowResolvedBy")
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique
+  description String?
+  is_system   Boolean
+  created_by  String   @db.Uuid
+  creator     User     @relation("RoleCreatedBy", fields: [created_by], references: [id])
+  created_at  DateTime @default(now())
+
+  role_permissions RolePermission[]
+  user_roles       UserRole[]
+
+  @@map("roles")
+}
+
+model Module {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique
+  name        String
+  description String?
+
+  permissions Permission[]
+
+  @@map("modules")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  module_id   String           @db.Uuid
+  module      Module           @relation(fields: [module_id], references: [id])
+  action      PermissionAction
+  description String?
+
+  role_permissions RolePermission[]
+
+  // A permission is a single (module, action) capability — docs/data-model.md §3.
+  // Uniqueness enables idempotent seeding and safe grant assignment.
+  @@unique([module_id, action])
+  @@map("permissions")
+}
+
+model RolePermission {
+  role_id       String     @db.Uuid
+  role          Role       @relation(fields: [role_id], references: [id])
+  permission_id String     @db.Uuid
+  permission    Permission @relation(fields: [permission_id], references: [id])
+
+  @@id([role_id, permission_id])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  user_id String @db.Uuid
+  user    User   @relation(fields: [user_id], references: [id])
+  role_id String @db.Uuid
+  role    Role   @relation(fields: [role_id], references: [id])
+
+  @@id([user_id, role_id])
+  @@map("user_roles")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  user_id     String   @db.Uuid
+  actor       User     @relation("AuditActor", fields: [user_id], references: [id])
+  entity_type String
+  entity_id   String   @db.Uuid // polymorphic — no relation
+  action      String
+  before_json Json?
+  after_json  Json?
+  created_at  DateTime @default(now())
+
+  @@index([entity_type, entity_id])
+  @@map("audit_log")
+}
+
+model ProfileChangeRequest {
+  id               String              @id @default(uuid()) @db.Uuid
+  user_id          String              @db.Uuid
+  subject          User                @relation("ProfileSubject", fields: [user_id], references: [id])
+  requested_by     String              @db.Uuid
+  requester        User                @relation("ProfileRequestedBy", fields: [requested_by], references: [id])
+  proposed_changes Json
+  status           ProfileChangeStatus
+  reviewed_by      String?             @db.Uuid
+  reviewer         User?               @relation("ProfileReviewedBy", fields: [reviewed_by], references: [id])
+  reviewed_at      DateTime?
+  created_at       DateTime            @default(now())
+
+  @@map("profile_change_requests")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 2 — HRM / Reps
+// ════════════════════════════════════════════════════════════════════════════════
+
+model Rep {
+  id               String    @id @default(uuid()) @db.Uuid
+  rep_code         String    @unique
+  user_id          String?   @unique @db.Uuid
+  login            User?     @relation("RepLogin", fields: [user_id], references: [id])
+  full_name        String
+  field_manager_id String    @db.Uuid
+  field_manager    User      @relation("RepFieldManager", fields: [field_manager_id], references: [id])
+  status           RepStatus
+  hire_date        DateTime  @db.Date
+  termination_date DateTime? @db.Date
+  payment_details  Json?
+  created_at       DateTime  @default(now())
+
+  rep_documents   RepDocument[]
+  rep_equipment   RepEquipment[]
+  sales           Sale[]
+  pay_run_lines   PayRunLine[]
+  holdback_ledger HoldbackLedger[]
+  clawbacks       Clawback[]
+  expense_reports ExpenseReport[]
+  sales_targets   SalesTarget[]
+
+  @@map("reps")
+}
+
+model RepDocument {
+  id          String   @id @default(uuid()) @db.Uuid
+  rep_id      String   @db.Uuid
+  rep         Rep      @relation(fields: [rep_id], references: [id])
+  doc_type    String
+  file_url    String
+  uploaded_at DateTime @default(now())
+
+  @@map("rep_documents")
+}
+
+model RepEquipment {
+  id             String          @id @default(uuid()) @db.Uuid
+  rep_id         String          @db.Uuid
+  rep            Rep             @relation(fields: [rep_id], references: [id])
+  equipment_type String
+  identifier     String
+  deposit_amount Decimal         @db.Decimal(12, 2)
+  assigned_date  DateTime        @db.Date
+  returned_date  DateTime?       @db.Date
+  status         EquipmentStatus
+
+  @@map("rep_equipment")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 3 — Clients & Products
+// ════════════════════════════════════════════════════════════════════════════════
+
+model Client {
+  id              String   @id @default(uuid()) @db.Uuid
+  client_code     String   @unique
+  name            String
+  market          Market
+  supplies_mpu_id Boolean
+  is_active       Boolean
+  created_at      DateTime @default(now())
+
+  products              Product[]
+  client_billing_rates  ClientBillingRate[]
+  incentives            Incentive[]
+  sales                 Sale[]
+  expense_items         ExpenseItem[]
+  expense_exports       ExpenseExport[]
+  client_statements     ClientStatement[]
+  client_invoices       ClientInvoice[]
+  import_batches        ImportBatch[]
+  import_field_mappings ImportFieldMapping[]
+
+  @@map("clients")
+}
+
+model Product {
+  id           String      @id @default(uuid()) @db.Uuid
+  client_id    String      @db.Uuid
+  client       Client      @relation(fields: [client_id], references: [id])
+  name         String
+  product_type ProductType
+  is_active    Boolean
+  created_at   DateTime    @default(now())
+
+  client_billing_rates ClientBillingRate[]
+  sale_items           SaleItem[]
+
+  @@map("products")
+}
+
+// CLIENT BILLING RATE — what Redwave charges the CLIENT. Separate stream from
+// commission_* and never joined with it. — CLAUDE.md §3 #3
+model ClientBillingRate {
+  id             String    @id @default(uuid()) @db.Uuid
+  client_id      String    @db.Uuid
+  client         Client    @relation(fields: [client_id], references: [id])
+  product_id     String?   @db.Uuid
+  product        Product?  @relation(fields: [product_id], references: [id])
+  rate_kind      RateKind
+  amount         Decimal   @db.Decimal(12, 2)
+  effective_from DateTime  @db.Date
+  effective_to   DateTime? @db.Date
+  created_by     String    @db.Uuid
+  creator        User      @relation("BillingRateCreatedBy", fields: [created_by], references: [id])
+
+  @@map("client_billing_rates")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 4 — Commission Config (REP commission stream; separate from billing rates)
+// ════════════════════════════════════════════════════════════════════════════════
+
+model CommissionTierConfig {
+  id             String    @id @default(uuid()) @db.Uuid
+  effective_from DateTime  @db.Date
+  effective_to   DateTime? @db.Date
+  created_by     String    @db.Uuid
+  creator        User      @relation("TierConfigCreatedBy", fields: [created_by], references: [id])
+
+  tiers CommissionTier[]
+
+  @@map("commission_tier_configs")
+}
+
+model CommissionTier {
+  id                  String               @id @default(uuid()) @db.Uuid
+  tier_config_id      String               @db.Uuid
+  tier_config         CommissionTierConfig @relation(fields: [tier_config_id], references: [id])
+  tier_number         Int
+  min_count           Int
+  max_count           Int? // null for the open 36+ bracket
+  rate_per_activation Decimal              @db.Decimal(12, 2)
+
+  @@map("commission_tiers")
+}
+
+model CommissionFlatRate {
+  id             String      @id @default(uuid()) @db.Uuid
+  product_type   ProductType
+  amount         Decimal     @db.Decimal(12, 2)
+  effective_from DateTime    @db.Date
+  effective_to   DateTime?   @db.Date
+  created_by     String      @db.Uuid
+  creator        User        @relation("FlatRateCreatedBy", fields: [created_by], references: [id])
+
+  @@map("commission_flat_rates")
+}
+
+model HoldbackConfig {
+  id             String    @id @default(uuid()) @db.Uuid
+  advance_pct    Decimal   @db.Decimal(5, 4)
+  holdback_pct   Decimal   @db.Decimal(5, 4)
+  effective_from DateTime  @db.Date
+  effective_to   DateTime? @db.Date
+
+  @@map("holdback_config")
+}
+
+model HoldbackReleaseSetting {
+  id             String   @id @default(uuid()) @db.Uuid
+  release_rule   String
+  set_by         String   @db.Uuid
+  setter         User     @relation("HoldbackReleaseSetBy", fields: [set_by], references: [id])
+  effective_from DateTime // timestamp; sticky until changed
+
+  @@map("holdback_release_settings")
+}
+
+model Incentive {
+  id                 String              @id @default(uuid()) @db.Uuid
+  name               String
+  scope_client_id    String?             @db.Uuid
+  scope_client       Client?             @relation(fields: [scope_client_id], references: [id])
+  scope_product_type ProductType?
+  target_type        IncentiveTargetType
+  target_count       Int?
+  window_start       DateTime            @db.Date
+  window_end         DateTime            @db.Date
+  amount             Decimal             @db.Decimal(12, 2)
+  status             IncentiveStatus
+  created_by         String              @db.Uuid
+  creator            User                @relation("IncentiveCreatedBy", fields: [created_by], references: [id])
+
+  sale_items SaleItem[]
+
+  @@map("incentives")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 5 — Sales & Validation
+// ════════════════════════════════════════════════════════════════════════════════
+
+model Sale {
+  id              String     @id @default(uuid()) @db.Uuid
+  sale_code       String     @unique
+  sale_date       DateTime   @db.Date // KING — governs the pay period. — §3 #7
+  activation_date DateTime?  @db.Date // reference only; drives no logic
+  rep_id          String     @db.Uuid
+  rep             Rep        @relation(fields: [rep_id], references: [id])
+  client_id       String     @db.Uuid
+  client          Client     @relation(fields: [client_id], references: [id])
+  customer_name   String
+  street          String
+  city            String
+  province_state  String
+  postal_code     String
+  mpu_id          String?
+  is_greenfield   Boolean
+  status          SaleStatus
+  validated_by    String?    @db.Uuid
+  validator       User?      @relation("SaleValidatedBy", fields: [validated_by], references: [id])
+  validated_at    DateTime?
+  pay_run_id      String?    @db.Uuid
+  pay_run         PayRun?    @relation(fields: [pay_run_id], references: [id])
+  created_at      DateTime   @default(now())
+
+  sale_items             SaleItem[]
+  clawbacks              Clawback[]
+  client_statement_lines ClientStatementLine[]
+
+  @@index([rep_id, sale_date])
+  @@index([client_id, mpu_id])
+  @@map("sales")
+}
+
+// SALE ITEM — carries the IMMUTABLE pay snapshot. tier_at_payment / rate_applied /
+// commission_paid / incentive_amount are frozen at payment and never updated. — §3 #2
+model SaleItem {
+  id                  String         @id @default(uuid()) @db.Uuid
+  sale_id             String         @db.Uuid
+  sale                Sale           @relation(fields: [sale_id], references: [id])
+  product_id          String         @db.Uuid
+  product             Product        @relation(fields: [product_id], references: [id])
+  product_type        ProductType
+  counts_toward_tally Boolean
+  tier_at_payment     Int? // SNAPSHOT (internet only; null until paid)
+  rate_applied        Decimal?       @db.Decimal(12, 2) // SNAPSHOT
+  commission_paid     Decimal?       @db.Decimal(12, 2) // SNAPSHOT
+  incentive_id        String?        @db.Uuid
+  incentive           Incentive?     @relation(fields: [incentive_id], references: [id])
+  incentive_amount    Decimal?       @db.Decimal(12, 2) // SNAPSHOT
+  item_status         SaleItemStatus
+
+  clawbacks Clawback[]
+
+  @@map("sale_items")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 6 — Pay Run & Holdback
+// ════════════════════════════════════════════════════════════════════════════════
+
+model PayPeriod {
+  id            String          @id @default(uuid()) @db.Uuid
+  period_number Int             @unique
+  start_date    DateTime        @db.Date
+  end_date      DateTime        @db.Date
+  payday        DateTime        @db.Date
+  status        PayPeriodStatus
+
+  pay_runs           PayRun[]
+  holdback_origin    HoldbackLedger[]  @relation("HoldbackOrigin")
+  holdback_scheduled HoldbackLedger[]  @relation("HoldbackScheduledRelease")
+  expense_reports    ExpenseReport[]
+  expense_exports    ExpenseExport[]
+  client_statements  ClientStatement[]
+  client_invoices    ClientInvoice[]
+
+  @@map("pay_periods")
+}
+
+model PayRun {
+  id            String       @id @default(uuid()) @db.Uuid
+  pay_period_id String       @db.Uuid
+  pay_period    PayPeriod    @relation(fields: [pay_period_id], references: [id])
+  run_date      DateTime     @db.Date
+  status        PayRunStatus
+  executed_by   String       @db.Uuid
+  executor      User         @relation("PayRunExecutedBy", fields: [executed_by], references: [id])
+  created_at    DateTime     @default(now())
+
+  pay_run_lines     PayRunLine[]
+  sales             Sale[]
+  holdback_released HoldbackLedger[] @relation("HoldbackReleasedIn")
+  clawbacks         Clawback[]
+
+  @@map("pay_runs")
+}
+
+model PayRunLine {
+  id                  String  @id @default(uuid()) @db.Uuid
+  pay_run_id          String  @db.Uuid
+  pay_run             PayRun  @relation(fields: [pay_run_id], references: [id])
+  rep_id              String  @db.Uuid
+  rep                 Rep     @relation(fields: [rep_id], references: [id])
+  commission_70       Decimal @db.Decimal(12, 2)
+  holdback_release_30 Decimal @db.Decimal(12, 2)
+  expense_total       Decimal @db.Decimal(12, 2)
+  incentive_total     Decimal @db.Decimal(12, 2)
+  bonus_amount        Decimal @db.Decimal(12, 2)
+  bonus_note          String?
+  clawback_total      Decimal @db.Decimal(12, 2)
+  net_payout          Decimal @db.Decimal(12, 2)
+
+  @@map("pay_run_lines")
+}
+
+model HoldbackLedger {
+  id                          String                @id @default(uuid()) @db.Uuid
+  rep_id                      String                @db.Uuid
+  rep                         Rep                   @relation(fields: [rep_id], references: [id])
+  origin_pay_period_id        String                @db.Uuid
+  origin_pay_period           PayPeriod             @relation("HoldbackOrigin", fields: [origin_pay_period_id], references: [id])
+  amount_held                 Decimal               @db.Decimal(12, 2)
+  scheduled_release_period_id String?               @db.Uuid
+  scheduled_release_period    PayPeriod?            @relation("HoldbackScheduledRelease", fields: [scheduled_release_period_id], references: [id])
+  release_status              HoldbackReleaseStatus
+  released_in_pay_run_id      String?               @db.Uuid
+  released_in_pay_run         PayRun?               @relation("HoldbackReleasedIn", fields: [released_in_pay_run_id], references: [id])
+  amount_released             Decimal?              @db.Decimal(12, 2)
+  clawback_applied            Decimal?              @db.Decimal(12, 2)
+
+  @@index([rep_id, release_status])
+  @@map("holdback_ledger")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 7 — Clawback (flat deduction; exact amount from the snapshot). — §3 #4, #6
+// ════════════════════════════════════════════════════════════════════════════════
+
+model Clawback {
+  id                    String         @id @default(uuid()) @db.Uuid
+  sale_item_id          String         @db.Uuid
+  sale_item             SaleItem       @relation(fields: [sale_item_id], references: [id])
+  sale_id               String         @db.Uuid
+  sale                  Sale           @relation(fields: [sale_id], references: [id])
+  rep_id                String         @db.Uuid
+  rep                   Rep            @relation(fields: [rep_id], references: [id])
+  amount                Decimal        @db.Decimal(12, 2)
+  reason                String
+  reported_date         DateTime       @db.Date
+  entered_by            String         @db.Uuid
+  enterer               User           @relation("ClawbackEnteredBy", fields: [entered_by], references: [id])
+  applied_in_pay_run_id String?        @db.Uuid
+  applied_in_pay_run    PayRun?        @relation(fields: [applied_in_pay_run_id], references: [id])
+  status                ClawbackStatus
+  created_at            DateTime       @default(now())
+
+  @@map("clawbacks")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 8 — Expenses
+// ════════════════════════════════════════════════════════════════════════════════
+
+model ExpenseReport {
+  id            String              @id @default(uuid()) @db.Uuid
+  submitted_by  String              @db.Uuid
+  submitter     User                @relation("ExpenseSubmittedBy", fields: [submitted_by], references: [id])
+  rep_id        String?             @db.Uuid
+  rep           Rep?                @relation(fields: [rep_id], references: [id])
+  week_start    DateTime            @db.Date
+  week_end      DateTime            @db.Date
+  status        ExpenseReportStatus
+  approved_by   String?             @db.Uuid
+  approver      User?               @relation("ExpenseApprovedBy", fields: [approved_by], references: [id])
+  approved_at   DateTime?
+  pay_period_id String?             @db.Uuid
+  pay_period    PayPeriod?          @relation(fields: [pay_period_id], references: [id])
+  created_at    DateTime            @default(now())
+
+  expense_items ExpenseItem[]
+
+  @@map("expense_reports")
+}
+
+model ExpenseItem {
+  id                String          @id @default(uuid()) @db.Uuid
+  expense_report_id String          @db.Uuid
+  expense_report    ExpenseReport   @relation(fields: [expense_report_id], references: [id])
+  category          ExpenseCategory
+  client_id         String?         @db.Uuid
+  client            Client?         @relation(fields: [client_id], references: [id])
+  expense_date      DateTime        @db.Date
+  amount            Decimal         @db.Decimal(12, 2)
+  description       String
+  receipt_url       String? // mandatory except km
+
+  km_log ExpenseKmLog?
+
+  @@map("expense_items")
+}
+
+model ExpenseKmLog {
+  id              String      @id @default(uuid()) @db.Uuid
+  expense_item_id String      @unique @db.Uuid
+  expense_item    ExpenseItem @relation(fields: [expense_item_id], references: [id])
+  trip_type       TripType
+  total_km        Decimal     @db.Decimal(10, 2)
+  deduction_km    Decimal     @db.Decimal(10, 2)
+  billable_km     Decimal     @db.Decimal(10, 2)
+  rate_per_km     Decimal     @db.Decimal(6, 3)
+  computed_amount Decimal     @db.Decimal(12, 2)
+
+  stops ExpenseKmStop[]
+
+  @@map("expense_km_logs")
+}
+
+model ExpenseKmStop {
+  id         String       @id @default(uuid()) @db.Uuid
+  km_log_id  String       @db.Uuid
+  km_log     ExpenseKmLog @relation(fields: [km_log_id], references: [id])
+  stop_order Int
+  address    String
+  lat        Decimal      @db.Decimal(9, 6)
+  lng        Decimal      @db.Decimal(9, 6)
+
+  @@map("expense_km_stops")
+}
+
+model ExpenseFieldConfig {
+  id               String  @id @default(uuid()) @db.Uuid
+  category_key     String  @unique
+  label            String
+  requires_receipt Boolean
+  is_active        Boolean
+  created_by       String  @db.Uuid
+  creator          User    @relation("ExpenseFieldConfigCreatedBy", fields: [created_by], references: [id])
+
+  @@map("expense_field_configs")
+}
+
+model ExpenseExport {
+  id            String       @id @default(uuid()) @db.Uuid
+  generated_by  String       @db.Uuid
+  generator     User         @relation("ExpenseExportGeneratedBy", fields: [generated_by], references: [id])
+  client_id     String?      @db.Uuid
+  client        Client?      @relation(fields: [client_id], references: [id])
+  pay_period_id String?      @db.Uuid
+  pay_period    PayPeriod?   @relation(fields: [pay_period_id], references: [id])
+  scope_filters Json
+  format        ExportFormat
+  file_url      String
+  generated_at  DateTime     @default(now())
+
+  @@map("expense_exports")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 9 — Billing & Statements
+// ════════════════════════════════════════════════════════════════════════════════
+
+model ClientStatement {
+  id            String    @id @default(uuid()) @db.Uuid
+  client_id     String    @db.Uuid
+  client        Client    @relation(fields: [client_id], references: [id])
+  pay_period_id String    @db.Uuid
+  pay_period    PayPeriod @relation(fields: [pay_period_id], references: [id])
+  total_amount  Decimal   @db.Decimal(12, 2)
+  file_url      String
+  generated_by  String    @db.Uuid
+  generator     User      @relation("StatementGeneratedBy", fields: [generated_by], references: [id])
+  generated_at  DateTime  @default(now())
+
+  lines ClientStatementLine[]
+
+  @@map("client_statements")
+}
+
+model ClientStatementLine {
+  id               String          @id @default(uuid()) @db.Uuid
+  statement_id     String          @db.Uuid
+  statement        ClientStatement @relation(fields: [statement_id], references: [id])
+  sale_id          String          @db.Uuid
+  sale             Sale            @relation(fields: [sale_id], references: [id])
+  customer_name    String
+  products_summary String
+  line_total       Decimal         @db.Decimal(12, 2)
+
+  @@map("client_statement_lines")
+}
+
+model ClientInvoice {
+  id               String    @id @default(uuid()) @db.Uuid
+  client_id        String    @db.Uuid
+  client           Client    @relation(fields: [client_id], references: [id])
+  pay_period_id    String    @db.Uuid
+  pay_period       PayPeriod @relation(fields: [pay_period_id], references: [id])
+  total_commission Decimal   @db.Decimal(12, 2)
+  file_url         String
+  generated_at     DateTime  @default(now())
+
+  @@map("client_invoices")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 10 — Documents & E-Signature
+// ════════════════════════════════════════════════════════════════════════════════
+
+model Document {
+  id                String         @id @default(uuid()) @db.Uuid
+  title             String
+  doc_type          DocumentType
+  owner_user_id     String         @db.Uuid
+  owner             User           @relation("DocumentOwner", fields: [owner_user_id], references: [id])
+  original_file_url String
+  status            DocumentStatus
+  created_at        DateTime       @default(now())
+
+  signature_requests SignatureRequest[]
+
+  @@map("documents")
+}
+
+model SignatureRequest {
+  id           String                 @id @default(uuid()) @db.Uuid
+  document_id  String                 @db.Uuid
+  document     Document               @relation(fields: [document_id], references: [id])
+  requested_by String                 @db.Uuid
+  requester    User                   @relation("SignatureRequestedBy", fields: [requested_by], references: [id])
+  message      String?
+  due_date     DateTime?              @db.Date
+  status       SignatureRequestStatus
+  created_at   DateTime               @default(now())
+
+  document_signatures DocumentSignature[]
+
+  @@map("signature_requests")
+}
+
+model DocumentSignature {
+  id                   String           @id @default(uuid()) @db.Uuid
+  signature_request_id String           @db.Uuid
+  signature_request    SignatureRequest @relation(fields: [signature_request_id], references: [id])
+  recipient_user_id    String           @db.Uuid
+  recipient            User             @relation("SignatureRecipient", fields: [recipient_user_id], references: [id])
+  status               SignatureStatus
+  signed_file_url      String?
+  signed_at            DateTime?
+  method               String?
+  ip_address           String?
+
+  @@map("document_signatures")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 11 — Reporting & Platform
+// ════════════════════════════════════════════════════════════════════════════════
+
+model SalesTarget {
+  id           String     @id @default(uuid()) @db.Uuid
+  rep_id       String?    @db.Uuid
+  rep          Rep?       @relation(fields: [rep_id], references: [id])
+  target_type  TargetType
+  target_count Int
+  period_start DateTime   @db.Date
+  period_end   DateTime   @db.Date
+  set_by       String     @db.Uuid
+  setter       User       @relation("SalesTargetSetBy", fields: [set_by], references: [id])
+
+  @@map("sales_targets")
+}
+
+model Notification {
+  id                  String              @id @default(uuid()) @db.Uuid
+  user_id             String              @db.Uuid
+  user                User                @relation(fields: [user_id], references: [id])
+  type                String
+  channel             NotificationChannel
+  title               String
+  body                String
+  related_entity_type String?
+  related_entity_id   String?             @db.Uuid // polymorphic — no relation
+  is_read             Boolean
+  sent_at             DateTime?
+  created_at          DateTime            @default(now())
+
+  @@map("notifications")
+}
+
+model NotificationEventSetting {
+  id             String   @id @default(uuid()) @db.Uuid
+  event_type     String   @unique
+  in_app_enabled Boolean
+  email_enabled  Boolean
+  updated_by     String   @db.Uuid
+  updater        User     @relation("NotifSettingUpdatedBy", fields: [updated_by], references: [id])
+  updated_at     DateTime @updatedAt
+
+  @@map("notification_event_settings")
+}
+
+model ChatbotConfig {
+  id          String  @id @default(uuid()) @db.Uuid
+  provider    String
+  model       String
+  is_active   Boolean
+  config_json Json
+  updated_by  String  @db.Uuid
+  updater     User    @relation("ChatbotConfigUpdatedBy", fields: [updated_by], references: [id])
+
+  @@map("chatbot_config")
+}
+
+model ChatbotConversation {
+  id         String   @id @default(uuid()) @db.Uuid
+  user_id    String   @db.Uuid
+  user       User     @relation(fields: [user_id], references: [id])
+  started_at DateTime @default(now())
+
+  messages ChatbotMessage[]
+
+  @@map("chatbot_conversations")
+}
+
+model ChatbotMessage {
+  id              String              @id @default(uuid()) @db.Uuid
+  conversation_id String              @db.Uuid
+  conversation    ChatbotConversation @relation(fields: [conversation_id], references: [id])
+  role            ChatbotRole
+  content         String              @db.Text
+  created_at      DateTime            @default(now())
+
+  @@map("chatbot_messages")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// MODULE 12 — Data Import & Integration (staging → reconcile → commit)
+// ════════════════════════════════════════════════════════════════════════════════
+
+model ImportBatch {
+  id               String              @id @default(uuid()) @db.Uuid
+  source_file_url  String
+  source_type      ImportSourceType
+  import_type      ImportType
+  client_id        String?             @db.Uuid
+  client           Client?             @relation(fields: [client_id], references: [id])
+  field_mapping_id String?             @db.Uuid
+  field_mapping    ImportFieldMapping? @relation(fields: [field_mapping_id], references: [id])
+  status           ImportBatchStatus
+  total_rows       Int
+  matched_rows     Int
+  error_rows       Int
+  reconcile_total  Decimal?            @db.Decimal(12, 2)
+  error_summary    Json?
+  run_by           String              @db.Uuid
+  runner           User                @relation("ImportBatchRunBy", fields: [run_by], references: [id])
+  created_at       DateTime            @default(now())
+  committed_at     DateTime?
+
+  import_rows ImportRow[]
+
+  @@map("import_batches")
+}
+
+model ImportFieldMapping {
+  id           String           @id @default(uuid()) @db.Uuid
+  name         String
+  client_id    String?          @db.Uuid
+  client       Client?          @relation(fields: [client_id], references: [id])
+  source_type  ImportSourceType
+  mapping_json Json
+  created_by   String           @db.Uuid
+  creator      User             @relation("ImportMappingCreatedBy", fields: [created_by], references: [id])
+
+  import_batches ImportBatch[]
+
+  @@map("import_field_mappings")
+}
+
+model ImportRow {
+  id                String      @id @default(uuid()) @db.Uuid
+  import_batch_id   String      @db.Uuid
+  import_batch      ImportBatch @relation(fields: [import_batch_id], references: [id])
+  row_number        Int
+  raw_data          Json
+  mapped_data       Json?
+  match_status      MatchStatus
+  matched_entity_id String?     @db.Uuid // polymorphic — no relation
+  issue             String?
+  resolved_by       String?     @db.Uuid
+  resolver          User?       @relation("ImportRowResolvedBy", fields: [resolved_by], references: [id])
+
+  @@map("import_rows")
+}

@@ -1,0 +1,109 @@
+/**
+ * Router — public /login + the protected app shell. `RequireAuth` redirects unauthenticated users to
+ * /login (UX routing; the server still authorizes every request — CLAUDE §5). Feature routes are added
+ * with their screens. Pages are code-split with React.lazy (§13 performance budget).
+ */
+import { lazy, Suspense, type ReactNode } from 'react';
+import { createBrowserRouter } from 'react-router-dom';
+import { AppShell } from '../components/layout/AppShell';
+import { RequireAuth } from '../auth/RequireAuth';
+
+const LoginPage = lazy(() => import('../pages/login/LoginPage'));
+const ShowcasePage = lazy(() => import('../showcase/ShowcasePage'));
+const SalesListPage = lazy(() => import('../features/sales/pages/SalesListPage'));
+const SaleEntryPage = lazy(() => import('../features/sales/pages/SaleEntryPage'));
+const SaleDetailPage = lazy(() => import('../features/sales/pages/SaleDetailPage'));
+const DashboardLanding = lazy(() => import('../features/dashboards/pages/DashboardLanding'));
+const RepDashboardPage = lazy(() => import('../features/dashboards/pages/RepDashboardPage'));
+const ManagerDashboardPage = lazy(() => import('../features/dashboards/pages/ManagerDashboardPage'));
+const BusinessDashboardPage = lazy(() => import('../features/dashboards/pages/BusinessDashboardPage'));
+const AdminDashboardPage = lazy(() => import('../features/dashboards/pages/AdminDashboardPage'));
+const LeaderboardPage = lazy(() => import('../features/dashboards/pages/LeaderboardPage'));
+const AccountPage = lazy(() => import('../features/account/pages/AccountPage'));
+const AdminHomePage = lazy(() => import('../features/admin/pages/AdminHomePage'));
+const ProfileReviewPage = lazy(() => import('../features/admin/pages/ProfileReviewPage'));
+const UsersPage = lazy(() => import('../features/admin/pages/UsersPage'));
+const RolesPage = lazy(() => import('../features/admin/pages/RolesPage'));
+const RoleEditorPage = lazy(() => import('../features/admin/pages/RoleEditorPage'));
+const NotificationSettingsPage = lazy(() => import('../features/admin/pages/NotificationSettingsPage'));
+const ExpensesListPage = lazy(() => import('../features/expenses/pages/ExpensesListPage'));
+const ExpenseEntryPage = lazy(() => import('../features/expenses/pages/ExpenseEntryPage'));
+const ExpenseEditPage = lazy(() => import('../features/expenses/pages/ExpenseEditPage'));
+const ExpenseDetailPage = lazy(() => import('../features/expenses/pages/ExpenseDetailPage'));
+const ExpenseApprovalsPage = lazy(() => import('../features/expenses/pages/ExpenseApprovalsPage'));
+const ClientsPage = lazy(() => import('../features/clients/pages/ClientsPage'));
+const ClientDetailPage = lazy(() => import('../features/clients/pages/ClientDetailPage'));
+const CommissionConfigPage = lazy(() => import('../features/commission/pages/CommissionConfigPage'));
+const PayRunListPage = lazy(() => import('../features/payrun/pages/PayRunListPage'));
+const PayRunDetailPage = lazy(() => import('../features/payrun/pages/PayRunDetailPage'));
+const ClawbackListPage = lazy(() => import('../features/clawback/pages/ClawbackListPage'));
+const ClawbackEntryPage = lazy(() => import('../features/clawback/pages/ClawbackEntryPage'));
+const BillingListPage = lazy(() => import('../features/billing/pages/BillingListPage'));
+const StatementDetailPage = lazy(() => import('../features/billing/pages/StatementDetailPage'));
+const DocumentsListPage = lazy(() => import('../features/documents/pages/DocumentsListPage'));
+const DocumentDetailPage = lazy(() => import('../features/documents/pages/DocumentDetailPage'));
+const ImportListPage = lazy(() => import('../features/import/pages/ImportListPage'));
+const NewImportPage = lazy(() => import('../features/import/pages/NewImportPage'));
+const ImportDetailPage = lazy(() => import('../features/import/pages/ImportDetailPage'));
+const ChatbotPage = lazy(() => import('../features/chatbot/pages/ChatbotPage'));
+
+const fallback = (
+  <div style={{ padding: 'var(--space-6)', color: 'var(--text-secondary)' }}>Loading…</div>
+);
+const lazyEl = (el: ReactNode) => <Suspense fallback={fallback}>{el}</Suspense>;
+
+export const router = createBrowserRouter([
+  {
+    path: '/login',
+    element: lazyEl(<LoginPage />),
+  },
+  {
+    element: <RequireAuth />,
+    children: [
+      {
+        path: '/',
+        element: <AppShell />,
+        children: [
+          { index: true, element: lazyEl(<DashboardLanding />) },
+          { path: 'dashboards/rep', element: lazyEl(<RepDashboardPage />) },
+          { path: 'dashboards/manager', element: lazyEl(<ManagerDashboardPage />) },
+          { path: 'dashboards/business', element: lazyEl(<BusinessDashboardPage />) },
+          { path: 'dashboards/admin', element: lazyEl(<AdminDashboardPage />) },
+          { path: 'dashboards/leaderboard', element: lazyEl(<LeaderboardPage />) },
+          { path: 'showcase', element: lazyEl(<ShowcasePage />) },
+          { path: 'sales', element: lazyEl(<SalesListPage />) },
+          { path: 'sales/new', element: lazyEl(<SaleEntryPage />) },
+          { path: 'sales/:id', element: lazyEl(<SaleDetailPage />) },
+          { path: 'expenses', element: lazyEl(<ExpensesListPage />) },
+          { path: 'expenses/new', element: lazyEl(<ExpenseEntryPage />) },
+          { path: 'expenses/approvals', element: lazyEl(<ExpenseApprovalsPage />) },
+          { path: 'expenses/:id', element: lazyEl(<ExpenseDetailPage />) },
+          { path: 'expenses/:id/edit', element: lazyEl(<ExpenseEditPage />) },
+          { path: 'pay-runs', element: lazyEl(<PayRunListPage />) },
+          { path: 'pay-runs/:id', element: lazyEl(<PayRunDetailPage />) },
+          { path: 'clawbacks', element: lazyEl(<ClawbackListPage />) },
+          { path: 'clawbacks/new', element: lazyEl(<ClawbackEntryPage />) },
+          { path: 'billing', element: lazyEl(<BillingListPage />) },
+          { path: 'billing/statements/:id', element: lazyEl(<StatementDetailPage />) },
+          { path: 'documents', element: lazyEl(<DocumentsListPage />) },
+          { path: 'documents/:id', element: lazyEl(<DocumentDetailPage />) },
+          { path: 'import', element: lazyEl(<ImportListPage />) },
+          { path: 'import/new', element: lazyEl(<NewImportPage />) },
+          { path: 'import/:id', element: lazyEl(<ImportDetailPage />) },
+          { path: 'chatbot', element: lazyEl(<ChatbotPage />) },
+          { path: 'account', element: lazyEl(<AccountPage />) },
+          { path: 'admin', element: lazyEl(<AdminHomePage />) },
+          { path: 'admin/profile-review', element: lazyEl(<ProfileReviewPage />) },
+          { path: 'admin/users', element: lazyEl(<UsersPage />) },
+          { path: 'admin/roles', element: lazyEl(<RolesPage />) },
+          { path: 'admin/roles/new', element: lazyEl(<RoleEditorPage />) },
+          { path: 'admin/roles/:id', element: lazyEl(<RoleEditorPage />) },
+          { path: 'admin/notifications', element: lazyEl(<NotificationSettingsPage />) },
+          { path: 'admin/clients', element: lazyEl(<ClientsPage />) },
+          { path: 'admin/clients/:id', element: lazyEl(<ClientDetailPage />) },
+          { path: 'admin/commission', element: lazyEl(<CommissionConfigPage />) },
+        ],
+      },
+    ],
+  },
+]);

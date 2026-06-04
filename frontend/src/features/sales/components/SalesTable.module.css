@@ -1,0 +1,43 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.idLink {
+  color: var(--accent-600);
+  font-weight: var(--weight-medium);
+}
+
+.idLink:hover {
+  text-decoration: underline;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.pageInfo {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.pagerBtns {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.empty {
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+.emptyMsg {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}

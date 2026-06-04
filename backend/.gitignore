@@ -1,0 +1,9 @@
+# Backend-local ignores (root .gitignore covers most of this too)
+node_modules/
+dist/
+coverage/
+
+# Environment — keep .env.example, ignore real env
+.env
+.env.*
+!.env.example

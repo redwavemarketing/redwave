@@ -1,0 +1,3326 @@
+openapi: 3.0.0
+paths:
+  /health:
+    get:
+      operationId: HealthController_check
+      parameters: []
+      responses:
+        "200":
+          description: The Health Check is successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  info:
+                    type: object
+                    example: &a1
+                      database: &a2
+                        status: up
+                    additionalProperties:
+                      type: object
+                      required:
+                        - status
+                      properties:
+                        status:
+                          type: string
+                      additionalProperties: true
+                    nullable: true
+                  error:
+                    type: object
+                    example: {}
+                    additionalProperties:
+                      type: object
+                      required:
+                        - status
+                      properties:
+                        status:
+                          type: string
+                      additionalProperties: true
+                    nullable: true
+                  details:
+                    type: object
+                    example: *a1
+                    additionalProperties:
+                      type: object
+                      required:
+                        - status
+                      properties:
+                        status:
+                          type: string
+                      additionalProperties: true
+        "503":
+          description: The Health Check is not successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: error
+                  info:
+                    type: object
+                    example: *a1
+                    additionalProperties:
+                      type: object
+                      required:
+                        - status
+                      properties:
+                        status:
+                          type: string
+                      additionalProperties: true
+                    nullable: true
+                  error:
+                    type: object
+                    example:
+                      redis: &a3
+                        status: down
+                        message: Could not connect
+                    additionalProperties:
+                      type: object
+                      required:
+                        - status
+                      properties:
+                        status:
+                          type: string
+                      additionalProperties: true
+                    nullable: true
+                  details:
+                    type: object
+                    example:
+                      database: *a2
+                      redis: *a3
+                    additionalProperties:
+                      type: object
+                      required:
+                        - status
+                      properties:
+                        status:
+                          type: string
+                      additionalProperties: true
+      tags:
+        - Health
+  /v1/auth/login:
+    post:
+      description: Public. Returns { access_token, refresh_token }. Invalid
+        credentials → 401.
+      operationId: AuthController_login_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginDto"
+      responses:
+        "200":
+          description: ""
+      summary: Authenticate with email + password
+      tags: &a4
+        - Auth
+  /v1/auth/refresh:
+    post:
+      description: Public. Invalid/expired refresh token → 401.
+      operationId: AuthController_refresh_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshDto"
+      responses:
+        "200":
+          description: ""
+      summary: Exchange a refresh token for a new access token
+      tags: *a4
+  /v1/auth/logout:
+    post:
+      description: Requires authentication. The client discards its tokens; recorded
+        for audit.
+      operationId: AuthController_logout_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security:
+        - bearer: []
+      summary: Log out (stateless)
+      tags: *a4
+  /v1/auth/me:
+    get:
+      description: Requires authentication. Returns the profile, roles, and union of
+        permissions.
+      operationId: AuthController_me_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security:
+        - bearer: []
+      summary: Current user + effective permissions
+      tags: *a4
+  /v1/users:
+    get:
+      description: Requires users:view.
+      operationId: UsersController_findAll_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a5
+        - bearer: []
+      summary: List users
+      tags: &a6
+        - Users
+    post:
+      description: Requires users:create.
+      operationId: UsersController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserDto"
+      responses:
+        "201":
+          description: ""
+      security: *a5
+      summary: Create a user and assign roles
+      tags: *a6
+  /v1/users/{id}:
+    get:
+      description: Requires users:view.
+      operationId: UsersController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a5
+      summary: Get a user
+      tags: *a6
+    patch:
+      description: Requires users:edit. status=inactive revokes access immediately.
+      operationId: UsersController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserDto"
+      responses:
+        "200":
+          description: ""
+      security: *a5
+      summary: Edit / deactivate a user
+      tags: *a6
+  /v1/users/{id}/roles:
+    put:
+      description: Requires users:edit.
+      operationId: UsersController_setRoles_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetUserRolesDto"
+      responses:
+        "200":
+          description: ""
+      security: *a5
+      summary: Set a user’s roles
+      tags: *a6
+  /v1/roles:
+    get:
+      description: Requires roles:view.
+      operationId: RolesController_findAll_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a7
+        - bearer: []
+      summary: List roles
+      tags: &a8
+        - Roles
+    post:
+      description: Requires roles:create.
+      operationId: RolesController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleDto"
+      responses:
+        "201":
+          description: ""
+      security: *a7
+      summary: Create a custom role
+      tags: *a8
+  /v1/roles/{id}:
+    get:
+      description: Requires roles:view.
+      operationId: RolesController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a7
+      summary: Get a role + its granted permissions
+      tags: *a8
+    patch:
+      description: Requires roles:edit. Built-in roles cannot be renamed.
+      operationId: RolesController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleDto"
+      responses:
+        "200":
+          description: ""
+      security: *a7
+      summary: Rename / edit a role
+      tags: *a8
+    delete:
+      description: Requires roles:delete. Built-in roles → 409.
+      operationId: RolesController_remove_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "204":
+          description: ""
+      security: *a7
+      summary: Delete a custom role
+      tags: *a8
+  /v1/roles/{id}/permissions:
+    put:
+      description: Requires roles:edit.
+      operationId: RolesController_setPermissions_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetRolePermissionsDto"
+      responses:
+        "200":
+          description: ""
+      security: *a7
+      summary: Set a role’s module×action grants
+      tags: *a8
+  /v1/modules:
+    get:
+      description: Requires roles:view.
+      operationId: RbacCatalogueController_listModules_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a9
+        - bearer: []
+      summary: List system modules
+      tags: &a10
+        - Roles
+  /v1/permissions:
+    get:
+      description: Requires roles:view.
+      operationId: RbacCatalogueController_listPermissions_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: *a9
+      summary: List all (module, action) permissions
+      tags: *a10
+  /v1/account/profile:
+    get:
+      description: Authenticated. Flags any change pending review.
+      operationId: AccountController_getProfile_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a11
+        - bearer: []
+      summary: View my profile
+      tags: &a12
+        - Account
+  /v1/account/change-password:
+    post:
+      description: Authenticated. Verifies the current password.
+      operationId: AccountController_changePassword_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordDto"
+      responses:
+        "200":
+          description: ""
+      security: *a11
+      summary: Change my password
+      tags: *a12
+  /v1/account/theme:
+    patch:
+      description: Authenticated. Applies immediately, no review.
+      operationId: AccountController_setTheme_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetThemeDto"
+      responses:
+        "200":
+          description: ""
+      security: *a11
+      summary: Set my theme preference
+      tags: *a12
+  /v1/account/profile-change-requests:
+    post:
+      description: Authenticated. Creates a PENDING request; the live profile is not
+        changed until approved.
+      operationId: AccountController_requestProfileChange_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileChangeRequestDto"
+      responses:
+        "201":
+          description: ""
+      security: *a11
+      summary: Request a profile HR-field change
+      tags: *a12
+    get:
+      description: Authenticated.
+      operationId: AccountController_listMyRequests_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: *a11
+      summary: List my profile-change requests
+      tags: *a12
+  /v1/profile-change-requests:
+    get:
+      description: Requires profile:approve. Scoped by routing (Field Manager / Admin
+        / Super Admin).
+      operationId: ProfileChangeReviewController_listQueue_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a13
+        - bearer: []
+      summary: Review queue of pending profile changes
+      tags: &a14
+        - Account
+  /v1/profile-change-requests/{id}/approve:
+    post:
+      description: Requires profile:approve + routing authorization.
+      operationId: ProfileChangeReviewController_approve_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a13
+      summary: Approve a profile change
+      tags: *a14
+  /v1/profile-change-requests/{id}/reject:
+    post:
+      description: Requires profile:approve + routing authorization.
+      operationId: ProfileChangeReviewController_reject_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a13
+      summary: Reject a profile change
+      tags: *a14
+  /v1/clients:
+    get:
+      description: Requires clients:view. ?status filter.
+      operationId: ClientsController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: active
+            type: string
+            enum:
+              - active
+              - inactive
+              - all
+      responses:
+        "200":
+          description: ""
+      security: &a15
+        - bearer: []
+      summary: List clients
+      tags: &a16
+        - Clients & Products
+    post:
+      description: Requires clients:create. Unique code → 409.
+      operationId: ClientsController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientDto"
+      responses:
+        "201":
+          description: ""
+      security: *a15
+      summary: Create a client
+      tags: *a16
+  /v1/clients/{id}:
+    get:
+      description: Requires clients:view.
+      operationId: ClientsController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a15
+      summary: Get a client
+      tags: *a16
+    patch:
+      description: Requires clients:edit. is_active=false soft-deactivates.
+      operationId: ClientsController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateClientDto"
+      responses:
+        "200":
+          description: ""
+      security: *a15
+      summary: Edit / deactivate a client
+      tags: *a16
+  /v1/clients/{id}/products:
+    get:
+      description: Requires clients:view.
+      operationId: ClientsController_listProducts_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: active
+            type: string
+            enum:
+              - active
+              - inactive
+              - all
+      responses:
+        "200":
+          description: ""
+      security: *a15
+      summary: List a client's products
+      tags: *a16
+    post:
+      description: Requires clients:edit.
+      operationId: ClientsController_createProduct_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductDto"
+      responses:
+        "201":
+          description: ""
+      security: *a15
+      summary: Create a per-client product
+      tags: *a16
+  /v1/clients/{id}/billing-rates:
+    get:
+      description: Requires clients:view. ?effectiveOn returns the rate in force per
+        scope on a date.
+      operationId: ClientsController_listBillingRates_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: effectiveOn
+          required: false
+          in: query
+          description: Return the single rate in force per scope on this date.
+          schema:
+            type: string
+        - name: productId
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: rateKind
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - product
+              - tv_addon
+              - hp_addon
+              - bundle_bonus
+              - spiff
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: all
+            type: string
+            enum:
+              - past
+              - current
+              - pending
+              - all
+      responses:
+        "200":
+          description: ""
+      security: *a15
+      summary: List a client's billing rates (current + pending)
+      tags: *a16
+    post:
+      description: Requires clients:edit. Supersedes the scope’s pending rate;
+        back-dating → 422.
+      operationId: ClientsController_createBillingRate_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBillingRateDto"
+      responses:
+        "201":
+          description: ""
+      security: *a15
+      summary: Add an effective-dated billing rate
+      tags: *a16
+  /v1/products/{id}:
+    patch:
+      description: Requires clients:edit. product_type is immutable; is_active=false
+        soft-deactivates.
+      operationId: ProductsController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductDto"
+      responses:
+        "200":
+          description: ""
+      security:
+        - bearer: []
+      summary: Edit / deactivate a product
+      tags:
+        - Clients & Products
+  /v1/reps:
+    get:
+      description: "Requires hrm:view. Filters: status, fieldManagerId, search.
+        payment_details redacted unless hrm:edit."
+      operationId: RepsController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: active
+            type: string
+            enum:
+              - active
+              - terminated
+              - all
+        - name: fieldManagerId
+          required: false
+          in: query
+          description: Filter by field manager (user id).
+          schema:
+            type: string
+        - name: search
+          required: false
+          in: query
+          description: Search by name or rep_code (case-insensitive).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: &a17
+        - bearer: []
+      summary: List reps
+      tags: &a18
+        - HRM / Reps
+    post:
+      description: Requires hrm:create. rep_code never reused → 409.
+      operationId: RepsController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRepDto"
+      responses:
+        "201":
+          description: ""
+      security: *a17
+      summary: Create a rep
+      tags: *a18
+  /v1/reps/{id}:
+    get:
+      description: Requires hrm:view. payment_details redacted unless hrm:edit.
+      operationId: RepsController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a17
+      summary: Get a rep
+      tags: *a18
+    patch:
+      description: Requires hrm:edit. status=terminated requires termination_date.
+        rep_code immutable.
+      operationId: RepsController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRepDto"
+      responses:
+        "200":
+          description: ""
+      security: *a17
+      summary: Edit / set field manager / terminate a rep
+      tags: *a18
+  /v1/reps/{id}/documents:
+    get:
+      description: Requires hrm:view. file_url shown only with hrm:edit.
+      operationId: RepsController_listDocuments_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a17
+      summary: List a rep's documents
+      tags: *a18
+    post:
+      description: Requires hrm:edit. Stores a storage reference.
+      operationId: RepsController_createDocument_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRepDocumentDto"
+      responses:
+        "201":
+          description: ""
+      security: *a17
+      summary: Attach a document to a rep
+      tags: *a18
+  /v1/reps/{id}/equipment:
+    get:
+      description: Requires hrm:view.
+      operationId: RepsController_listEquipment_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a17
+      summary: List a rep's equipment
+      tags: *a18
+    post:
+      description: Requires hrm:edit. Deposit is exact Decimal.
+      operationId: RepsController_assignEquipment_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRepEquipmentDto"
+      responses:
+        "201":
+          description: ""
+      security: *a17
+      summary: Assign equipment to a rep
+      tags: *a18
+  /v1/equipment/{id}:
+    patch:
+      description: Requires hrm:edit. Transition to returned (sets returned_date) or
+        withheld.
+      operationId: EquipmentController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRepEquipmentDto"
+      responses:
+        "200":
+          description: ""
+      security:
+        - bearer: []
+      summary: Update equipment state
+      tags:
+        - HRM / Reps
+  /v1/commission/tiers:
+    get:
+      description: Requires commission:view.
+      operationId: CommissionController_listTiers_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a19
+        - bearer: []
+      summary: Tier schedules (current + pending)
+      tags: &a20
+        - Commission Config
+    post:
+      description: Requires commission:edit. Supersedes the pending schedule;
+        back-dating → 422.
+      operationId: CommissionController_createTiers_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTierScheduleDto"
+      responses:
+        "201":
+          description: ""
+      security: *a19
+      summary: Create a new effective-dated tier schedule
+      tags: *a20
+  /v1/commission/flat-rates:
+    get:
+      description: Requires commission:view.
+      operationId: CommissionController_listFlatRates_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: all
+            type: string
+            enum:
+              - past
+              - current
+              - pending
+              - all
+      responses:
+        "200":
+          description: ""
+      security: *a19
+      summary: Flat rates per product type (current + pending)
+      tags: *a20
+    post:
+      description: Requires commission:edit. greenfield_internet / tv / home_phone
+        only (internet is tiered).
+      operationId: CommissionController_createFlatRate_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFlatRateDto"
+      responses:
+        "201":
+          description: ""
+      security: *a19
+      summary: Set an effective-dated flat rate
+      tags: *a20
+  /v1/commission/holdback-config:
+    get:
+      description: Requires commission:view.
+      operationId: CommissionController_listHoldbackConfig_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: *a19
+      summary: Advance/holdback split (current + pending)
+      tags: *a20
+    patch:
+      description: Requires commission:edit. advance_pct + holdback_pct must equal 1;
+        back-dating → 422.
+      operationId: CommissionController_setHoldbackConfig_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetHoldbackConfigDto"
+      responses:
+        "200":
+          description: ""
+      security: *a19
+      summary: Set an effective-dated advance/holdback split
+      tags: *a20
+  /v1/commission/holdback-release-setting:
+    get:
+      description: Requires commission:view. PROPOSED/pending Redwave confirmation;
+        stored only.
+      operationId: CommissionController_getReleaseSetting_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: *a19
+      summary: Holdback-release setting (current sticky) — PROPOSED (SRS §17)
+      tags: *a20
+    patch:
+      description: "Requires commission:edit. PROPOSED/pending Redwave confirmation:
+        release_rule is stored only; its interpretation (which cycle the 30%
+        releases into) is deferred to the Pay Run module."
+      operationId: CommissionController_setReleaseSetting_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetHoldbackReleaseSettingDto"
+      responses:
+        "200":
+          description: ""
+      security: *a19
+      summary: Set the holdback-release setting (bulk, sticky) — PROPOSED (SRS §17)
+      tags: *a20
+  /v1/incentives:
+    get:
+      description: Requires commission:view. ?status filter.
+      operationId: IncentivesController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: all
+            type: string
+            enum:
+              - active
+              - ended
+              - all
+      responses:
+        "200":
+          description: ""
+      security: &a21
+        - bearer: []
+      summary: List incentives
+      tags: &a22
+        - Commission Config
+    post:
+      description: Requires commission:edit. per_activation is applied by the engine;
+        target_based is MODELED but DEFERRED (not yet applied — pending Redwave
+        confirmation).
+      operationId: IncentivesController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIncentiveDto"
+      responses:
+        "201":
+          description: ""
+      security: *a21
+      summary: Create an incentive/spiff
+      tags: *a22
+  /v1/incentives/{id}:
+    patch:
+      description: Requires commission:edit.
+      operationId: IncentivesController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIncentiveDto"
+      responses:
+        "200":
+          description: ""
+      security: *a21
+      summary: Edit / end an incentive
+      tags: *a22
+  /v1/sales:
+    post:
+      description: Requires sales:create. Server generates the Sale ID; item snapshots
+        stay NULL.
+      operationId: SalesController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSaleDto"
+      responses:
+        "201":
+          description: ""
+      security: &a23
+        - bearer: []
+      summary: Enter a sale
+      tags: &a24
+        - Sales & Validation
+    get:
+      description: Requires sales:view. Filters status/rep_id/client_id/date. Scoped
+        per caller in the query.
+      operationId: SalesController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - entered
+              - validated
+              - in_pay_run
+              - paid
+              - clawed_back
+              - deleted
+        - name: rep_id
+          required: false
+          in: query
+          description: Filter by rep (intersected with the caller’s scope).
+          schema:
+            type: string
+        - name: client_id
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: date_from
+          required: false
+          in: query
+          description: sale_date >= (YYYY-MM-DD).
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: date_to
+          required: false
+          in: query
+          description: sale_date <= (YYYY-MM-DD).
+          schema:
+            example: 2026-01-31
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a23
+      summary: List sales
+      tags: *a24
+  /v1/sales/bulk-validate:
+    post:
+      description: Requires sales:approve. NOT a file upload — client-report ingestion
+        is the Import module.
+      operationId: SalesController_bulkValidate_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkValidateDto"
+      responses:
+        "200":
+          description: ""
+      security: *a23
+      summary: Batch-validate selected sales (queue bulk-select)
+      tags: *a24
+  /v1/sales/{id}:
+    get:
+      description: Requires sales:view. Includes items + derived pay period.
+      operationId: SalesController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a23
+      summary: Get a sale
+      tags: *a24
+    patch:
+      description: Requires sales:edit. Only Entered sales; client/sale_date/mpu_id
+        are immutable.
+      operationId: SalesController_edit_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSaleDto"
+      responses:
+        "200":
+          description: ""
+      security: *a23
+      summary: Edit an entered sale
+      tags: *a24
+    delete:
+      description: Requires sales:delete. entered|validated → status=deleted (row
+        preserved); rejected once paid.
+      operationId: SalesController_remove_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a23
+      summary: Delete a pre-payout sale (soft)
+      tags: *a24
+  /v1/sales/{id}/validate:
+    post:
+      description: Requires sales:approve. Approval gate; never changes the pay
+        period. Optional greenfield confirm.
+      operationId: SalesController_validate_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateSaleDto"
+      responses:
+        "200":
+          description: ""
+      security: *a23
+      summary: Validate a sale (entered → validated)
+      tags: *a24
+  /v1/sales/{id}/greenfield:
+    post:
+      description: Requires sales:approve. PROPOSED two-step; recomputes
+        counts_toward_tally. Pay Run consumes at close.
+      operationId: SalesController_setGreenfield_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetGreenfieldDto"
+      responses:
+        "200":
+          description: ""
+      security: *a23
+      summary: Confirm/clear greenfield (PROPOSED — SRS §17)
+      tags: *a24
+  /v1/clawbacks:
+    get:
+      description: Requires clawback:view. Scoped; filters status/rep_id/sale_id.
+      operationId: ClawbackController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - pending
+              - applied
+        - name: rep_id
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: sale_id
+          required: false
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: &a25
+        - bearer: []
+      summary: List clawbacks
+      tags: &a26
+        - Clawback
+    post:
+      description: Requires clawback:create. Targets a PAID sale_item; amount defaults
+        to the exact frozen amount (rate + incentive). Flat, per-item, no date
+        math; the snapshot is never edited.
+      operationId: ClawbackController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClawbackDto"
+      responses:
+        "201":
+          description: ""
+      security: *a25
+      summary: Enter a clawback
+      tags: *a26
+  /v1/clawbacks/{id}:
+    get:
+      description: Requires clawback:view (scoped).
+      operationId: ClawbackController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a25
+      summary: Get a clawback
+      tags: *a26
+  /v1/expense-reports:
+    post:
+      description: Requires expenses:create. Any user may submit (own by default). km
+        items compute their amount; non-km items require a receipt per the
+        category config. The pay period is derived from week_start.
+      operationId: ExpenseReportsController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReportDto"
+      responses:
+        "201":
+          description: ""
+      security: &a27
+        - bearer: []
+      summary: Submit a weekly expense report
+      tags: &a28
+        - Expenses
+    get:
+      description: Requires expenses:view. Scoped (own/roster/all); filters
+        status/rep/client/period/date.
+      operationId: ExpenseReportsController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - draft
+              - submitted
+              - approved
+              - rejected
+              - sent_back
+        - name: rep_id
+          required: false
+          in: query
+          description: Filter by rep.
+          schema:
+            type: string
+        - name: client_id
+          required: false
+          in: query
+          description: Filter by a client tagged on any item.
+          schema:
+            type: string
+        - name: pay_period_id
+          required: false
+          in: query
+          description: Filter by pay period.
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Reports whose week_start ≥ this date.
+          schema:
+            example: 2026-03-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Reports whose week_start ≤ this date.
+          schema:
+            example: 2026-03-31
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a27
+      summary: List expense reports
+      tags: *a28
+  /v1/expense-reports/{id}:
+    get:
+      description: Requires expenses:view (scoped).
+      operationId: ExpenseReportsController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a27
+      summary: Get an expense report
+      tags: *a28
+    patch:
+      description: Requires expenses:edit. Editable pre-approval; once approved, only
+        a Super Admin may edit. Supplying items replaces the report lines
+        wholesale.
+      operationId: ExpenseReportsController_edit_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateReportDto"
+      responses:
+        "200":
+          description: ""
+      security: *a27
+      summary: Edit an expense report
+      tags: *a28
+  /v1/expense-reports/{id}/approve:
+    post:
+      description: Requires expenses:approve. decision = approve | reject | send_back.
+      operationId: ExpenseReportsController_review_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewDto"
+      responses:
+        "201":
+          description: ""
+      security: *a27
+      summary: Review an expense report
+      tags: *a28
+  /v1/expense-field-configs:
+    get:
+      description: Requires expenses:view.
+      operationId: ExpenseFieldConfigsController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a29
+        - bearer: []
+      summary: List expense category configs
+      tags: &a30
+        - Expenses
+    post:
+      description: Requires expenses:edit. Sets label, requires_receipt, is_active for
+        a category key.
+      operationId: ExpenseFieldConfigsController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFieldConfigDto"
+      responses:
+        "201":
+          description: ""
+      security: *a29
+      summary: Add / configure an expense category
+      tags: *a30
+  /v1/expense-exports:
+    get:
+      description: Requires expenses:view.
+      operationId: ExpenseExportsController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a31
+        - bearer: []
+      summary: List expense exports
+      tags: &a32
+        - Expenses
+    post:
+      description: Requires expenses:export. Records the request with a stubbed
+        file_url (generation deferred).
+      operationId: ExpenseExportsController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateExportDto"
+      responses:
+        "201":
+          description: ""
+      security: *a31
+      summary: Generate an expense export
+      tags: *a32
+  /v1/pay-periods:
+    get:
+      description: Requires payrun:view. Pre-loaded 2026 schedule.
+      operationId: PayPeriodController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security:
+        - bearer: []
+      summary: List pay periods
+      tags:
+        - Pay Run & Holdback
+  /v1/pay-runs:
+    get:
+      description: Requires payrun:view.
+      operationId: PayRunController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a33
+        - bearer: []
+      summary: List pay runs
+      tags: &a34
+        - Pay Run & Holdback
+    post:
+      description: Requires payrun:create. Computes preview lines via the engine;
+        nothing frozen.
+      operationId: PayRunController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePayRunDto"
+      responses:
+        "201":
+          description: ""
+      security: *a33
+      summary: Create / refresh a DRAFT pay run
+      tags: *a34
+  /v1/pay-runs/{id}:
+    get:
+      description: Requires payrun:view (scoped lines).
+      operationId: PayRunController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a33
+      summary: Get a pay run + lines
+      tags: *a34
+  /v1/pay-runs/{id}/lines:
+    get:
+      description: Requires payrun:view (scoped).
+      operationId: PayRunController_lines_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a33
+      summary: Per-rep computed lines
+      tags: *a34
+  /v1/pay-runs/{id}/lines/{lineId}/bonus:
+    post:
+      description: Requires payrun:approve. Draft only.
+      operationId: PayRunController_setBonus_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: lineId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetBonusDto"
+      responses:
+        "200":
+          description: ""
+      security: *a33
+      summary: Set an ad-hoc bonus on a draft line
+      tags: *a34
+  /v1/pay-runs/{id}/finalize:
+    post:
+      description: "Requires payrun:approve. ATOMIC + IDEMPOTENT: freezes snapshots,
+        pays sales, records/releases holdback (release timing PROPOSED — SRS
+        §17), applies bonuses, composes net. Retry is a no-op."
+      operationId: PayRunController_finalize_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          description: Safe to retry; finalize is idempotent.
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a33
+      summary: Finalize a pay run (the money action)
+      tags: *a34
+  /v1/pay-runs/{id}/export:
+    post:
+      description: Requires payrun:export. Configurable format; marks the run
+        exported; recorded via audit.
+      operationId: PayRunController_export_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportPayRunDto"
+      responses:
+        "200":
+          description: ""
+      security: *a33
+      summary: Generate the ADP export for a finalized run
+      tags: *a34
+  /v1/holdback-ledger:
+    get:
+      description: Requires payrun:view. Holds, schedule, release status.
+      operationId: HoldbackLedgerController_list_v1
+      parameters:
+        - name: rep_id
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - held
+              - scheduled
+              - released
+      responses:
+        "200":
+          description: ""
+      security:
+        - bearer: []
+      summary: Holdback ledger
+      tags:
+        - Pay Run & Holdback
+  /v1/clients/{id}/statements:
+    post:
+      description: Requires billing:create. Priced solely from client_billing_rates
+        effective on each sale_date; no GST. Regenerating replaces the existing
+        statement for the client+period (no duplicate).
+      operationId: BillingGenerationController_generateStatement_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateBillingDto"
+      responses:
+        "201":
+          description: ""
+      security: &a35
+        - bearer: []
+      summary: Generate a client statement (one line per customer)
+      tags: &a36
+        - Billing & Statements
+  /v1/clients/{id}/invoices:
+    post:
+      description: Requires billing:create. total_commission = the client-billing
+        statement total (billing stream only; never the rep commission payout).
+        Regenerating replaces the existing invoice.
+      operationId: BillingGenerationController_generateInvoice_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateBillingDto"
+      responses:
+        "201":
+          description: ""
+      security: *a35
+      summary: Generate a one-line commission invoice
+      tags: *a36
+  /v1/statements:
+    get:
+      description: Requires billing:view.
+      operationId: StatementsController_list_v1
+      parameters:
+        - name: client_id
+          required: false
+          in: query
+          description: Filter by client.
+          schema:
+            type: string
+        - name: pay_period_id
+          required: false
+          in: query
+          description: Filter by pay period.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: &a37
+        - bearer: []
+      summary: List generated statements
+      tags: &a38
+        - Billing & Statements
+  /v1/statements/{id}:
+    get:
+      description: Requires billing:view.
+      operationId: StatementsController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a37
+      summary: Get a statement with its lines
+      tags: *a38
+  /v1/statements/{id}/export:
+    post:
+      description: Requires billing:export. Updates the file_url reference; real
+        render deferred.
+      operationId: StatementsController_export_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingExportDto"
+      responses:
+        "201":
+          description: ""
+      security: *a37
+      summary: Export a statement (stub file)
+      tags: *a38
+  /v1/invoices:
+    get:
+      description: Requires billing:view.
+      operationId: InvoicesController_list_v1
+      parameters:
+        - name: client_id
+          required: false
+          in: query
+          description: Filter by client.
+          schema:
+            type: string
+        - name: pay_period_id
+          required: false
+          in: query
+          description: Filter by pay period.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: &a39
+        - bearer: []
+      summary: List generated invoices
+      tags: &a40
+        - Billing & Statements
+  /v1/invoices/{id}:
+    get:
+      description: Requires billing:view.
+      operationId: InvoicesController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a39
+      summary: Get an invoice
+      tags: *a40
+  /v1/invoices/{id}/export:
+    post:
+      description: Requires billing:export. Updates the file_url reference; real
+        render deferred.
+      operationId: InvoicesController_export_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingExportDto"
+      responses:
+        "201":
+          description: ""
+      security: *a39
+      summary: Export an invoice (stub file)
+      tags: *a40
+  /v1/documents:
+    post:
+      description: Requires documents:create. Stores a stubbed original_file_url;
+        status draft, owner = caller.
+      operationId: DocumentsController_upload_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDocumentDto"
+      responses:
+        "201":
+          description: ""
+      security: &a41
+        - bearer: []
+      summary: Upload a document
+      tags: &a42
+        - Documents & E-Signature
+    get:
+      description: Requires documents:view. Scoped to owned or shared-with
+        (Admin/Super Admin see all).
+      operationId: DocumentsController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - draft
+              - shared
+              - partially_signed
+              - completed
+              - declined
+        - name: doc_type
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - compensation_agreement
+              - rate_notice
+              - equipment
+              - other
+      responses:
+        "200":
+          description: ""
+      security: *a41
+      summary: List documents
+      tags: *a42
+  /v1/documents/{id}:
+    get:
+      description: Requires documents:view. 404 if not visible to the caller.
+      operationId: DocumentsController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a41
+      summary: Get a document (requests + per-signer status)
+      tags: *a42
+  /v1/documents/{id}/signature-requests:
+    post:
+      description: Requires documents:create AND ownership of the document (else 403).
+        Recipients become the shared-with set.
+      operationId: DocumentsController_requestSignature_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSignatureRequestDto"
+      responses:
+        "201":
+          description: ""
+      security: *a41
+      summary: Share + request a signature from one or many recipients
+      tags: *a42
+  /v1/signature-requests/{id}/sign:
+    post:
+      description: Authenticated; the caller must be a recipient of this request (else
+        403). decision = sign | decline. Records the signature event (method,
+        IP, timestamp) and stores a stubbed signed copy.
+      operationId: SignatureRequestsController_sign_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignDto"
+      responses:
+        "201":
+          description: ""
+      security: &a43
+        - bearer: []
+      summary: Sign or decline a signature request
+      tags: &a44
+        - Documents & E-Signature
+  /v1/signature-requests/{id}/cancel:
+    post:
+      description: Authenticated; only the requester, the document owner, or an admin
+        may cancel (else 403).
+      operationId: SignatureRequestsController_cancel_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+      security: *a43
+      summary: Cancel a signature request
+      tags: *a44
+  /v1/imports:
+    post:
+      description: Requires import:create. Stages + classifies rows (file upload
+        stubbed — rows fed in the body). Nothing is written to live tables until
+        commit.
+      operationId: ImportController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateImportDto"
+      responses:
+        "201":
+          description: ""
+      security: &a45
+        - bearer: []
+      summary: Create a staged import batch
+      tags: &a46
+        - Data Import & Integration
+    get:
+      description: Requires import:view.
+      operationId: ImportController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - staged
+              - committed
+              - failed
+              - cancelled
+        - name: source_type
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - client_report
+              - master_migration
+              - balance_migration
+        - name: import_type
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - reps
+              - clients
+              - products
+              - sales
+              - holdback
+              - clawback
+              - mixed
+      responses:
+        "200":
+          description: ""
+      security: *a45
+      summary: Import/migration history
+      tags: *a46
+  /v1/imports/{id}:
+    get:
+      description: Requires import:view. Rows with match status, counts, and reconcile
+        total.
+      operationId: ImportController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a45
+      summary: Preview a staged batch
+      tags: *a46
+  /v1/imports/{id}/reconcile:
+    post:
+      description: "Requires import:edit. Resolutions: match / edit / ignore.
+        Recomputes counts."
+      operationId: ImportController_reconcile_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconcileDto"
+      responses:
+        "201":
+          description: ""
+      security: *a45
+      summary: Resolve unmatched/ambiguous rows
+      tags: *a46
+  /v1/imports/{id}/commit:
+    post:
+      description: Requires import:approve. Blocked (422) while any row is unresolved
+        (balance migrations must also reconcile to the source total). Applies
+        all rows in ONE transaction; re-commit is a no-op.
+      operationId: ImportController_commit_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+      security: *a45
+      summary: Commit the batch (atomic + idempotent; reconcile-gated)
+      tags: *a46
+  /v1/dashboards/rep:
+    get:
+      description: Authenticated; scoped to the caller’s own rep.
+      operationId: DashboardsController_rep_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a47
+        - bearer: []
+      summary: Rep's own dashboard
+      tags: &a48
+        - Reporting & Dashboards
+  /v1/dashboards/manager:
+    get:
+      description: Requires reports:view; scoped to the caller’s roster (bare rep → 403).
+      operationId: DashboardsController_manager_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: *a47
+      summary: Manager dashboard
+      tags: *a48
+  /v1/dashboards/business:
+    get:
+      description: Requires reports:view AND Super Admin (else 403).
+      operationId: DashboardsController_business_v1
+      parameters:
+        - name: pay_period_id
+          required: false
+          in: query
+          description: Restrict to one pay period.
+          schema:
+            type: string
+        - name: date_from
+          required: false
+          in: query
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: date_to
+          required: false
+          in: query
+          schema:
+            example: 2026-03-31
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a47
+      summary: Business / executive dashboard
+      tags: *a48
+  /v1/dashboards/admin:
+    get:
+      description: Requires reports:view AND Admin/Super Admin.
+      operationId: DashboardsController_admin_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: *a47
+      summary: Admin operational home (queues)
+      tags: *a48
+  /v1/leaderboard:
+    get:
+      description: Requires reports:view. Ranked by internet activation count for the
+        period — no earnings.
+      operationId: LeaderboardController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security:
+        - bearer: []
+      summary: Company-wide leaderboard (counts only)
+      tags:
+        - Reporting & Dashboards
+  /v1/notifications:
+    get:
+      description: Authenticated; returns only the caller’s own notifications.
+      operationId: NotificationsController_list_v1
+      parameters:
+        - name: is_read
+          required: false
+          in: query
+          description: Filter by read/unread.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: ""
+      security: &a49
+        - bearer: []
+      summary: My notifications
+      tags: &a50
+        - Reporting & Dashboards
+  /v1/notifications/{id}/read:
+    patch:
+      description: Authenticated; only the caller’s own notification.
+      operationId: NotificationsController_markRead_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a49
+      summary: Mark a notification read
+      tags: *a50
+  /v1/notification-settings:
+    get:
+      description: Requires settings:view (Super Admin).
+      operationId: NotificationSettingsController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+      security: &a51
+        - bearer: []
+      summary: Notification event settings
+      tags: &a52
+        - Reporting & Dashboards
+    patch:
+      description: Requires settings:edit (Super Admin). Per-event in-app/email
+        toggles; NO per-user override.
+      operationId: NotificationSettingsController_update_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNotificationSettingsDto"
+      responses:
+        "200":
+          description: ""
+      security: *a51
+      summary: Configure event×channel settings
+      tags: *a52
+  /v1/chatbot/query:
+    post:
+      description: Authenticated. Answers from Redwave data within the caller’s scope
+        only; the LLM is stubbed.
+      operationId: ChatbotController_query_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatbotQueryDto"
+      responses:
+        "201":
+          description: ""
+      security:
+        - bearer: []
+      summary: Ask the read-only assistant
+      tags:
+        - Reporting & Dashboards
+info:
+  title: Redwave ERP / HRM API
+  description: Versioned REST contract for the Redwave platform. Each protected
+    endpoint notes the required (module, action) permission enforced server-side
+    by the RBAC guard.
+  version: "1.0"
+  contact: {}
+tags: []
+servers: []
+components:
+  securitySchemes:
+    bearer:
+      scheme: bearer
+      bearerFormat: JWT
+      type: http
+  schemas:
+    LoginDto:
+      type: object
+      properties:
+        email:
+          type: string
+          example: superadmin@redwave.local
+        password:
+          type: string
+          example: DevSuperAdmin!123
+          writeOnly: true
+      required:
+        - email
+        - password
+    RefreshDto:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          description: A valid refresh token previously issued by /auth/login.
+      required:
+        - refresh_token
+    CreateUserDto:
+      type: object
+      properties:
+        email:
+          type: string
+          example: jane@redwave.local
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+        full_name:
+          type: string
+          example: Jane Doe
+        phone:
+          type: string
+        avatar_url:
+          type: string
+        role_ids:
+          description: Role ids to assign on creation.
+          type: array
+          items:
+            type: string
+      required:
+        - email
+        - password
+        - full_name
+    UpdateUserDto:
+      type: object
+      properties:
+        full_name:
+          type: string
+        phone:
+          type: string
+        avatar_url:
+          type: string
+        status:
+          type: string
+          enum:
+            - active
+            - inactive
+          description: Set inactive to deactivate (immediate revoke).
+    SetUserRolesDto:
+      type: object
+      properties:
+        role_ids:
+          description: The complete set of role ids the user should hold.
+          type: array
+          items:
+            type: string
+      required:
+        - role_ids
+    CreateRoleDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: General Manager
+        description:
+          type: string
+        permission_ids:
+          description: Initial permission ids to grant.
+          type: array
+          items:
+            type: string
+      required:
+        - name
+    UpdateRoleDto:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Rename the role. Built-in roles cannot be renamed.
+        description:
+          type: string
+    SetRolePermissionsDto:
+      type: object
+      properties:
+        permission_ids:
+          description: The complete set of permission ids the role should hold.
+          type: array
+          items:
+            type: string
+      required:
+        - permission_ids
+    ChangePasswordDto:
+      type: object
+      properties:
+        current_password:
+          type: string
+          writeOnly: true
+        new_password:
+          type: string
+          writeOnly: true
+          minLength: 8
+      required:
+        - current_password
+        - new_password
+    SetThemeDto:
+      type: object
+      properties:
+        theme_preference:
+          type: string
+          enum:
+            - light
+            - dark
+            - system
+          description: Applies immediately — no review (AUTH-010).
+      required:
+        - theme_preference
+    ProfileChangeRequestDto:
+      type: object
+      properties:
+        full_name:
+          type: string
+        phone:
+          type: string
+        avatar_url:
+          type: string
+    CreateClientDto:
+      type: object
+      properties:
+        client_code:
+          type: string
+          example: VF
+          description: Unique client code (e.g. VF / RF / CTI).
+        name:
+          type: string
+          example: Valley Fiber
+        market:
+          type: string
+          enum:
+            - CA
+            - US
+        supplies_mpu_id:
+          type: boolean
+          description: Whether the partner supplies per-house MPU IDs.
+      required:
+        - client_code
+        - name
+        - market
+        - supplies_mpu_id
+    UpdateClientDto:
+      type: object
+      properties:
+        client_code:
+          type: string
+        name:
+          type: string
+        market:
+          type: string
+          enum:
+            - CA
+            - US
+        supplies_mpu_id:
+          type: boolean
+        is_active:
+          type: boolean
+          description: Set false to deactivate (soft — history preserved).
+    CreateProductDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Fibre 1gig
+        product_type:
+          type: string
+          enum:
+            - internet
+            - greenfield_internet
+            - tv
+            - home_phone
+      required:
+        - name
+        - product_type
+    CreateBillingRateDto:
+      type: object
+      properties:
+        product_id:
+          type: string
+          description: Product the rate applies to. Omit for add-on rate kinds.
+        rate_kind:
+          type: string
+          enum:
+            - product
+            - tv_addon
+            - hp_addon
+            - bundle_bonus
+            - spiff
+        amount:
+          type: string
+          example: "49.99"
+          description: Exact decimal STRING (≤2 dp). Never a float.
+        effective_from:
+          type: string
+          example: 2026-07-01
+          description: YYYY-MM-DD; must be today or future.
+        effective_to:
+          type: string
+          example: 2026-12-31
+          description: YYYY-MM-DD; null = open-ended.
+      required:
+        - rate_kind
+        - amount
+        - effective_from
+    UpdateProductDto:
+      type: object
+      properties:
+        name:
+          type: string
+        is_active:
+          type: boolean
+          description: Set false to deactivate (soft — history preserved).
+    CreateRepDto:
+      type: object
+      properties:
+        rep_code:
+          type: string
+          example: Redwave07
+          description: Unique rep code. Never reused — even after termination.
+        full_name:
+          type: string
+          example: Jordan Field
+        field_manager_id:
+          type: string
+          description: User id of the Field Manager (must hold the Manager role).
+        hire_date:
+          type: string
+          example: 2026-01-15
+          description: YYYY-MM-DD.
+        user_id:
+          type: string
+          description: Optional linked login user (source of contact info).
+        payment_details:
+          type: object
+          description: Sensitive banking / e-transfer details (role-gated).
+      required:
+        - rep_code
+        - full_name
+        - field_manager_id
+        - hire_date
+    UpdateRepDto:
+      type: object
+      properties:
+        full_name:
+          type: string
+        field_manager_id:
+          type: string
+          description: Reassign the Field Manager (must hold the Manager role).
+        hire_date:
+          type: string
+          example: 2026-01-15
+        user_id:
+          type: string
+        payment_details:
+          type: object
+        status:
+          type: string
+          enum:
+            - active
+            - terminated
+          description: terminated requires termination_date.
+        termination_date:
+          type: string
+          example: 2026-06-30
+          description: Required when status=terminated.
+    CreateRepDocumentDto:
+      type: object
+      properties:
+        doc_type:
+          type: string
+          example: contract
+          description: e.g. contract, id, equipment_agreement.
+        file_url:
+          type: string
+          description: Object-storage reference (URL/key) of the stored file.
+      required:
+        - doc_type
+        - file_url
+    CreateRepEquipmentDto:
+      type: object
+      properties:
+        equipment_type:
+          type: string
+          example: iPad
+        identifier:
+          type: string
+          example: SN-12345
+          description: Serial / asset tag.
+        deposit_amount:
+          type: string
+          example: "250.00"
+          description: Deposit held — exact decimal STRING, never a float.
+        assigned_date:
+          type: string
+          example: 2026-01-15
+          description: YYYY-MM-DD.
+      required:
+        - equipment_type
+        - identifier
+        - deposit_amount
+        - assigned_date
+    UpdateRepEquipmentDto:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+            - assigned
+            - returned
+            - withheld
+          description: assigned → returned / withheld.
+        returned_date:
+          type: string
+          example: 2026-06-30
+          description: Defaults to today when status=returned.
+    TierBracketDto:
+      type: object
+      properties:
+        tier_number:
+          type: number
+          example: 4
+          description: 1 = highest .. 4 = entry.
+        min_count:
+          type: number
+          example: 0
+          description: Inclusive lower bound of the gross internet tally.
+        max_count:
+          type: object
+          example: 6
+          description: Inclusive upper bound; null = open-ended (36+).
+        rate_per_activation:
+          type: string
+          example: "110.00"
+          description: Exact decimal STRING — never a float.
+      required:
+        - tier_number
+        - min_count
+        - rate_per_activation
+    CreateTierScheduleDto:
+      type: object
+      properties:
+        effective_from:
+          type: string
+          example: 2026-07-01
+          description: YYYY-MM-DD; must be today or future.
+        effective_to:
+          type: string
+          example: 2026-12-31
+          description: YYYY-MM-DD; null = open-ended.
+        tiers:
+          description: The full tier schedule (contiguous, one open top bracket).
+          type: array
+          items:
+            $ref: "#/components/schemas/TierBracketDto"
+      required:
+        - effective_from
+        - tiers
+    CreateFlatRateDto:
+      type: object
+      properties:
+        product_type:
+          type: string
+          enum:
+            - internet
+            - greenfield_internet
+            - tv
+            - home_phone
+          description: Flat-rated product. internet is tiered (not allowed here).
+        amount:
+          type: string
+          example: "30.00"
+          description: Exact decimal STRING — never a float.
+        effective_from:
+          type: string
+          example: 2026-07-01
+          description: YYYY-MM-DD; must be today or future.
+        effective_to:
+          type: string
+          example: 2026-12-31
+      required:
+        - product_type
+        - amount
+        - effective_from
+    SetHoldbackConfigDto:
+      type: object
+      properties:
+        advance_pct:
+          type: string
+          example: "0.7000"
+          description: Advance fraction (0..1), decimal STRING.
+        holdback_pct:
+          type: string
+          example: "0.3000"
+          description: Holdback fraction; advance_pct + holdback_pct must = 1.
+        effective_from:
+          type: string
+          example: 2026-07-01
+          description: YYYY-MM-DD; must be today or future.
+        effective_to:
+          type: string
+          example: 2026-12-31
+      required:
+        - advance_pct
+        - holdback_pct
+        - effective_from
+    SetHoldbackReleaseSettingDto:
+      type: object
+      properties:
+        release_rule:
+          type: string
+          example: next_cycle_after_30_days
+          description: "PROPOSED (SRS §17): free-form release rule, stored only.
+            Interpretation deferred to Pay Run."
+      required:
+        - release_rule
+    CreateIncentiveDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: July VF Internet Spiff
+        scope_client_id:
+          type: string
+          description: Scope to a client; omit/null = all clients.
+        scope_product_type:
+          type: string
+          enum:
+            - internet
+            - greenfield_internet
+            - tv
+            - home_phone
+          description: Scope to a product type; omit/null = all.
+        target_type:
+          type: string
+          enum:
+            - per_activation
+            - target_based
+          description: per_activation is computed by the engine. target_based is MODELED
+            but DEFERRED (not yet applied — CLAUDE §12); requires target_count.
+        target_count:
+          type: number
+          example: 5
+          description: Required for target_based (e.g. 5 sales in 1 day).
+        window_start:
+          type: string
+          example: 2026-07-01
+          description: YYYY-MM-DD inclusive.
+        window_end:
+          type: string
+          example: 2026-07-31
+          description: YYYY-MM-DD inclusive.
+        amount:
+          type: string
+          example: "20.00"
+          description: Per-activation bonus — exact decimal STRING.
+      required:
+        - name
+        - target_type
+        - window_start
+        - window_end
+        - amount
+    UpdateIncentiveDto:
+      type: object
+      properties:
+        name:
+          type: string
+        amount:
+          type: string
+          example: "25.00"
+        status:
+          type: string
+          enum:
+            - active
+            - ended
+          description: Set ended to retire the incentive.
+    SaleItemInput:
+      type: object
+      properties:
+        product_id:
+          type: string
+          description: A product belonging to the sale’s client (active).
+      required:
+        - product_id
+    CreateSaleDto:
+      type: object
+      properties:
+        client_id:
+          type: string
+          description: The client (must be an existing active client).
+        rep_id:
+          type: string
+          description: Rep the sale belongs to. Defaults to the caller’s own rep;
+            scope-authorized.
+        sale_date:
+          type: string
+          example: 2026-01-10
+          description: YYYY-MM-DD. Defaults to today. GOVERNS the pay period.
+        activation_date:
+          type: string
+          example: 2026-01-15
+          description: YYYY-MM-DD. Reference only — drives no logic.
+        customer_name:
+          type: string
+        street:
+          type: string
+        city:
+          type: string
+        province_state:
+          type: string
+        postal_code:
+          type: string
+        mpu_id:
+          type: string
+          description: Client house ID, where supplied (some clients do not provide one).
+        is_greenfield:
+          type: boolean
+          description: Rep’s greenfield REQUEST at entry; an admin confirms/clears at
+            validation.
+        items:
+          description: One or more products on this sale.
+          type: array
+          items:
+            $ref: "#/components/schemas/SaleItemInput"
+      required:
+        - client_id
+        - customer_name
+        - street
+        - city
+        - province_state
+        - postal_code
+        - items
+    BulkValidateDto:
+      type: object
+      properties:
+        sale_ids:
+          description: Sale ids to validate. Non-entered sales are reported, not thrown.
+          type: array
+          items:
+            type: string
+      required:
+        - sale_ids
+    UpdateSaleDto:
+      type: object
+      properties:
+        customer_name:
+          type: string
+        street:
+          type: string
+        city:
+          type: string
+        province_state:
+          type: string
+        postal_code:
+          type: string
+        activation_date:
+          type: string
+          example: 2026-01-15
+          description: YYYY-MM-DD. Reference only.
+    ValidateSaleDto:
+      type: object
+      properties:
+        is_greenfield:
+          type: boolean
+          description: "Optional: confirm (true) or clear (false) greenfield while
+            validating."
+    SetGreenfieldDto:
+      type: object
+      properties:
+        is_greenfield:
+          type: boolean
+          description: true = confirmed greenfield (internet excluded from tally); false =
+            cleared.
+      required:
+        - is_greenfield
+    CreateClawbackDto:
+      type: object
+      properties:
+        sale_item_id:
+          type: string
+          description: The cancelled, already-paid sale_item to claw back.
+        reason:
+          type: string
+          example: Customer cancelled within contract window.
+        reported_date:
+          type: string
+          example: 2026-03-15
+          description: Client-reported cancellation date (record only; drives no logic).
+        amount:
+          type: string
+          example: "30.00"
+          description: Override the snapshot-derived amount (editable with permission).
+            Decimal string, never float.
+      required:
+        - sale_item_id
+        - reason
+        - reported_date
+    KmStopInput:
+      type: object
+      properties:
+        stop_order:
+          type: number
+          example: 0
+          description: Order of this stop along the route (0-based).
+        address:
+          type: string
+          example: 123 Main St, Winnipeg
+        lat:
+          type: string
+          example: "49.895100"
+          description: Latitude (decimal string).
+        lng:
+          type: string
+          example: "-97.138400"
+          description: Longitude (decimal string).
+      required:
+        - stop_order
+        - address
+        - lat
+        - lng
+    KmLogInput:
+      type: object
+      properties:
+        trip_type:
+          type: string
+          enum:
+            - single
+            - round
+          example: round
+        total_km:
+          type: string
+          example: "130.00"
+          description: Route's total driven distance in km (decimal string).
+        stops:
+          type: array
+          items:
+            $ref: "#/components/schemas/KmStopInput"
+      required:
+        - trip_type
+        - total_km
+        - stops
+    ExpenseItemInput:
+      type: object
+      properties:
+        category:
+          type: string
+          enum:
+            - km
+            - meals
+            - hotel
+            - flight
+            - rental
+            - gas
+            - other
+          example: meals
+        client_id:
+          type: string
+          description: Optional client this expense is attributed to.
+        expense_date:
+          type: string
+          example: 2026-03-10
+        amount:
+          type: string
+          example: "42.50"
+          description: Amount (decimal string). Required for non-km items; ignored for km
+            (computed).
+        description:
+          type: string
+          example: Lunch with client
+        receipt_url:
+          type: string
+          description: Object-storage reference; mandatory per the category config.
+        km:
+          description: Required for `km` items; forbidden otherwise.
+          allOf:
+            - $ref: "#/components/schemas/KmLogInput"
+      required:
+        - category
+        - expense_date
+        - description
+    CreateReportDto:
+      type: object
+      properties:
+        week_start:
+          type: string
+          example: 2026-03-09
+          description: Week start (governs the pay period).
+        week_end:
+          type: string
+          example: 2026-03-15
+        rep_id:
+          type: string
+          description: Rep this report is for; defaults to the submitter’s linked rep.
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExpenseItemInput"
+      required:
+        - week_start
+        - week_end
+        - items
+    UpdateReportDto:
+      type: object
+      properties:
+        week_start:
+          type: string
+          example: 2026-03-09
+        week_end:
+          type: string
+          example: 2026-03-15
+        items:
+          description: Replaces all lines when provided.
+          type: array
+          items:
+            $ref: "#/components/schemas/ExpenseItemInput"
+    ReviewDto:
+      type: object
+      properties:
+        decision:
+          type: string
+          enum:
+            - approve
+            - reject
+            - send_back
+        note:
+          type: string
+          description: Optional note (reason for rejection / send-back).
+      required:
+        - decision
+    CreateFieldConfigDto:
+      type: object
+      properties:
+        category_key:
+          type: string
+          example: parking
+          description: Snake_case category key (unique).
+        label:
+          type: string
+          example: Parking
+        requires_receipt:
+          type: boolean
+          example: true
+          description: Whether items in this category require a receipt.
+        is_active:
+          type: boolean
+          example: true
+          default: true
+      required:
+        - category_key
+        - label
+        - requires_receipt
+    CreateExportDto:
+      type: object
+      properties:
+        format:
+          type: string
+          enum:
+            - pdf
+            - excel
+          example: excel
+        client_id:
+          type: string
+          description: Restrict to one client.
+        pay_period_id:
+          type: string
+          description: Restrict to one pay period.
+      required:
+        - format
+    CreatePayRunDto:
+      type: object
+      properties:
+        pay_period_id:
+          type: string
+          description: The pay period to run (must be pre-loaded).
+      required:
+        - pay_period_id
+    SetBonusDto:
+      type: object
+      properties:
+        amount:
+          type: string
+          example: "50.00"
+          description: Bonus amount — exact decimal STRING, never a float.
+        note:
+          type: string
+          description: Reason / note for the bonus.
+      required:
+        - amount
+    ExportPayRunDto:
+      type: object
+      properties:
+        format:
+          type: string
+          enum:
+            - csv
+            - json
+          default: csv
+          description: Export format.
+    GenerateBillingDto:
+      type: object
+      properties:
+        pay_period_id:
+          type: string
+          description: "The pay period to bill (governs which sales by sale_date, #7)."
+      required:
+        - pay_period_id
+    BillingExportDto:
+      type: object
+      properties:
+        format:
+          type: string
+          enum:
+            - pdf
+            - excel
+          example: excel
+      required:
+        - format
+    CreateDocumentDto:
+      type: object
+      properties:
+        title:
+          type: string
+          example: Compensation Agreement 2026
+        doc_type:
+          type: string
+          enum:
+            - compensation_agreement
+            - rate_notice
+            - equipment
+            - other
+          example: compensation_agreement
+      required:
+        - title
+        - doc_type
+    CreateSignatureRequestDto:
+      type: object
+      properties:
+        recipient_user_ids:
+          description: User ids to request a signature from (≥1).
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+          example: Please review and sign by Friday.
+        due_date:
+          type: string
+          example: 2026-06-30
+          description: Optional due date (record only).
+      required:
+        - recipient_user_ids
+    SignDto:
+      type: object
+      properties:
+        decision:
+          type: string
+          enum:
+            - sign
+            - decline
+        method:
+          type: string
+          example: typed
+          description: Signature method (typed / drawn / …).
+      required:
+        - decision
+    CreateImportDto:
+      type: object
+      properties:
+        source_type:
+          type: string
+          enum:
+            - client_report
+            - master_migration
+            - balance_migration
+          example: client_report
+        import_type:
+          type: string
+          enum:
+            - reps
+            - clients
+            - products
+            - sales
+            - holdback
+            - clawback
+            - mixed
+          example: sales
+        client_id:
+          type: string
+          description: Client scope (required for client_report).
+        field_mapping_id:
+          type: string
+          description: A saved field mapping to apply to each row.
+        reconcile_total:
+          type: string
+          example: "48200.00"
+          description: Operator-provided source total (required to commit a balance
+            migration). Decimal string.
+        rows:
+          description: Raw source rows (file upload stubbed). Each is an arbitrary
+            key→value object.
+          type: array
+          items:
+            type: object
+      required:
+        - source_type
+        - import_type
+        - rows
+    RowResolution:
+      type: object
+      properties:
+        row_id:
+          type: string
+          description: The import row to resolve.
+        action:
+          type: string
+          enum:
+            - match
+            - edit
+            - ignore
+        matched_entity_id:
+          type: string
+          description: "For 'match': the live entity to match this row to."
+        mapped_data:
+          type: object
+          description: "For 'edit': corrected mapped data (re-classified)."
+      required:
+        - row_id
+        - action
+    ReconcileDto:
+      type: object
+      properties:
+        resolutions:
+          type: array
+          items:
+            $ref: "#/components/schemas/RowResolution"
+      required:
+        - resolutions
+    EventSettingInput:
+      type: object
+      properties:
+        event_type:
+          type: string
+          example: rate_change
+        in_app_enabled:
+          type: boolean
+          example: true
+        email_enabled:
+          type: boolean
+          example: false
+      required:
+        - event_type
+        - in_app_enabled
+        - email_enabled
+    UpdateNotificationSettingsDto:
+      type: object
+      properties:
+        settings:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventSettingInput"
+      required:
+        - settings
+    ChatbotQueryDto:
+      type: object
+      properties:
+        prompt:
+          type: string
+          example: How many sales do I have this period?
+      required:
+        - prompt

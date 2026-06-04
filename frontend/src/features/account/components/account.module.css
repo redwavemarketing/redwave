@@ -1,0 +1,101 @@
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.name {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.email {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 520px;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.help {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+/* Pending-change banner field list */
+.pendingList {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.pendingItem {
+  font-size: var(--text-sm);
+}
+
+.pendingFrom {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+}
+
+.pendingTo {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+/* Read-only notification settings list */
+.notifList {
+  display: flex;
+  flex-direction: column;
+}
+
+.notifRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.notifRow:last-child {
+  border-bottom: none;
+}
+
+.notifEvent {
+  font-size: var(--text-base);
+  color: var(--text-primary);
+}
+
+.notifChannels {
+  display: flex;
+  gap: var(--space-2);
+}

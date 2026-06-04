@@ -1,0 +1,82 @@
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.email {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.time {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.diff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.diffRow {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.field {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.fromTo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.from {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  overflow-wrap: anywhere;
+}
+
+.arrow {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.to {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+}

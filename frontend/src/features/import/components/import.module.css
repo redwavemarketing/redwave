@@ -1,0 +1,162 @@
+/* Shared styles for the Data Import feature. Tokens only. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: flex-end;
+}
+
+.control {
+  min-width: 200px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 760px;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.note {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.detailHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-4);
+}
+
+/* ── Stepper ─────────────────────────────────────────────────────────────────── */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.stepCircle {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  background-color: var(--surface-1);
+}
+
+.stepDone .stepCircle {
+  border-color: var(--accent-600);
+  color: var(--accent-600);
+  background-color: var(--accent-50);
+}
+
+.stepCurrent .stepCircle {
+  border-color: var(--accent-600);
+  color: var(--accent-600);
+  box-shadow: 0 0 0 3px var(--accent-50);
+}
+
+.stepLabel {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.stepDone .stepLabel,
+.stepCurrent .stepLabel {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.stepConnector {
+  width: 28px;
+  height: 1px;
+  background-color: var(--border);
+}
+
+/* ── Rows editor ─────────────────────────────────────────────────────────────── */
+.editorHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.editorError {
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
+.editorArea {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* ── Rows table cells ─────────────────────────────────────────────────────────── */
+.jsonCell {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.issueCell {
+  max-width: 260px;
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
+/* ── Reconcile / match finder ─────────────────────────────────────────────────── */
+.finderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.finderList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 360px;
+  overflow-y: auto;
+}

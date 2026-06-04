@@ -1,0 +1,41 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Auto-fit KPI grid — tiles wrap responsively. */
+.kpiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--space-4);
+}
+
+/* Queue grid for the admin home. */
+.queueGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+/* Two-column content region (chart + side panel); collapses on narrow widths. */
+.cols {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.colsEven {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .cols,
+  .colsEven {
+    grid-template-columns: 1fr;
+  }
+}

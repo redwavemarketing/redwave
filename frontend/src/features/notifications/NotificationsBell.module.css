@@ -1,0 +1,16 @@
+.wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background-color: var(--danger);
+  border: 1px solid var(--surface-0);
+  pointer-events: none;
+}

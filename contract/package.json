@@ -1,0 +1,10 @@
+{
+  "name": "@redwave/contract",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Redwave OpenAPI 3 contract — the stable seam between backend, web, and mobile.",
+  "scripts": {
+    "//generate": "Placeholder: wire up OpenAPI -> typed TS client generation when the spec is fleshed out (e.g. openapi-typescript). Intentionally a no-op for now.",
+    "generate": "echo \"contract: no generator wired yet — add when openapi.yaml has endpoints\""
+  }
+}
