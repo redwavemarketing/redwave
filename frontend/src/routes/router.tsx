@@ -7,6 +7,7 @@ import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
 import { RequireAuth } from '../auth/RequireAuth';
+import { LoadingSpinner } from '../components/ui';
 
 const LoginPage = lazy(() => import('../pages/login/LoginPage'));
 const ShowcasePage = lazy(() => import('../showcase/ShowcasePage'));
@@ -48,7 +49,9 @@ const ImportDetailPage = lazy(() => import('../features/import/pages/ImportDetai
 const ChatbotPage = lazy(() => import('../features/chatbot/pages/ChatbotPage'));
 
 const fallback = (
-  <div style={{ padding: 'var(--space-6)', color: 'var(--text-secondary)' }}>Loading…</div>
+  <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--space-7)' }}>
+    <LoadingSpinner size="lg" />
+  </div>
 );
 const lazyEl = (el: ReactNode) => <Suspense fallback={fallback}>{el}</Suspense>;
 

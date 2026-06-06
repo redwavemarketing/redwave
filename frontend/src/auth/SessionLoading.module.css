@@ -7,31 +7,3 @@
   height: 100vh;
   background-color: var(--surface-1);
 }
-
-.mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  background-color: var(--accent-600);
-  color: var(--on-accent);
-  border-radius: var(--radius-md);
-  font-size: var(--text-lg);
-  font-weight: var(--weight-bold);
-}
-
-.spinner {
-  width: 22px;
-  height: 22px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent-600);
-  border-radius: var(--radius-full);
-  animation: session-spin 0.7s linear infinite;
-}
-
-@keyframes session-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}

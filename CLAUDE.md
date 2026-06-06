@@ -304,6 +304,20 @@ The real two-tone logo (orange wave + "Red" / black "wave marketing") replaced t
   (`scripts/gen-icons.mjs`, via `@resvg/resvg-js` + `to-ico`; navy tile bg). `index.html` links them + sets
   `theme-color`. Re-run `gen:icons` if the mark changes. **Verified:** stylelint + build (svgr/tsc) + lint green.
 
+### `LoadingSpinner` — the branded loading animation (built; visual-only)
+The plain-text/placeholder loading states were replaced by the branded SMIL-animated SVG (`assets/brand/
+loading.svg` — a hand + bouncing "LOADING" letters). **`components/ui/LoadingSpinner.tsx`** (barrel-exported):
+inlined via svgr (`?react`, the `Logo` convention), props `size 'sm'|'md'|'lg'` (48/96/160px square) + `label`
+(a11y, default "Loading", on a `role="status"` wrapper). **Theme-safe:** the gray `#444444` "LOADING" ink was
+swapped to `currentColor`, driven by the wrapper's `color: var(--text-secondary)`, so it's legible on BOTH
+themes; the blue hand keeps its own colours; the SMIL animation is preserved (svgo off). The art already reads
+"LOADING", so callers add NO separate text label. **Used at the two genuine full-area spinner spots only:** the
+route-level **Suspense fallback** (`routes/router.tsx`) and the **session boot** (`auth/SessionLoading.tsx`,
+which also dropped its stale "R" placeholder + CSS spinner). **Deliberately left as purpose-built indicators:**
+table/`Skeleton`/`TableSkeleton` (the `DataState` loading default), the `Button` inline spinner, and the
+chatbot "thinking" dots — the big "LOADING" illustration would be wrong in those micro/skeleton contexts. In the
+showcase. **Note:** the motion is SMIL, so `prefers-reduced-motion` doesn't gate it (a property of the asset).
+
 ### Auth / session (built — login flow)
 Login, the session, protected routes, the convenience-only permission gate, and the server theme-sync
 are wired (`frontend/src/auth/`, `pages/login/`). Verify: backend up + seeded, `npm -w frontend run dev`,

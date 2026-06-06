@@ -16,6 +16,7 @@ import {
   FormField,
   IconButton,
   Input,
+  LoadingSpinner,
   Logo,
   MoneyInput,
   ProposedChip,
@@ -60,6 +61,15 @@ export function StaticGallery() {
           <Logo variant="full" size="md" />
           <Logo variant="mark" size="lg" />
           <Logo variant="mark" size="md" />
+        </div>
+      </div>
+
+      {/* Loading — the branded spinner; "LOADING" ink themes via the text token, hand keeps its colours. */}
+      <div>
+        <p className={styles.label}>Loading</p>
+        <div className={styles.row} style={{ alignItems: 'center' }}>
+          <LoadingSpinner size="md" />
+          <LoadingSpinner size="sm" />
         </div>
       </div>
 

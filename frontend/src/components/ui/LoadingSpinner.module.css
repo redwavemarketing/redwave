@@ -1,0 +1,27 @@
+/* LoadingSpinner — tokens only. `color` drives the SVG's currentColor "LOADING" ink (themes per theme);
+   the blue hand keeps its own colours. Sized by the size class (square — the art's viewBox is 512×512). */
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.art {
+  display: block;
+}
+
+.sm .art {
+  width: 48px;
+  height: 48px;
+}
+
+.md .art {
+  width: 96px;
+  height: 96px;
+}
+
+.lg .art {
+  width: 160px;
+  height: 160px;
+}

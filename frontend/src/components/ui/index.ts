@@ -25,6 +25,8 @@ export { Avatar } from './Avatar';
 export type { AvatarProps } from './Avatar';
 export { Logo } from './Logo';
 export type { LogoProps } from './Logo';
+export { LoadingSpinner } from './LoadingSpinner';
+export type { LoadingSpinnerProps } from './LoadingSpinner';
 export { Tabs } from './Tabs';
 export type { TabItem } from './Tabs';
 export { Modal, ModalClose } from './Modal';
