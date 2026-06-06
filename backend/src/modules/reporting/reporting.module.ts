@@ -7,6 +7,9 @@ import { DashboardsService } from './dashboards.service';
 import { LeaderboardService } from './leaderboard.service';
 import { ChatbotService } from './chatbot.service';
 import { LLM_PROVIDER, StubLlmProvider } from './chatbot/llm.provider';
+import { GeminiLlmProvider } from './chatbot/gemini.provider';
+import { LlmProviderRouter } from './chatbot/llm-router.provider';
+import { ChatbotConfigCache } from './chatbot/chatbot-config.cache';
 
 /**
  * ReportingModule — the read-layer: four role-scoped dashboards, the counts-only leaderboard, the
@@ -27,7 +30,12 @@ import { LLM_PROVIDER, StubLlmProvider } from './chatbot/llm.provider';
     DashboardsService,
     LeaderboardService,
     ChatbotService,
-    { provide: LLM_PROVIDER, useClass: StubLlmProvider }, // real Gemini rebinds this later
+    ChatbotConfigCache,
+    StubLlmProvider,
+    GeminiLlmProvider,
+    LlmProviderRouter,
+    // Router picks Gemini when ChatbotConfig is active + provider 'gemini' + GEMINI_API_KEY present; else stub.
+    { provide: LLM_PROVIDER, useExisting: LlmProviderRouter },
   ],
 })
 export class ReportingModule {}

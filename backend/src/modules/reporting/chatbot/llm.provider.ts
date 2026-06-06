@@ -8,6 +8,8 @@
  * rep's data can at most resolve to a `my_*` intent, which the tool then scopes to the CALLER. The LLM
  * can never widen scope.
  */
+import { Injectable } from '@nestjs/common';
+
 export const LLM_PROVIDER = Symbol('LLM_PROVIDER');
 
 /** The fixed, scoped tool set the chatbot can route to. No free-form queries. */
@@ -23,12 +25,29 @@ export interface ChatIntent {
   tool: ChatTool;
 }
 
+/** The six allow-listed intents — exactly the ChatTool union. Reused as the Gemini responseSchema enum
+ *  and to validate the model's output. */
+export const CHAT_TOOLS: readonly ChatTool[] = [
+  'my_sales_count',
+  'my_commission',
+  'my_holdback',
+  'roster_summary',
+  'business_summary',
+  'unknown',
+];
+
+/** Narrow an arbitrary string to a ChatTool. */
+export function isChatTool(value: string): value is ChatTool {
+  return (CHAT_TOOLS as readonly string[]).includes(value);
+}
+
 export interface LlmProvider {
   /** Map a free-text prompt to ONE allow-listed intent. Pure routing — no ids, no SQL, no data. */
   resolveIntent(prompt: string): Promise<ChatIntent>;
 }
 
-/** Deterministic keyword router standing in for Gemini (real provider rebinds the token). */
+/** Deterministic keyword router — the FALLBACK when Gemini is off/unavailable. */
+@Injectable()
 export class StubLlmProvider implements LlmProvider {
   async resolveIntent(prompt: string): Promise<ChatIntent> {
     const p = prompt.toLowerCase();
