@@ -1,7 +1,14 @@
 /**
  * Typed API client — `openapi-fetch` over the types generated from contract/openapi.yaml
- * (`npm run gen:api`). The path keys already include `/v1`, so there is NO `baseUrl` (a `/v1` baseUrl
- * would double it); the Vite dev proxy forwards `/v1` → the backend.
+ * (`npm run gen:api`). The generated path keys already include `/v1`, so the baseUrl must be the backend
+ * ORIGIN ONLY.
+ *
+ * Environment-aware base URL:
+ *  • PRODUCTION (e.g. Vercel — no dev proxy): set `VITE_API_BASE_URL` to the backend origin ONLY —
+ *    e.g. `https://api.redwave.example` — with NO `/v1` and NO trailing slash (openapi-fetch joins
+ *    baseUrl + the `/v1/...` path key, so either would produce a malformed/doubled URL).
+ *  • DEVELOPMENT (unset): no baseUrl, so requests stay same-origin (`/v1/...`) and the Vite dev proxy
+ *    forwards `/v1` → the backend at localhost:3000. Dev behaviour is unchanged.
  *
  *  • onRequest: attaches `Authorization: Bearer <access token>` from the session.
  *  • onResponse: on a 401 for a non-auth request, performs a SINGLE-FLIGHT refresh and RETRIES the
@@ -43,5 +50,9 @@ const authMiddleware: Middleware = {
   },
 };
 
-export const api = createClient<paths>({});
+// Backend origin in production; undefined in development (Vite dev proxy handles /v1). Must NOT end in
+// `/v1` or a trailing slash — see the header note above.
+const baseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || undefined;
+
+export const api = createClient<paths>(baseUrl ? { baseUrl } : {});
 api.use(authMiddleware);
