@@ -23,8 +23,17 @@ async function bootstrap(): Promise<void> {
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
   );
 
-  // Dev convenience: let the Vite frontend (default :5173) call the API.
-  app.enableCors();
+  // CORS — arch §11. In production set CORS_ORIGIN to a comma-separated allowlist of frontend origins;
+  // those origins are allowed WITH credentials. Unset → permissive (allow all), so local dev is unaffected.
+  const corsOrigin = process.env.CORS_ORIGIN;
+  if (corsOrigin) {
+    app.enableCors({
+      origin: corsOrigin.split(',').map((o) => o.trim()),
+      credentials: true,
+    });
+  } else {
+    app.enableCors();
+  }
 
   // Live API docs from the same config the contract export uses.
   const document = SwaggerModule.createDocument(app, buildOpenApiConfig(), {
