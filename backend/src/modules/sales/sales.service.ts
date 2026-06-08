@@ -17,6 +17,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { ScopeService } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/rbac/auth-user.type';
+import { todayInWinnipeg } from '../../common/timezone';
 import { saleCodeBase, withSuffix } from './sale-id.logic';
 import { assertTransition } from './sale-status.logic';
 import { resolvePayPeriod } from './pay-period.logic';
@@ -29,7 +30,8 @@ import { BulkValidateDto } from './dto/bulk-validate.dto';
 import { ListSalesQuery } from './dto/list-sales.query';
 
 const dateOnly = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
-const todayIso = (): string => new Date().toISOString().slice(0, 10);
+// Default sale_date = the CANONICAL Winnipeg calendar day (#7), so a late-night sale never lands in the
+// wrong pay period under UTC. — CLAUDE §11
 const SALE_INCLUDE = { sale_items: true } as const;
 
 @Injectable()
@@ -78,7 +80,7 @@ export class SalesService {
       }
     }
 
-    const saleDate = dto.sale_date ?? todayIso();
+    const saleDate = dto.sale_date ?? todayInWinnipeg();
     const isGreenfield = dto.is_greenfield ?? false;
     const base = saleCodeBase({
       saleDate,

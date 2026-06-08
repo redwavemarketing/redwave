@@ -14,6 +14,7 @@ import { ScopeService } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/rbac/auth-user.type';
 import { BUILTIN_ROLES } from '../../common/rbac/rbac.constants';
 import { selectEffectiveRate } from '../../common/effective-dating';
+import { winnipegDateOnly } from '../../common/timezone';
 import { currentPeriod } from './period.logic';
 import { countToTier, TierBracket } from './tier-progress.logic';
 import { DashboardQuery } from './dto/dashboard-query.dto';
@@ -197,12 +198,12 @@ export class DashboardsService {
     const periods = await this.prisma.payPeriod.findMany({
       select: { id: true, period_number: true, start_date: true, end_date: true },
     });
-    return currentPeriod(periods, new Date());
+    return currentPeriod(periods, winnipegDateOnly()); // "today" in Winnipeg — CLAUDE §11
   }
 
   private async effectiveTierBrackets(): Promise<TierBracket[]> {
     const headers = await this.prisma.commissionTierConfig.findMany({ include: { tiers: true } });
-    const header = selectEffectiveRate(headers, new Date());
+    const header = selectEffectiveRate(headers, winnipegDateOnly());
     return (header?.tiers ?? []).map((t) => ({
       tier_number: t.tier_number,
       min_count: t.min_count,

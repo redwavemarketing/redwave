@@ -19,8 +19,8 @@ import {
   planSupersession,
   RateStatus,
   selectEffectiveRate,
-  toUtcDateOnly,
 } from './billing-rate.logic';
+import { winnipegDateOnly } from '../../common/timezone';
 
 type RateWithStatus = ClientBillingRate & { status: RateStatus };
 
@@ -55,7 +55,7 @@ export class BillingRatesService {
 
     const effectiveFrom = dateOnly(dto.effective_from);
     const effectiveTo = dto.effective_to ? dateOnly(dto.effective_to) : null;
-    const today = toUtcDateOnly(new Date());
+    const today = winnipegDateOnly(); // canonical Winnipeg "today" — CLAUDE §11
     if (effectiveFrom.getTime() < today.getTime()) {
       throw new UnprocessableEntityException('effective_from cannot be in the past'); // #10
     }
@@ -117,7 +117,7 @@ export class BillingRatesService {
    *  single rate in force per scope on that date. Optional product/kind/status filters. */
   async list(clientId: string, query: ListBillingRatesQuery): Promise<RateWithStatus[]> {
     await this.assertClientExists(clientId);
-    const today = toUtcDateOnly(new Date());
+    const today = winnipegDateOnly(); // canonical Winnipeg "today" — CLAUDE §11
 
     const rates = await this.prisma.clientBillingRate.findMany({
       where: {

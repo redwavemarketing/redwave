@@ -10,6 +10,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma, SaleStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { winnipegDateOnly } from '../../common/timezone';
 import { currentPeriod } from './period.logic';
 
 const CONFIRMED: SaleStatus[] = ['validated', 'in_pay_run', 'paid'];
@@ -22,7 +23,7 @@ export class LeaderboardService {
     const periods = await this.prisma.payPeriod.findMany({
       select: { id: true, period_number: true, start_date: true, end_date: true },
     });
-    const period = currentPeriod(periods, new Date());
+    const period = currentPeriod(periods, winnipegDateOnly()); // "today" in Winnipeg — CLAUDE §11
 
     const saleWhere: Prisma.SaleWhereInput = {
       status: { in: CONFIRMED },
