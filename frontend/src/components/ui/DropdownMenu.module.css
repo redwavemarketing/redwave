@@ -6,6 +6,10 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-2);
   z-index: var(--z-dropdown);
+
+  /* Long menus scroll within the available popper space instead of overflowing off-screen. */
+  max-height: var(--radix-dropdown-menu-content-available-height);
+  overflow-y: auto;
   animation: menu-in var(--motion-fast) var(--ease-out);
 }
 

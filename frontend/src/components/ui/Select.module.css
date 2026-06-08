@@ -52,8 +52,12 @@
   overflow: hidden;
 }
 
+/* Constrain to the space the popper has, so a long list (e.g. 13 pay periods) scrolls instead
+   of overflowing off-screen. `position="popper"` exposes the available-height var. */
 .viewport {
   padding: var(--space-1);
+  max-height: var(--radix-select-content-available-height);
+  overflow-y: auto;
 }
 
 .item {
