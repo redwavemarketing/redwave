@@ -12,7 +12,9 @@
  *
  *  • onRequest: attaches `Authorization: Bearer <access token>` from the session.
  *  • onResponse: on a 401 for a non-auth request, performs a SINGLE-FLIGHT refresh and RETRIES the
- *    original request ONCE; if refresh fails, signals session-expired (the AuthProvider redirects).
+ *    original request ONCE. We hard-logout ONLY if the refresh fails because the refresh token is itself
+ *    expired (401/403). A transient refresh failure (5xx / network / Render cold start) does NOT log out —
+ *    the original error is surfaced and the session is preserved for a later retry.
  */
 import createClient, { type Middleware } from 'openapi-fetch';
 import type { paths } from './generated/schema';
@@ -37,14 +39,17 @@ const authMiddleware: Middleware = {
     if (response.status !== 401 || isAuthRequest(request.url) || request.headers.has(RETRIED)) {
       return response;
     }
-    const token = await refreshAccessToken();
-    if (!token) {
-      notifySessionExpired(); // session is dead → AuthProvider clears + redirects to /login
+    const result = await refreshAccessToken();
+    if (!result.ok) {
+      // Only a DEFINITIVE expiry logs out; a transient failure keeps the session (no logout on 5xx/network).
+      if (result.expired) {
+        notifySessionExpired(); // session is dead → AuthProvider clears + redirects to /login
+      }
       return response;
     }
     // Retry the original request ONCE with the new token via raw fetch (no middleware re-entry).
     const retried = request.clone();
-    retried.headers.set('Authorization', `Bearer ${token}`);
+    retried.headers.set('Authorization', `Bearer ${result.token}`);
     retried.headers.set(RETRIED, '1');
     return fetch(retried);
   },

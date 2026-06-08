@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "eslint \"src/**/*.{ts,tsx}\" --fix",
+    "test": "vitest run",
     "stylelint": "stylelint \"src/**/*.css\"",
     "gen:api": "openapi-typescript ../contract/openapi.yaml -o src/api/generated/schema.d.ts",
     "gen:icons": "node scripts/gen-icons.mjs",
@@ -53,6 +54,7 @@
     "to-ico": "^1.1.5",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
-    "vite-plugin-svgr": "^4.3.0"
+    "vite-plugin-svgr": "^4.3.0",
+    "vitest": "^3.0.0"
   }
 }

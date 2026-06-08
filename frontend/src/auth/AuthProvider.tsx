@@ -66,23 +66,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (booted.current) return; // guard StrictMode double-mount
     booted.current = true;
     let cancelled = false;
+    const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     (async () => {
       if (!getRefreshToken()) {
         if (!cancelled) setStatus('unauthenticated');
         return;
       }
-      const token = await refreshAccessToken();
-      if (!token) {
-        if (!cancelled) clearLocal();
+      // Ride out a backend cold start: retry the refresh a few times on TRANSIENT failures (5xx/network).
+      let result = await refreshAccessToken();
+      for (let attempt = 0; !result.ok && !result.expired && attempt < 4; attempt += 1) {
+        await delay(2000);
+        if (cancelled) return;
+        result = await refreshAccessToken();
+      }
+      if (cancelled) return;
+      if (!result.ok) {
+        // expired → real logout (the refresh token is dead; clearSession already ran in doRefresh).
+        // transient (the backend never woke) → KEEP the refresh token (no clearSession) so a reload
+        // recovers once it's up; just show the login screen for now.
+        clearLocal();
         return;
       }
       try {
         await loadMe();
       } catch {
-        if (!cancelled) {
-          clearSession();
-          clearLocal();
-        }
+        // /me failed — most likely a transient 5xx (a genuine 401 would have refreshed+retried inside the
+        // client). Do NOT destroy the session: keep the refresh token, show login; a reload recovers.
+        if (!cancelled) clearLocal();
       }
     })();
     return () => {

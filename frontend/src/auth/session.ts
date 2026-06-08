@@ -41,10 +41,17 @@ export function notifySessionExpired(): void {
 }
 
 // ── Single-flight access-token refresh ────────────────────────────────────────────────
-let refreshPromise: Promise<string | null> | null = null;
+/**
+ * The outcome of a refresh attempt. `expired` distinguishes a DEFINITIVE failure (the refresh token
+ * itself is invalid/expired → hard logout) from a TRANSIENT one (5xx / network / Render cold start →
+ * keep the session; a later attempt may succeed). We NEVER log out on a transient failure.
+ */
+export type RefreshResult = { ok: true; token: string } | { ok: false; expired: boolean };
+
+let refreshPromise: Promise<RefreshResult> | null = null;
 
 /** Renew the access token using the stored refresh token. Concurrent callers share ONE request. */
-export function refreshAccessToken(): Promise<string | null> {
+export function refreshAccessToken(): Promise<RefreshResult> {
   if (!refreshPromise) {
     refreshPromise = doRefresh().finally(() => {
       refreshPromise = null;
@@ -53,27 +60,35 @@ export function refreshAccessToken(): Promise<string | null> {
   return refreshPromise;
 }
 
-async function doRefresh(): Promise<string | null> {
+/**
+ * One refresh attempt. `clearSession()` is called ONLY on a definitive expiry (no token, or the refresh
+ * endpoint returns 401/403) — never on a 5xx or a network error, so a backend cold start can't log the
+ * user out. Exported for unit testing. NEVER throws.
+ */
+export async function doRefresh(): Promise<RefreshResult> {
   const refresh_token = getRefreshToken();
   if (!refresh_token) {
-    return null;
+    return { ok: false, expired: true }; // nothing to refresh with → treat as logged out
   }
+  let res: Response;
   try {
     // Raw fetch (not the api client) → no import cycle, and never re-enters the 401 interceptor.
-    const res = await fetch('/v1/auth/refresh', {
+    res = await fetch('/v1/auth/refresh', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ refresh_token }),
     });
-    if (!res.ok) {
-      clearSession(); // refresh token is dead — drop it
-      return null;
-    }
+  } catch {
+    return { ok: false, expired: false }; // network error (offline / cold start) — TRANSIENT, keep session
+  }
+  if (res.ok) {
     const data = (await res.json()) as RefreshResponse;
     setAccessToken(data.access_token);
-    return data.access_token;
-  } catch {
-    clearSession();
-    return null;
+    return { ok: true, token: data.access_token };
   }
+  if (res.status === 401 || res.status === 403) {
+    clearSession(); // the refresh token itself is invalid/expired → real logout
+    return { ok: false, expired: true };
+  }
+  return { ok: false, expired: false }; // 5xx / 408 / 429 / etc. (cold start) — TRANSIENT, keep session
 }
