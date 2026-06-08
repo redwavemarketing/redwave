@@ -13,7 +13,7 @@ import { CHAT_TOOLS, ChatIntent, isChatTool, LlmProvider } from './llm.provider'
 import { ChatbotConfigCache } from './chatbot-config.cache';
 
 const TIMEOUT_MS = 8_000;
-const DEFAULT_MODEL = 'gemini-3.5-flash';
+const DEFAULT_MODEL = 'gemini-3.1-flash-lite'; // matches the seeded ChatbotConfig; current GA id
 
 const SYSTEM_INSTRUCTION = [
   'You are an intent classifier for the Redwave ERP assistant.',

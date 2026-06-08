@@ -327,7 +327,7 @@ async function main(): Promise<void> {
     await prisma.chatbotConfig.create({
       data: {
         provider: 'gemini',
-        model: 'gemini-3.5-flash',
+        model: 'gemini-3.1-flash-lite', // current GA flash-lite id (ai.google.dev); 1.5/2.x retired
         is_active: false,
         config_json: {},
         updated_by: superAdminUser.id,
