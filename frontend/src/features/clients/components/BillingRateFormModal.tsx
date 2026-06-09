@@ -1,20 +1,23 @@
 /**
- * BillingRateFormModal — add a future-dated client billing rate (the effective-dating change path, #10).
- * There is no edit/delete: a new rate SUPERSEDES the scope's pending row and BOUNDS the current one
- * (server-side). `rate_kind='product'` requires a product (server 422 otherwise); back-dating is rejected
- * (server 422) — both surfaced as toasts. Money is an exact-decimal string (MoneyInput). Tokens only.
+ * BillingRateFormModal — add a future-dated client billing rate, OR edit a PENDING one (#10). Adding a new
+ * rate SUPERSEDES the scope's pending row and BOUNDS the current one (server-side); editing is restricted to
+ * a pending rate and keeps the scope (rate_kind/product) fixed. `rate_kind='product'` requires a product
+ * (server 422); back-dating is rejected (server 422) — surfaced as toasts. Money is an exact-decimal string
+ * (MoneyInput). Tokens only.
  */
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
-import { Banner, Button, FormField, Modal, MoneyInput, Select, useToast } from '../../../components/ui';
+import { Badge, Banner, Button, FormField, Modal, MoneyInput, Select, useToast } from '../../../components/ui';
 import { PayPeriodSelect } from '../../../components/data/PayPeriodSelect';
 import { useApiErrorToast } from '../../../lib/api/apiError';
 import { todayIso } from '../../../lib/format/date';
 import { productTypeLabel } from '../../../lib/format/productType';
-import { useCreateBillingRate } from '../api/useClientMutations';
-import type { Product, RateKind } from '../clients.types';
+import { useCreateBillingRate, useUpdateBillingRate } from '../api/useClientMutations';
+import type { BillingRate, Product, RateKind } from '../clients.types';
 import styles from './clients.module.css';
+
+const dateOnly = (v: string | null | undefined) => (v ? v.slice(0, 10) : '');
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MONEY = /^\d+(\.\d{1,2})?$/;
@@ -52,25 +55,45 @@ export function BillingRateFormModal({
   open,
   clientId,
   products,
+  rate,
   onClose,
 }: {
   open: boolean;
   clientId: string;
   products: Product[];
+  /** When provided, the modal edits this PENDING rate (scope is fixed); otherwise it adds a new rate. */
+  rate?: BillingRate;
   onClose: () => void;
 }) {
+  const isEdit = !!rate;
   const { toast } = useToast();
   const onError = useApiErrorToast();
   const create = useCreateBillingRate();
+  const update = useUpdateBillingRate();
 
   const { control, register, handleSubmit, formState } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { rate_kind: 'product', product_id: undefined, amount: '', effective_from: '', effective_to: '' },
+    defaultValues: rate
+      ? {
+          rate_kind: rate.rate_kind,
+          product_id: rate.product_id ?? undefined,
+          amount: rate.amount,
+          effective_from: dateOnly(rate.effective_from),
+          effective_to: dateOnly(rate.effective_to),
+        }
+      : { rate_kind: 'product', product_id: undefined, amount: '', effective_from: '', effective_to: '' },
   });
   const errors = formState.errors;
   const rateKind = useWatch({ control, name: 'rate_kind' });
 
-  const onSubmit = (values: FormValues) =>
+  const onSubmit = (values: FormValues) => {
+    if (isEdit && rate) {
+      update.mutate(
+        { clientId, rateId: rate.id, body: { amount: values.amount, effective_from: values.effective_from, effective_to: values.effective_to || undefined } },
+        { onSuccess: () => { toast({ title: 'Billing rate updated', tone: 'success' }); onClose(); }, onError },
+      );
+      return;
+    }
     create.mutate(
       {
         clientId,
@@ -87,27 +110,41 @@ export function BillingRateFormModal({
         onError,
       },
     );
+  };
+
+  const productName = (id: string | null) => (id ? products.find((p) => p.id === id)?.name ?? id : '—');
 
   return (
-    <Modal open={open} onOpenChange={(o) => !o && onClose()} title="Add billing rate">
+    <Modal open={open} onOpenChange={(o) => !o && onClose()} title={isEdit ? 'Edit billing rate' : 'Add billing rate'}>
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
         <Banner tone="info" title="Effective-dated">
-          A future-dated rate <strong>supersedes the scope&rsquo;s pending rate</strong> and{' '}
-          <strong>bounds the current one</strong>. Closed periods are never changed; existing rows can&rsquo;t
-          be edited — add a new one to change a rate.
+          {isEdit ? (
+            <>Only a <strong>pending</strong> rate can be edited; its scope (rate kind / product) is fixed.</>
+          ) : (
+            <>A future-dated rate <strong>supersedes the scope&rsquo;s pending rate</strong> and <strong>bounds the current one</strong>. Closed periods are never changed.</>
+          )}
         </Banner>
 
-        <Controller
-          control={control}
-          name="rate_kind"
-          render={({ field }) => (
-            <FormField label="Rate kind" required error={errors.rate_kind?.message}>
-              <Select options={RATE_KIND_OPTIONS} value={field.value} onValueChange={field.onChange} />
-            </FormField>
-          )}
-        />
+        {isEdit ? (
+          <FormField label="Scope" help="Immutable — delete and re-add to change the scope.">
+            <span className={styles.readonlyType}>
+              <Badge tone="neutral">{RATE_KIND_OPTIONS.find((o) => o.value === rate!.rate_kind)?.label}</Badge>
+              {rate!.rate_kind === 'product' && <Badge tone="neutral">{productName(rate!.product_id)}</Badge>}
+            </span>
+          </FormField>
+        ) : (
+          <Controller
+            control={control}
+            name="rate_kind"
+            render={({ field }) => (
+              <FormField label="Rate kind" required error={errors.rate_kind?.message}>
+                <Select options={RATE_KIND_OPTIONS} value={field.value} onValueChange={field.onChange} />
+              </FormField>
+            )}
+          />
+        )}
 
-        {rateKind === 'product' && (
+        {!isEdit && rateKind === 'product' && (
           <Controller
             control={control}
             name="product_id"
@@ -151,8 +188,8 @@ export function BillingRateFormModal({
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" loading={create.isPending}>
-            Add rate
+          <Button variant="primary" type="submit" loading={create.isPending || update.isPending}>
+            {isEdit ? 'Save changes' : 'Add rate'}
           </Button>
         </div>
       </form>

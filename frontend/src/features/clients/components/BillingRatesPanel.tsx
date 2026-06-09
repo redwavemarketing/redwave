@@ -1,15 +1,18 @@
 /**
- * BillingRatesPanel — the effective-dating UI for a client's billing rates (#10). A read-only
- * current/pending/past table (the shared EffectiveDatedTable) with filters, plus "Add rate" (clients:edit).
- * Rows are never edited — adding a future-dated rate supersedes/bounds (see BillingRateFormModal). Money is
- * exact-decimal via money(). This panel reads ONLY billing rates — never commission (#3). Tokens only.
+ * BillingRatesPanel — the effective-dating UI for a client's billing rates (#10). The whole panel is gated
+ * on billing_rates:view (Super Admin only by default — sensitive partner financials; the server is the real
+ * gate). A current/pending/past table (the shared EffectiveDatedTable) with filters; "Add rate"
+ * (billing_rates:create) supersedes/bounds, and PENDING rows offer Edit (billing_rates:edit) / Delete
+ * (billing_rates:delete). Money is exact-decimal via money(). Reads ONLY billing rates — never commission (#3).
  */
 import { useState } from 'react';
-import { Button, Select } from '../../../components/ui';
+import { Banner, Button, ConfirmDialog, Select, useToast } from '../../../components/ui';
 import { DataState } from '../../../components/data/DataState';
 import { useCan } from '../../../auth/useCan';
+import { useApiErrorToast } from '../../../lib/api/apiError';
 import { money } from '../../../lib/format/money';
 import { useClientBillingRates } from '../api/useClients';
+import { useDeleteBillingRate } from '../api/useClientMutations';
 import { EffectiveDatedTable, type EffectiveColumn } from '../../../components/ui';
 import { BillingRateFormModal } from './BillingRateFormModal';
 import type { BillingRate, BillingRateFilters, Product, RateKind } from '../clients.types';
@@ -31,10 +34,28 @@ const STATUS_OPTIONS = [
 ];
 
 export function BillingRatesPanel({ clientId, products }: { clientId: string; products: Product[] }) {
-  const canEdit = useCan('clients:edit');
+  const canView = useCan('billing_rates:view');
+  const canCreate = useCan('billing_rates:create');
+  const canEdit = useCan('billing_rates:edit');
+  const canDelete = useCan('billing_rates:delete');
+  const { toast } = useToast();
+  const onError = useApiErrorToast();
+  const remove = useDeleteBillingRate();
+
   const [filters, setFilters] = useState<BillingRateFilters>({});
   const [addOpen, setAddOpen] = useState(false);
-  const q = useClientBillingRates(clientId, filters);
+  const [editRate, setEditRate] = useState<BillingRate | null>(null);
+  const [deleteRate, setDeleteRate] = useState<BillingRate | null>(null);
+  const q = useClientBillingRates(clientId, filters, canView);
+
+  // Hidden entirely without billing_rates:view — these are sensitive partner financials.
+  if (!canView) {
+    return (
+      <Banner tone="info" title="Billing rates are restricted">
+        You don’t have permission to view this client’s billing rate card.
+      </Banner>
+    );
+  }
 
   const productName = (id: string | null) => (id ? products.find((p) => p.id === id)?.name ?? '—' : '—');
 
@@ -44,7 +65,19 @@ export function BillingRatesPanel({ clientId, products }: { clientId: string; pr
     { header: 'Amount', align: 'right', render: (r) => money(r.amount) },
   ];
 
+  const onConfirmDelete = () => {
+    if (!deleteRate) return;
+    remove.mutate(
+      { clientId, rateId: deleteRate.id },
+      {
+        onSuccess: () => { toast({ title: 'Billing rate deleted', tone: 'success' }); setDeleteRate(null); },
+        onError: (e) => { onError(e); setDeleteRate(null); },
+      },
+    );
+  };
+
   const rates = q.data ?? [];
+  const showRowActions = canEdit || canDelete;
   return (
     <div>
       <div className={styles.filters}>
@@ -81,11 +114,46 @@ export function BillingRatesPanel({ clientId, products }: { clientId: string; pr
         onRetry={() => q.refetch()}
         emptyNode={<p className={styles.supersedeNote}>No billing rates yet — add one to set what this client is charged.</p>}
       >
-        <EffectiveDatedTable rows={rates} columns={columns} />
+        <EffectiveDatedTable
+          rows={rates}
+          columns={columns}
+          rowActions={
+            showRowActions
+              ? (r) =>
+                  r.status === 'pending' ? (
+                    <span className={styles.rowActions}>
+                      {canEdit && (
+                        <Button variant="tertiary" size="sm" onClick={() => setEditRate(r)}>
+                          Edit
+                        </Button>
+                      )}
+                      {canDelete && (
+                        <Button variant="tertiary" size="sm" onClick={() => setDeleteRate(r)}>
+                          Delete
+                        </Button>
+                      )}
+                    </span>
+                  ) : null
+              : undefined
+          }
+        />
       </DataState>
 
-      {canEdit && <BillingRateFormModal open={addOpen} clientId={clientId} products={products} onClose={() => setAddOpen(false)} />}
-      {canEdit && (
+      {canCreate && <BillingRateFormModal open={addOpen} clientId={clientId} products={products} onClose={() => setAddOpen(false)} />}
+      {editRate && (
+        <BillingRateFormModal open clientId={clientId} products={products} rate={editRate} onClose={() => setEditRate(null)} />
+      )}
+      <ConfirmDialog
+        open={!!deleteRate}
+        onOpenChange={(o) => !o && setDeleteRate(null)}
+        title="Delete pending rate?"
+        description="This removes the future-dated rate before it takes effect. The current rate stays in force."
+        confirmLabel="Delete rate"
+        loading={remove.isPending}
+        onConfirm={onConfirmDelete}
+      />
+
+      {canCreate && (
         <div style={{ marginTop: 'var(--space-3)' }}>
           <Button variant="secondary" onClick={() => setAddOpen(true)}>
             Add rate

@@ -6,8 +6,11 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { Badge, Button, FormField, Input, Modal, Select, useToast } from '../../../components/ui';
+import { Badge, Button, FormField, Input, Modal, MoneyInput, Select, Switch, useToast } from '../../../components/ui';
+import { PayPeriodSelect } from '../../../components/data/PayPeriodSelect';
 import { useApiErrorToast } from '../../../lib/api/apiError';
+import { useCan } from '../../../auth/useCan';
+import { todayIso } from '../../../lib/format/date';
 import { productTypeLabel } from '../../../lib/format/productType';
 import { useProductTypes } from '../../productTypes/api/useProductTypes';
 import { useCreateProduct, useUpdateProduct } from '../api/useClientMutations';
@@ -16,10 +19,21 @@ import styles from './clients.module.css';
 
 export type ProductFormState = { mode: 'create'; clientId: string } | { mode: 'edit'; product: Product } | null;
 
-const createSchema = z.object({
-  name: z.string().min(1, 'Required').max(150),
-  product_type: z.string().regex(/^[a-z][a-z0-9_]*$/, 'Choose a product type'),
-});
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const MONEY = /^\d+(\.\d{1,2})?$/;
+const createSchema = z
+  .object({
+    name: z.string().min(1, 'Required').max(150),
+    product_type: z.string().regex(/^[a-z][a-z0-9_]*$/, 'Choose a product type'),
+    set_rate: z.boolean(),
+    amount: z.string().optional(),
+    effective_from: z.string().optional(),
+  })
+  .refine((v) => !v.set_rate || (v.amount && MONEY.test(v.amount)), { message: 'Enter an amount (max 2 dp)', path: ['amount'] })
+  .refine((v) => !v.set_rate || (v.effective_from && DATE.test(v.effective_from) && v.effective_from >= todayIso()), {
+    message: 'Choose a current/future period',
+    path: ['effective_from'],
+  });
 const editSchema = z.object({ name: z.string().min(1, 'Required').max(150) });
 type CreateValues = z.infer<typeof createSchema>;
 type EditValues = z.infer<typeof editSchema>;
@@ -38,16 +52,25 @@ function CreateProductForm({ clientId, onClose }: { clientId: string; onClose: (
   const { toast } = useToast();
   const onError = useApiErrorToast();
   const create = useCreateProduct();
+  const canSetRate = useCan('billing_rates:create');
   const types = useProductTypes('active');
   const typeOptions = (types.data ?? []).map((t) => ({ value: t.key, label: t.label }));
-  const { control, register, handleSubmit, formState } = useForm<CreateValues>({
+  const { control, register, handleSubmit, watch, formState } = useForm<CreateValues>({
     resolver: zodResolver(createSchema),
-    defaultValues: { name: '', product_type: '' },
+    defaultValues: { name: '', product_type: '', set_rate: false, amount: '', effective_from: '' },
   });
+  const setRate = watch('set_rate');
 
   const onSubmit = (values: CreateValues) =>
     create.mutate(
-      { clientId, body: values },
+      {
+        clientId,
+        body: {
+          name: values.name,
+          product_type: values.product_type,
+          initial_billing_rate: values.set_rate ? { amount: values.amount!, effective_from: values.effective_from! } : undefined,
+        },
+      },
       { onSuccess: () => { toast({ title: 'Product added', tone: 'success' }); onClose(); }, onError },
     );
 
@@ -70,6 +93,36 @@ function CreateProductForm({ clientId, onClose }: { clientId: string; onClose: (
           </FormField>
         )}
       />
+
+      {canSetRate && (
+        <Controller
+          control={control}
+          name="set_rate"
+          render={({ field }) => (
+            <label className={styles.switchRow}>
+              <span>Set an initial client-billing rate (what we charge the client)</span>
+              <Switch checked={field.value} onCheckedChange={field.onChange} aria-label="Set initial billing rate" />
+            </label>
+          )}
+        />
+      )}
+      {canSetRate && setRate && (
+        <div className={styles.rateRow}>
+          <FormField label="Billing amount" required error={formState.errors.amount?.message}>
+            <MoneyInput {...register('amount')} placeholder="0.00" />
+          </FormField>
+          <Controller
+            control={control}
+            name="effective_from"
+            render={({ field }) => (
+              <FormField label="Effective from" required error={formState.errors.effective_from?.message}>
+                <PayPeriodSelect value={field.value ?? ''} onChange={field.onChange} aria-label="Effective from period" />
+              </FormField>
+            )}
+          />
+        </div>
+      )}
+
       <div className={styles.footer}>
         <Button variant="secondary" type="button" onClick={onClose}>
           Cancel

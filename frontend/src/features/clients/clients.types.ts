@@ -50,3 +50,7 @@ export type UpdateClientBody = components['schemas']['UpdateClientDto'];
 export type CreateProductBody = components['schemas']['CreateProductDto'];
 export type UpdateProductBody = components['schemas']['UpdateProductDto'];
 export type CreateBillingRateBody = components['schemas']['CreateBillingRateDto'];
+export type UpdateBillingRateBody = components['schemas']['UpdateBillingRateDto'];
+/** A name/value custom field on a client (sent on create/edit; returned on the detail). */
+export type ClientCustomFieldInput = components['schemas']['ClientCustomFieldInput'];
+export type ClientCustomField = components['schemas']['ClientCustomFieldResponse'];
