@@ -4,7 +4,7 @@
  * with their screens. Pages are code-split with React.lazy (§13 performance budget).
  */
 import { lazy, Suspense, type ReactNode } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
 import { RequireAuth } from '../auth/RequireAuth';
 import { LoadingSpinner } from '../components/ui';
@@ -50,6 +50,9 @@ const ImportDetailPage = lazy(() => import('../features/import/pages/ImportDetai
 const ChatbotPage = lazy(() => import('../features/chatbot/pages/ChatbotPage'));
 const NotificationCenterPage = lazy(() => import('../features/notifications/pages/NotificationCenterPage'));
 const BroadcastPage = lazy(() => import('../features/notifications/pages/BroadcastPage'));
+const RepsListPage = lazy(() => import('../features/reps/pages/RepsListPage'));
+const ReportsLandingPage = lazy(() => import('../features/reports/pages/ReportsLandingPage'));
+const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
 
 const fallback = (
   <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--space-7)' }}>
@@ -107,10 +110,17 @@ export const router = createBrowserRouter([
           { path: 'admin/roles/:id', element: lazyEl(<RoleEditorPage />) },
           { path: 'admin/notifications', element: lazyEl(<NotificationSettingsPage />) },
           { path: 'admin/broadcast', element: lazyEl(<BroadcastPage />) },
+          { path: 'admin/reps', element: lazyEl(<RepsListPage />) },
+          { path: 'reports', element: lazyEl(<ReportsLandingPage />) },
           { path: 'admin/clients', element: lazyEl(<ClientsPage />) },
           { path: 'admin/clients/:id', element: lazyEl(<ClientDetailPage />) },
           { path: 'admin/products', element: lazyEl(<ProductsListPage />) },
           { path: 'admin/commission', element: lazyEl(<CommissionConfigPage />) },
+          // Convenience redirects for legacy/short paths that previously dead-ended on a blank RR-404.
+          { path: 'users', element: <Navigate to="/admin/users" replace /> },
+          { path: 'reps', element: <Navigate to="/admin/reps" replace /> },
+          // Friendly catch-all so no unknown path is ever a blank screen.
+          { path: '*', element: lazyEl(<NotFoundPage />) },
         ],
       },
     ],

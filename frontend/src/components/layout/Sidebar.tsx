@@ -144,7 +144,7 @@ const NAV: NavGroup[] = [
   {
     heading: 'People',
     items: [
-      { label: 'Reps', icon: Users },
+      { label: 'Reps', icon: Users, to: '/admin/reps', show: (a) => a.permissions.has('hrm:view') },
       {
         label: 'Documents',
         icon: FileSignature,
@@ -202,7 +202,7 @@ const NAV: NavGroup[] = [
         match: (l) => l.pathname.startsWith('/import'),
         show: (a) => a.permissions.has('import:view'),
       },
-      { label: 'Reports', icon: BarChart3 },
+      { label: 'Reports', icon: BarChart3, to: '/reports', match: (l) => l.pathname.startsWith('/reports'), show: canReport },
     ],
   },
   {
