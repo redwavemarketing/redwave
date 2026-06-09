@@ -13,18 +13,20 @@ export interface SwitchProps {
   onCheckedChange?: (checked: boolean) => void;
   disabled?: boolean;
   label?: string;
+  /** Checked-state colour: 'accent' (default) or 'success' (green — e.g. greenfield). */
+  tone?: 'accent' | 'success';
   id?: string;
   'aria-label'?: string;
 }
 
-export function Switch({ checked, defaultChecked, onCheckedChange, disabled, label, id, ...rest }: SwitchProps) {
+export function Switch({ checked, defaultChecked, onCheckedChange, disabled, label, tone = 'accent', id, ...rest }: SwitchProps) {
   const generated = useId();
   const fieldId = id ?? generated;
   return (
     <span className={styles.row}>
       <RSwitch.Root
         id={fieldId}
-        className={styles.track}
+        className={cx(styles.track, tone === 'success' && styles.trackSuccess)}
         checked={checked}
         defaultChecked={defaultChecked}
         onCheckedChange={onCheckedChange}

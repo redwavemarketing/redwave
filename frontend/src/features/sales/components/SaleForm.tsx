@@ -13,12 +13,12 @@ import {
   Banner,
   Button,
   Card,
-  Checkbox,
   DatePicker,
   FormField,
   Input,
   MultiSelect,
   Select,
+  Switch,
   useToast,
 } from '../../../components/ui';
 import { useAuth } from '../../../auth/useAuth';
@@ -225,7 +225,8 @@ export function SaleForm() {
           control={control}
           name="is_greenfield"
           render={({ field }) => (
-            <Checkbox
+            <Switch
+              tone="success"
               label="Greenfield request (an admin confirms at validation)"
               checked={!!field.value}
               onCheckedChange={(c) => field.onChange(c === true)}
