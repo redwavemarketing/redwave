@@ -20,6 +20,9 @@ export type PayPeriod = components['schemas']['SalePayPeriodResponse'];
 
 export type Sale = components['schemas']['SaleResponse'];
 
+/** The paginated list envelope ({ data, meta }) the server now returns for GET /v1/sales (arch §5.1). */
+export type SalePage = components['schemas']['SalePageResponse'];
+
 export type BulkValidateResult = components['schemas']['BulkValidateResultResponse'];
 
 export type DeletedSale = components['schemas']['DeletedSaleResponse'];
@@ -32,6 +35,9 @@ export interface Client {
   supplies_mpu_id: boolean;
   is_active: boolean;
 }
+
+/** The paginated /v1/clients envelope — unwrapped to a plain array for the entry/filter dropdowns. */
+export type ClientPage = components['schemas']['ClientPageResponse'];
 
 export interface Product {
   id: string;
@@ -55,6 +61,15 @@ export interface SalesFilters {
   client_id?: string;
   date_from?: string;
   date_to?: string;
+  /** Free-text search across sale_code + customer_name (server-side). */
+  search?: string;
+}
+
+/** Server-side list params: the filters plus pagination/sort (page is 1-based). */
+export interface SalesListParams extends SalesFilters {
+  page: number;
+  limit: number;
+  sort?: string;
 }
 
 // Request bodies — typed from the generated schema (the backend DID emit request DTOs).

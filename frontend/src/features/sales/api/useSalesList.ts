@@ -1,12 +1,12 @@
 /**
- * useSalesList — the LIST seam. The backend FILTERS server-side (status/rep/client/date) and returns a
- * plain array; sorting + pagination are done CLIENT-side here. This is the single place to swap to
- * server-side pagination later (the API would gain page/size + a total) — pages/components don't change.
- * — CLAUDE §13 (flagged: server pagination is a future backend addition)
+ * useSalesList — the LIST seam, now SERVER-DRIVEN. The backend paginates/sorts/filters/searches and
+ * returns { data, meta } (arch §5.1); this hook owns the page + sort state, sends them as query params,
+ * and exposes the same surface the table consumes. Page is 1-based; changing a filter OR the sort resets
+ * to page 1. — CLAUDE §13
  */
-import { useEffect, useMemo, useState } from 'react';
-import { useSalesQuery } from './useSales';
-import type { Sale, SalesFilters } from '../sales.types';
+import { useEffect, useState } from 'react';
+import { useSalesPage } from './useSales';
+import type { SalesFilters } from '../sales.types';
 
 export type SortKey = 'sale_code' | 'customer_name' | 'sale_date' | 'status';
 export interface SortState {
@@ -14,51 +14,36 @@ export interface SortState {
   dir: 'asc' | 'desc';
 }
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 20;
 
 export function useSalesList(filters: SalesFilters) {
-  const query = useSalesQuery(filters);
+  const [page, setPage] = useState(1);
   const [sort, setSort] = useState<SortState>({ key: 'sale_date', dir: 'desc' });
-  const [page, setPage] = useState(0);
 
-  // Reset to the first page whenever the filters change (new server result set).
+  // Reset to the first page whenever the filters or sort change (a new server result set).
   const filterKey = JSON.stringify(filters);
-  useEffect(() => setPage(0), [filterKey]);
+  const sortKey = `${sort.key}:${sort.dir}`;
+  useEffect(() => setPage(1), [filterKey, sortKey]);
 
-  const sorted = useMemo<Sale[]>(() => {
-    const rows = [...(query.data ?? [])];
-    rows.sort((a, b) => {
-      const av = String(a[sort.key] ?? '');
-      const bv = String(b[sort.key] ?? '');
-      const cmp = av.localeCompare(bv);
-      return sort.dir === 'asc' ? cmp : -cmp;
-    });
-    return rows;
-  }, [query.data, sort]);
-
-  const total = sorted.length;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const rows = useMemo(
-    () => sorted.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
-    [sorted, safePage],
-  );
+  const query = useSalesPage({ ...filters, page, limit: PAGE_SIZE, sort: sortKey });
+  const meta = query.data?.meta;
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }));
 
   return {
-    rows,
-    allRows: sorted,
-    total,
-    page: safePage,
-    pageCount,
+    rows: query.data?.data ?? [],
+    total: meta?.total ?? 0,
+    page,
+    pageCount: Math.max(1, meta?.pageCount ?? 1),
     pageSize: PAGE_SIZE,
+    limit: PAGE_SIZE,
     setPage,
     sort,
     toggleSort,
     isLoading: query.isLoading,
     isError: query.isError,
+    error: query.error,
     refetch: query.refetch,
   };
 }
