@@ -9,7 +9,13 @@ export const dashboardKeys = {
   rep: () => ['dashboards', 'rep'] as const,
   manager: () => ['dashboards', 'manager'] as const,
   business: (filters: BusinessFilters) => ['dashboards', 'business', filters] as const,
+  trends: (periods: number) => ['dashboards', 'business', 'trends', periods] as const,
   admin: () => ['dashboards', 'admin'] as const,
+};
+
+export const targetKeys = {
+  all: ['sales-targets'] as const,
+  list: (payPeriodId?: string) => ['sales-targets', payPeriodId ?? 'all'] as const,
 };
 
 export const leaderboardKeys = {

@@ -12,6 +12,7 @@ import type {
   AdminDashboard,
   BusinessDashboard,
   BusinessFilters,
+  BusinessTrends,
   Leaderboard,
   ManagerDashboard,
   PayPeriod,
@@ -39,6 +40,15 @@ export function useBusinessDashboard(filters: BusinessFilters, enabled = true) {
     queryKey: dashboardKeys.business(filters),
     queryFn: () =>
       unwrap<BusinessDashboard>(api.GET('/v1/dashboards/business', { params: { query: filters } })),
+    enabled,
+  });
+}
+
+/** Cross-period business trends (Super Admin, reports:business). Last N periods + breakdowns. */
+export function useBusinessTrends(periods = 6, enabled = true) {
+  return useQuery({
+    queryKey: dashboardKeys.trends(periods),
+    queryFn: () => unwrap<BusinessTrends>(api.GET('/v1/dashboards/business/trends', { params: { query: { periods } } })),
     enabled,
   });
 }
