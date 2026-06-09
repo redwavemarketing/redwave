@@ -26,11 +26,11 @@ function make(scopeLevel: 'all' | 'roster' | 'self' = 'self', repIds: string[] =
     clientStatement: { aggregate: jest.fn().mockResolvedValue(agg), groupBy: jest.fn().mockResolvedValue([]), findMany: jest.fn().mockResolvedValue([]) },
     client: { findMany: jest.fn().mockResolvedValue([]) },
     productTypeCatalogue: { findMany: jest.fn().mockResolvedValue([]) },
-    expenseItem: { groupBy: jest.fn().mockResolvedValue([]) },
+    expenseItem: { groupBy: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(1) },
     commissionTierConfig: { findMany: jest.fn().mockResolvedValue([{ effective_from: D('2000-01-01'), effective_to: null, tiers: [{ tier_number: 4, min_count: 0, max_count: 6 }] }]) },
     sale: { count: jest.fn().mockResolvedValue(2), groupBy: jest.fn().mockResolvedValue([]), findMany: jest.fn().mockResolvedValue([]) },
     salesTarget: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
-    expenseReport: { count: jest.fn().mockResolvedValue(1) },
+    expenseReport: { count: jest.fn().mockResolvedValue(1) }, // legacy table retained for history
     profileChangeRequest: { count: jest.fn().mockResolvedValue(3) },
     document: { count: jest.fn().mockResolvedValue(4) }, // admin "signature requests" = docs awaiting signatures
     signatureRequest: { count: jest.fn().mockResolvedValue(4) },

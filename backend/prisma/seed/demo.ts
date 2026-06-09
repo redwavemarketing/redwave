@@ -269,12 +269,11 @@ export async function seedDemo(
   // ── A client statement (one line per customer), priced ONLY from billing rates (#3). VF in prev2 is paid. ──
   await statements.generate(clientByCode['VF'].id, prev2.id, superAdminUserId);
 
-  // ── Expenses: one km report (multi-stop, approved) + one standard report (submitted → admin queue). ──
-  const kmReport = await expenses.submit(
+  // ── Expenses (ITEM-FIRST): a km item (multi-stop) + a meals item — both approved — and a standard
+  //    gas item left submitted (→ admin queue). Each item's pay period is derived from its date (EXP-009).
+  const approvedItems = await expenses.createItems(
     {
       rep_id: repByCode['RW-D-0001'].id,
-      week_start: addDaysIso(cur.start_date, 0),
-      week_end: addDaysIso(cur.start_date, 6),
       items: [
         {
           category: 'km',
@@ -295,12 +294,12 @@ export async function seedDemo(
     },
     sa,
   );
-  await expenses.review(kmReport.id, { decision: ReviewDecision.approve }, sa);
-  await expenses.submit(
+  for (const item of approvedItems) {
+    await expenses.review(item.id, { decision: ReviewDecision.approve }, sa);
+  }
+  await expenses.createItems(
     {
       rep_id: repByCode['RW-D-0002'].id,
-      week_start: addDaysIso(prev1.start_date, 0),
-      week_end: addDaysIso(prev1.start_date, 6),
       items: [{ category: 'gas', expense_date: p1Mid, amount: '60.00', description: 'Fuel — field route', receipt_url: 's3://redwave-demo/receipts/gas-1.jpg' }],
     },
     sa,

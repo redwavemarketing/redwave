@@ -3,7 +3,7 @@
  * Every endpoint declares its (expenses, action) permission; the global guard enforces it and the
  * services scope data per caller.
  */
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
@@ -18,53 +18,72 @@ import { AuthUser } from '../../common/rbac/auth-user.type';
 import { ExpensesService } from './expenses.service';
 import { FieldConfigService } from './field-config.service';
 import { ExpenseExportService } from './expense-export.service';
-import { CreateReportDto } from './dto/create-report.dto';
-import { UpdateReportDto } from './dto/update-report.dto';
+import { CreateExpenseItemsDto } from './dto/create-items.dto';
+import { UpdateExpenseItemDto } from './dto/update-item.dto';
 import { ReviewDto } from './dto/review.dto';
-import { ListReportsQuery } from './dto/list-reports.query';
+import { BulkReviewDto } from './dto/bulk-review.dto';
+import { ListExpenseItemsQuery } from './dto/list-items.query';
 import { CreateFieldConfigDto } from './dto/field-config.dto';
 import { CreateExportDto } from './dto/export.dto';
 import {
+  BulkReviewResultResponse,
   ExpenseExportResponse,
-  ExpenseReportResponse,
+  ExpenseItemPageResponse,
+  ExpenseItemResponse,
   FieldConfigResponse,
 } from './dto/expense.response';
 
 @ApiTags('Expenses')
 @ApiBearerAuth()
 @ApiErrorResponses()
-@Controller('expense-reports')
-export class ExpenseReportsController {
+@Controller('expense-items')
+export class ExpenseItemsController {
   constructor(private readonly expenses: ExpensesService) {}
 
   @Post()
   @RequirePermission('expenses', 'create')
   @ApiOperation({
-    summary: 'Submit a weekly expense report',
+    summary: 'Create one or several expense items',
     description:
-      'Requires expenses:create. Any user may submit (own by default). km items compute their amount; ' +
-      'non-km items require a receipt per the category config. The pay period is derived from week_start.',
+      'Requires expenses:create. Item-first — no report wrapper. Any user may submit (own by default). ' +
+      'km items compute their amount server-side; non-km items require a receipt per the category config. ' +
+      'Each item’s pay period is derived from its own expense_date (same-cycle payout, EXP-009).',
   })
-  @ApiCreatedResponse({ type: ExpenseReportResponse })
-  create(@Body() dto: CreateReportDto, @CurrentUser() user: AuthUser) {
-    return this.expenses.submit(dto, user);
+  @ApiCreatedResponse({ type: ExpenseItemResponse, isArray: true })
+  create(@Body() dto: CreateExpenseItemsDto, @CurrentUser() user: AuthUser) {
+    return this.expenses.createItems(dto, user);
   }
 
   @Get()
   @RequirePermission('expenses', 'view')
   @ApiOperation({
-    summary: 'List expense reports',
-    description: 'Requires expenses:view. Scoped (own/roster/all); filters status/rep/client/period/date.',
+    summary: 'List expense items',
+    description:
+      'Requires expenses:view. Paginated + scoped (own/roster/all); filters status/category/rep/client/' +
+      'period/date-range and free-text search across the description.',
   })
-  @ApiOkResponse({ type: ExpenseReportResponse, isArray: true })
-  list(@Query() query: ListReportsQuery, @CurrentUser() user: AuthUser) {
+  @ApiOkResponse({ type: ExpenseItemPageResponse })
+  list(@Query() query: ListExpenseItemsQuery, @CurrentUser() user: AuthUser) {
     return this.expenses.list(query, user);
+  }
+
+  @Post('bulk-review')
+  @RequirePermission('expenses', 'approve')
+  @ApiOperation({
+    summary: 'Bulk review expense items',
+    description:
+      'Requires expenses:approve. Applies one decision (approve | reject | send_back) to many items; ' +
+      'items not in a reviewable status (or out of scope) are skipped.',
+  })
+  @ApiCreatedResponse({ type: BulkReviewResultResponse })
+  bulkReview(@Body() dto: BulkReviewDto, @CurrentUser() user: AuthUser) {
+    return this.expenses.bulkReview(dto, user);
   }
 
   @Get(':id')
   @RequirePermission('expenses', 'view')
-  @ApiOperation({ summary: 'Get an expense report', description: 'Requires expenses:view (scoped).' })
-  @ApiOkResponse({ type: ExpenseReportResponse })
+  @ApiOperation({ summary: 'Get an expense item', description: 'Requires expenses:view (scoped).' })
+  @ApiOkResponse({ type: ExpenseItemResponse })
   findOne(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
     return this.expenses.findOne(id, user);
   }
@@ -72,27 +91,38 @@ export class ExpenseReportsController {
   @Patch(':id')
   @RequirePermission('expenses', 'edit')
   @ApiOperation({
-    summary: 'Edit an expense report',
+    summary: 'Edit an expense item',
     description:
-      'Requires expenses:edit. Editable pre-approval; once approved, only a Super Admin may edit. ' +
-      'Supplying items replaces the report lines wholesale.',
+      'Requires expenses:edit. Editable pre-approval; once approved, only a Super Admin may edit (EXP-007). ' +
+      'The full item content is re-submitted and replaces the item (km log re-derived).',
   })
-  @ApiOkResponse({ type: ExpenseReportResponse })
+  @ApiOkResponse({ type: ExpenseItemResponse })
   edit(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: UpdateReportDto,
+    @Body() dto: UpdateExpenseItemDto,
     @CurrentUser() user: AuthUser,
   ) {
-    return this.expenses.edit(id, dto, user);
+    return this.expenses.editItem(id, dto, user);
   }
 
-  @Post(':id/approve')
+  @Delete(':id')
+  @RequirePermission('expenses', 'delete')
+  @ApiOperation({
+    summary: 'Delete an expense item',
+    description: 'Requires expenses:delete. Only a not-yet-approved item may be removed (scoped).',
+  })
+  @ApiOkResponse({ description: 'Deleted.' })
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {
+    return this.expenses.deleteItem(id, user);
+  }
+
+  @Post(':id/review')
   @RequirePermission('expenses', 'approve')
   @ApiOperation({
-    summary: 'Review an expense report',
+    summary: 'Review an expense item',
     description: 'Requires expenses:approve. decision = approve | reject | send_back.',
   })
-  @ApiCreatedResponse({ type: ExpenseReportResponse })
+  @ApiCreatedResponse({ type: ExpenseItemResponse })
   review(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ReviewDto,

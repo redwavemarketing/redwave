@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { EXPENSE_TOTAL_PROVIDER } from '../payrun/seams/expense-total.provider';
 import {
-  ExpenseReportsController,
+  ExpenseItemsController,
   ExpenseFieldConfigsController,
   ExpenseExportsController,
 } from './expenses.controller';
@@ -11,7 +11,7 @@ import { ExpenseExportService } from './expense-export.service';
 import { ExpensePayrunProvider } from './expense-payrun.provider';
 
 @Module({
-  controllers: [ExpenseReportsController, ExpenseFieldConfigsController, ExpenseExportsController],
+  controllers: [ExpenseItemsController, ExpenseFieldConfigsController, ExpenseExportsController],
   providers: [
     ExpensesService,
     FieldConfigService,

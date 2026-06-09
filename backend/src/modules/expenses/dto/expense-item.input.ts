@@ -1,3 +1,8 @@
+/**
+ * Shared expense-item input shapes — one expense ITEM (the atomic unit, item-first). `km` items carry a
+ * km log (the amount is COMPUTED server-side, never trusted from the client #1); all others carry an
+ * `amount` and (per the category config) a `receipt_url`. Reused by create + edit. — SRS §11
+ */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ExpenseCategory, TripType } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -18,10 +23,10 @@ import {
 
 const MONEY = /^\d+(\.\d{1,2})?$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const DECIMAL = /^\d+(\.\d{1,6})?$/; // km / lat / lng — exact decimal string, never float (#1)
+const DECIMAL = /^\d+(\.\d{1,6})?$/; // km — exact decimal string, never float (#1)
 const SIGNED_DECIMAL = /^-?\d+(\.\d{1,6})?$/; // lat/lng may be negative
 
-/** One stop on a kilometre route (address + coordinates; stored for the record). */
+/** One stop on a kilometre route (address + coordinates; coordinates come from Places geocoding). */
 export class KmStopInput {
   @ApiProperty({ example: 0, description: 'Order of this stop along the route (0-based).' })
   @IsInt()
@@ -43,13 +48,14 @@ export class KmStopInput {
   lng!: string;
 }
 
-/** Kilometre log for a `km` item — the total route distance + trip type drive the payable amount. */
+/** Kilometre log for a `km` item. `total_km` is INDICATIVE — when a Maps key is configured the server
+ *  re-derives the authoritative route distance from the stops' coordinates (else this value is used). */
 export class KmLogInput {
   @ApiProperty({ enum: TripType, example: 'round' })
   @IsEnum(TripType)
   trip_type!: TripType;
 
-  @ApiProperty({ example: '130.00', description: "Route's total driven distance in km (decimal string)." })
+  @ApiProperty({ example: '130.00', description: "Indicative total route distance (km). The server re-derives it from the stops when Maps is configured." })
   @Matches(DECIMAL, { message: 'total_km must be a decimal string' })
   total_km!: string;
 
@@ -61,8 +67,7 @@ export class KmLogInput {
   stops!: KmStopInput[];
 }
 
-/** One line on a weekly expense report. `km` items carry a km log (amount is computed); all others
- *  carry an `amount` and (per the category's config) a `receipt_url`. */
+/** One expense item. */
 export class ExpenseItemInput {
   @ApiProperty({ enum: ExpenseCategory, example: 'meals' })
   @IsEnum(ExpenseCategory)
@@ -73,13 +78,13 @@ export class ExpenseItemInput {
   @IsUUID()
   client_id?: string;
 
-  @ApiProperty({ example: '2026-03-10' })
+  @ApiProperty({ example: '2026-03-10', description: 'Governs the payout pay period (EXP-009).' })
   @Matches(DATE, { message: 'expense_date must be a YYYY-MM-DD date' })
   expense_date!: string;
 
   @ApiPropertyOptional({
     example: '42.50',
-    description: 'Amount (decimal string). Required for non-km items; ignored for km (computed).',
+    description: 'Amount (decimal string). Required for non-km items; ignored for km (server-computed).',
   })
   @IsOptional()
   @Matches(MONEY, { message: 'amount must be a decimal string with up to 2 decimal places' })
@@ -91,7 +96,7 @@ export class ExpenseItemInput {
   @MaxLength(255)
   description!: string;
 
-  @ApiPropertyOptional({ description: 'Object-storage reference; mandatory per the category config.' })
+  @ApiPropertyOptional({ description: 'Object-storage reference (from the receipt upload); mandatory per the category config.' })
   @IsOptional()
   @IsString()
   @MaxLength(1024)
@@ -102,32 +107,4 @@ export class ExpenseItemInput {
   @ValidateNested()
   @Type(() => KmLogInput)
   km?: KmLogInput;
-}
-
-/**
- * Submit a weekly expense report with its items. — SRS EXP-001..004
- * `rep_id` defaults to the submitter's linked rep; the pay period is derived from `week_start`.
- */
-export class CreateReportDto {
-  @ApiProperty({ example: '2026-03-09', description: 'Week start (governs the pay period).' })
-  @Matches(DATE, { message: 'week_start must be a YYYY-MM-DD date' })
-  week_start!: string;
-
-  @ApiProperty({ example: '2026-03-15' })
-  @Matches(DATE, { message: 'week_end must be a YYYY-MM-DD date' })
-  week_end!: string;
-
-  @ApiPropertyOptional({
-    description: 'Rep this report is for; defaults to the submitter’s linked rep.',
-  })
-  @IsOptional()
-  @IsUUID()
-  rep_id?: string;
-
-  @ApiProperty({ type: [ExpenseItemInput] })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => ExpenseItemInput)
-  items!: ExpenseItemInput[];
 }

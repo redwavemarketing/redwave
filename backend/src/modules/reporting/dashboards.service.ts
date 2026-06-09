@@ -126,7 +126,7 @@ export class DashboardsService {
       await Promise.all([
         this.prisma.saleItem.count({ where: { sale: saleWhere, product_type: 'internet', counts_toward_tally: true } }),
         this.prisma.sale.count({ where: { ...(repFilter ? { rep_id: repFilter } : {}), status: 'entered' } }),
-        this.prisma.expenseReport.count({ where: { ...(repFilter ? { rep_id: repFilter } : {}), status: 'submitted' } }),
+        this.prisma.expenseItem.count({ where: { ...(repFilter ? { rep_id: repFilter } : {}), status: 'submitted' } }),
         this.prisma.saleItem.groupBy({ by: ['sale_id'], where: { sale: saleWhere, product_type: 'internet', counts_toward_tally: true }, _count: { _all: true } }),
         this.prisma.payRunLine.aggregate({ where: payRunLineWhere, _sum: { net_payout: true } }),
         this.prisma.holdbackLedger.aggregate({ where: { ...(repFilter ? { rep_id: repFilter } : {}), release_status: { in: ['held', 'scheduled'] } }, _sum: { amount_held: true } }),
@@ -204,7 +204,7 @@ export class DashboardsService {
       }),
       this.prisma.expenseItem.groupBy({
         by: ['category'],
-        where: { expense_report: { status: 'approved', ...periodStmt } },
+        where: { status: 'approved', ...periodStmt }, // item-first: status + pay_period live on the item
         _sum: { amount: true },
       }),
     ]);
@@ -440,7 +440,7 @@ export class DashboardsService {
     const [pendingValidations, pendingExpenseApprovals, pendingProfileChanges, pendingSignatures, draftPayRuns] =
       await Promise.all([
         this.prisma.sale.count({ where: { status: 'entered' } }),
-        this.prisma.expenseReport.count({ where: { status: 'submitted' } }),
+        this.prisma.expenseItem.count({ where: { status: 'submitted' } }),
         this.prisma.profileChangeRequest.count({ where: { status: 'pending' } }),
         // Count DOCUMENTS awaiting signatures (matches the /documents?pending_signatures queue), not raw rows.
         this.prisma.document.count({ where: { signature_requests: { some: { status: 'pending' } } } }),
