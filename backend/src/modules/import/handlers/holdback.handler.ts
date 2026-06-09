@@ -7,6 +7,8 @@
  * string → Prisma Decimal (#1). — SRS §15 (IMP-007)
  */
 import { Prisma } from '@prisma/client';
+import { DomainError } from '../../../common/errors/domain-error';
+import { normCode } from '../clean.logic';
 import { RawRow } from '../mapping.logic';
 import { ReleasePeriod, resolveScheduledReleasePeriod } from '../../payrun/holdback-release.logic';
 
@@ -15,10 +17,13 @@ export async function applyHoldback(
   mapped: RawRow,
   ctx: { originPeriod: ReleasePeriod; allPeriods: ReleasePeriod[]; releaseRule: string },
 ): Promise<string> {
+  const code = normCode(mapped.rep_code)!;
+  const rep = await tx.rep.findUnique({ where: { rep_code: code }, select: { id: true } });
+  if (!rep) throw new DomainError('IMPORT_REP_NOT_FOUND', `rep ${code} not found`);
   const scheduled = resolveScheduledReleasePeriod(ctx.originPeriod, ctx.allPeriods, ctx.releaseRule);
   const row = await tx.holdbackLedger.create({
     data: {
-      rep_id: String(mapped.rep_id),
+      rep_id: rep.id,
       origin_pay_period_id: String(mapped.origin_pay_period_id),
       amount_held: String(mapped.amount_held), // decimal string → Prisma Decimal (#1)
       scheduled_release_period_id: scheduled?.id ?? null,
