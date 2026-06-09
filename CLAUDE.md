@@ -33,7 +33,7 @@ The client-facing `.docx`/`.drawio` originals may also be kept in `docs/`; the `
 - **Frontend:** **React + TypeScript** (consumes the generated API client).
 - **Database:** **PostgreSQL**. Exact `NUMERIC` for money. JSONB where the model uses it.
 - **ORM:** **Prisma** (PostgreSQL). Money columns use Prisma **`Decimal`** (`@db.Decimal`, backed by Postgres `NUMERIC`) — **never `Float`/`number`** (#1). **Pay-run finalize (#8) and import commit run inside Prisma interactive transactions** (`$transaction`). Prisma owns the migrations (under `backend/prisma/migrations/`); `db/` documents/points to them. Pinned to **Prisma 6** — do not auto-upgrade to v7 (it drops `url` from the datasource block); the VS Code Prisma extension may flag this as an error, which is a false positive for our toolchain.
-- **Schema conventions (data model is built — all 48 entities, `init` migration applied).** Models are **PascalCase + `@@map("snake_table")`**; **columns stay snake_case**, 1:1 with `docs/data-model.md`. Surrogate UUID PKs (`@db.Uuid`), business keys `@unique`, join tables composite `@@id`. **Money `Decimal(12,2)`**; non-money decimals: pct `(5,4)`, `*_km` `(10,2)`, `rate_per_km` `(6,3)`, lat/lng `(9,6)`. **One shared `ProductType` enum.** `sale_items` snapshot fields are **nullable until paid** (#2). Polymorphic id columns (`audit_log.entity_id`, `notifications.related_entity_id`, `import_rows.matched_entity_id`) carry **no FK**. No cascade deletes (ledger preserves records).
+- **Schema conventions (data model is built — all 48 entities, `init` migration applied).** Models are **PascalCase + `@@map("snake_table")`**; **columns stay snake_case**, 1:1 with `docs/data-model.md`. Surrogate UUID PKs (`@db.Uuid`), business keys `@unique`, join tables composite `@@id`. **Money `Decimal(12,2)`**; non-money decimals: pct `(5,4)`, `*_km` `(10,2)`, `rate_per_km` `(6,3)`, lat/lng `(9,6)`. **Product types are a CONFIGURABLE catalogue** (`product_type_catalogue`, key PK + `behaviour` enum `tiered|greenfield|standard_addon`), NOT a fixed enum — the SA adds types at runtime (always `standard_addon`; the 4 core types are `is_system`, behaviour locked). `products`/`commission_flat_rates`/`incentives.scope_product_type` are String FKs → `catalogue.key`; `sale_items.product_type` stays a plain string snapshot (no FK, #2). `sale_items` snapshot fields are **nullable until paid** (#2). Polymorphic id columns (`audit_log.entity_id`, `notifications.related_entity_id`, `import_rows.matched_entity_id`) carry **no FK**. No cascade deletes (ledger preserves records).
 - **API:** **REST, described by an OpenAPI 3 spec** — the spec is the contract/seam for backend, frontend, and the future mobile app.
 - **Auth:** JWT bearer tokens. **RBAC enforced server-side** on every endpoint.
 - **Files:** S3-compatible object storage; references stored in Postgres.
@@ -115,7 +115,7 @@ One module = one NestJS module owning its tables and endpoints. A module calls a
 - **Auditing is explicit** at the service layer via `AuditService` (`common/audit/`, `@Global`) — accurate before/after — not a magic interceptor; the guard logs denials.
 - **Auth stack:** `@nestjs/jwt` with **custom guards (no passport)**; **access + refresh** tokens (separate secrets, env `JWT_*`); password hashing with **bcryptjs** (`password_hash` never selected/returned). **TTLs are ms-strings (not coerced):** `JWT_ACCESS_TTL` (`'15m'`) / `JWT_REFRESH_TTL` (`'7d'`) are passed **verbatim** to `signAsync({ expiresIn })` — jsonwebtoken parses the string natively. Do **not** wrap them in `parseInt`/`Number` (that yields `15`/`NaN` ms → tokens expire instantly, the classic "logged out within a minute"). `token.service.spec.ts` locks the access call to `expiresIn: '15m'` (string). The premature-logout bug was **not** here — it was the frontend refresh clearing the session on transient failures; see the §13 auth note.
 - **HR-field profile edits** (name/phone/avatar) go through `ProfileChangeRequest` review (`account` module) — never a direct write; **theme applies instantly**. (SRS §4.4)
-- **RBAC catalogue:** 16 module keys + 6 actions seeded as the standard grid, **plus one off-grid permission `notifications:broadcast`** (the `notifications` module carries ONLY `broadcast`, kept off the module×action grid so it doesn't cross-product onto every module); 4 built-in (`is_system`) roles (`prisma/seed.ts`, idempotent). `broadcast` is added to the `PermissionAction` Prisma enum (migration) and granted to **Super Admin only** (it's already in the SA's all-perms grant). Built-in roles can't be deleted/renamed (RBAC keys off names like `Super Admin`). Module keys live in `common/rbac/rbac.constants.ts`. The `permissions` table carries `@@unique([module_id, action])`. **The catalogue is unchanged by the global-search endpoint** — `/v1/search` adds **no new permission**; it reuses the per-entity reads (`hrm:view`/`clients:view`/sales scope) to gate each result group.
+- **RBAC catalogue:** 17 module keys + 6 actions seeded as the standard grid (the 17th is **`billing_rates`** — its full 6-action set gates the client billing rate cards, **granted to Super Admin only** by default so partner financials aren't visible to every `clients:view` holder; a custom Business-Partner role can be granted `billing_rates:view`), **plus one off-grid permission `notifications:broadcast`** (the `notifications` module carries ONLY `broadcast`, kept off the module×action grid so it doesn't cross-product onto every module); 4 built-in (`is_system`) roles (`prisma/seed.ts`, idempotent). `broadcast` is added to the `PermissionAction` Prisma enum (migration) and granted to **Super Admin only** (it's already in the SA's all-perms grant). Built-in roles can't be deleted/renamed (RBAC keys off names like `Super Admin`). Module keys live in `common/rbac/rbac.constants.ts`. The `permissions` table carries `@@unique([module_id, action])`. **The catalogue is unchanged by the global-search endpoint** — `/v1/search` adds **no new permission**; it reuses the per-entity reads (`hrm:view`/`clients:view`/sales scope) to gate each result group.
 - **API surface:** all routes under **`/v1`** (URI versioning; `/health` is version-neutral); Swagger UI at **`/docs`**; `npm run contract:export` writes the spec to `contract/openapi.yaml`.
 - **Global error envelope (built — `common/filters/all-exceptions.filter.ts`, Batch A #1).** One `APP_FILTER` (`@Catch()`, registered in `app.module.ts` like the global guards) normalizes **every** error to the contract envelope **`{ error: { code, message, details } }`** (arch §5.1), statuses preserved. Three classes: **`HttpException`** → `CODE_BY_STATUS[status]` (400→`BAD_REQUEST`, 401→`UNAUTHORIZED`, 403→`FORBIDDEN`, 404→`NOT_FOUND`, 409→`CONFLICT`, 422→`UNPROCESSABLE_ENTITY`), message from the response (array joined → `details.messages`), structured payloads (billing's **`unpriced`**, the import gate) preserved into `details`; **`DomainError`** (the **framework-free** marker `common/errors/domain-error.ts` — extends `Error`, **no `@nestjs/common` import**, carries `code`/`message`/`details?`) → **422**; **anything else** (bare `Error`, Prisma, the engine's internal-invariant throws) → **masked 500** generic message + `details.correlationId` (`randomUUID()`) + a server-side `Logger.error` (no internal leak, arch §11). **Map a client-fault domain error at the service boundary**, never inside pure/mirrored logic: e.g. `tier-schedule.service` wraps the pure `validateTierBrackets` bare-`Error` in `DomainError('TIER_SCHEDULE_INVALID', …)`; the engine throws are **left bare → stay 500** (real server faults, NOT 422). Contract: `ErrorEnvelopeDto` is registered via `extraModels` (in `main.ts` + `scripts/export-openapi.ts`) so the envelope is documented in `components.schemas` (per-endpoint `@ApiResponse` wiring still deferred — responses are `never`-typed). FE companion: `frontend/src/lib/query/unwrap.ts` reads `body.error.message`/`body.error.details`. **Reuse `DomainError` for any new client-fault domain rule** instead of returning a bare `Error` (→ 500) or coupling pure logic to Nest.
 - **Sensitive-PII gating (built, HRM):** sensitive fields are **redacted in the query/response server-side**, gated on a permission — e.g. rep `payment_details` and document `file_url`s require **`hrm:edit`** (a plain `hrm:view` caller gets them nulled), computed from `user.permissions.has(permissionKey(...))`. Sensitive values are also kept **out of audit payloads**. Reuse this redaction pattern for other PII.
@@ -146,7 +146,7 @@ The most important piece. Build it **first, in isolation, against tests, before 
 | 2 | 17–35 | $145 |
 | 1 (highest) | 36+ | $160 |
 
-Flat: Greenfield internet **$100** (excluded from tally), TV **$30**, Home Phone **$30**.
+Flat: Greenfield internet **$100** (excluded from tally), TV **$30**, Home Phone **$30**. (Flat rates are a **keyed map** `Record<key, Decimal>` in the engine, not a fixed trio — an SA-added `standard_addon` type is priced by its own effective-dated flat rate; the tally stays `=== 'internet'` and greenfield mapping is unchanged, so #5/#9 are provably preserved.)
 
 ### Implementation (built — `backend/src/modules/engine/`)
 - **Pure & isolated:** `CommissionEngineService` has no constructor deps and imports **only**
@@ -1037,3 +1037,41 @@ The architecture below is durable — reuse it; don't reinvent.
   **operator applies the migration (`migrate deploy`) + re-seeds bootstrap** (idempotent) against Supabase to
   add `notifications:broadcast` + the 17-event catalogue/templates. Light/dark + live-data visual pass needs a
   browser.
+
+### Configurable product types · rate-card CRUD · client custom fields · commission CRUD (built — Config batch)
+The deployment-config surfaces are now runtime-managed. Reuse these patterns; the invariants below are load-bearing.
+- **Product-type catalogue (the engine's behaviour seam).** `product_type_catalogue` (key PK · label ·
+  `behaviour` enum `tiered|greenfield|standard_addon` · `is_system` · `is_active`) replaced the fixed Prisma
+  `ProductType` enum (dropped); `products`/`commission_flat_rates`/`incentives.scope_product_type` are String
+  FKs → `catalogue.key`, `sale_items.product_type` is a plain snapshot (no FK, #2). **CRUD lives in the
+  COMMISSION module** (it's an engine-config concept): `GET /v1/product-types` (authenticated reference) +
+  `POST`/`PATCH /:key` (`commission:edit`). **A new type is FORCED `standard_addon`** (behaviour never
+  client-supplied) so it can NEVER change tally/greenfield logic (#5/#9); the 4 core types are `is_system`
+  (behaviour immutable, non-deletable, non-deactivatable). **Q2: create may carry an inline COMMISSION flat
+  rate** written to `commission_flat_rates` in the same `$transaction` (the catalogue row stores no rate — #3
+  holds; this is the commission stream, distinct from the product inline CLIENT-BILLING rate). FE:
+  `features/productTypes/` (DataTable manager at `/admin/product-types`) + `useProductTypes()`; the hard-coded
+  `PRODUCT_TYPES` arrays were replaced by the live catalogue in the product / flat-rate / incentive / filter
+  dropdowns; `productTypeLabel` humanizes unknown SA keys.
+- **`billing_rates` module (SA-only).** The 17th RBAC module — its 6-action grid gates the client rate cards,
+  granted to **Super Admin only** by default (Admin/Manager/Rep lose default rate visibility; a custom
+  Business-Partner role can be granted `billing_rates:view`). The nested `/v1/clients/:id/billing-rates`
+  endpoints were re-gated (`view`/`create`) and gained **`PATCH`/`DELETE .../:rateId`** (`edit`/`delete`).
+- **Rate-card + commission CRUD honour #10 (pending-only edit/delete).** `billing-rates.service` +
+  `tier-schedule`/`flat-rate`/`holdback` services gained `update`/`remove` restricted to **pending** rows
+  (current/past → 422, supersede instead); edit re-runs `planSupersession`, delete re-opens any predecessor it
+  had bounded (no gap). Shared `commission/effective-edit.util` (`assertPending`/`resolveEditWindow`).
+  Incentives gained `remove` (only if no `sale_item` references it — else end it, #2). FE: `EffectiveDatedTable`
+  grew an optional `rowActions` slot; the clients `BillingRatesPanel` (gated `billing_rates:view`, hidden
+  otherwise) + the commission sections offer pending-row Edit (reusing the create modals in an edit mode) +
+  Delete (`ConfirmDialog`); tier-edit = delete + re-add (the bracket editor is the create surface).
+- **Product create inline CLIENT-BILLING rate** — `CreateProductDto.initial_billing_rate` (rate_kind
+  `product`) written with the product in one tx; providing it additionally requires `billing_rates:create`.
+- **Client custom fields** — `client_custom_fields` (name/value + display_order, no cascade); Create/Update
+  client accept a `custom_fields[]` REPLACED in a tx; the detail GET includes them. FE: a `useFieldArray` on
+  `ClientFormModal` (edit fetches the detail first so existing fields load before a save — never wiped) +
+  display on `ClientDetailPage`.
+- **Two hand-authored migrations** (`product_type_catalogue`, `client_custom_fields`) — operator runs
+  `migrate deploy` + re-seeds bootstrap (idempotent: 4 core types `is_system`, the `billing_rates` grid).
+  **Verified LOCAL only** (backend 68 suites/350 tests + build green; contract regen; frontend build + lint +
+  stylelint green). Light/dark + live-data visual pass needs a browser.

@@ -129,14 +129,15 @@ Identity, authentication, and modular role-based access. A role is a set of (mod
 | **AUTH-013** | **Personal notifications are not individually overridable.** Users see which notifications they receive, but channel configuration is controlled by the Super Admin per event (no per-user opt-out in this version).                                                                                     | **S**   |
 | **AUTH-014** | **System Settings / Administration grouping.** Existing org-wide configuration (roles & permissions, users, tiers/rates, holdback release, incentives, clients/products, expense categories, notification routing, chatbot) is presented under one role-gated Administration area rather than scattered. | **S**   |
 
-> **Built-in role grants (reference).** The RBAC catalogue is **16 modules** (auth/users, hrm, clients, commission, sales, payrun, clawback, expenses, billing, documents, import, reporting, settings, profile, account, **notifications**) × **6 actions** (view/create/edit/approve/delete/export), seeded as the standard permission grid, **plus one off-grid permission `notifications:broadcast`**. Default role coverage:
+> **Built-in role grants (reference).** The RBAC catalogue is **17 modules** (auth/users, hrm, clients, **billing_rates**, commission, sales, payrun, clawback, expenses, billing, documents, import, reporting, settings, profile, account, **notifications**) × **6 actions** (view/create/edit/approve/delete/export), seeded as the standard permission grid, **plus one off-grid permission `notifications:broadcast`**. Default role coverage:
 >
 > | Permission | Super Admin | Admin | Manager | Sales Rep |
 > |---|:---:|:---:|:---:|:---:|
 > | All (module, action) grid permissions | ✅ all | operational subset | roster subset | self subset |
+> | **`billing_rates:*`** (view/create/edit/delete client rate cards) | ✅ | — | — | — |
 > | **`notifications:broadcast`** | ✅ | — | — | — |
 >
-> `notifications:broadcast` is **Super Admin only** and is the only path that targets notification recipients freely; all other (automatic) events have intrinsic, non-re-targetable recipients (RPT-012/RPT-013).
+> `billing_rates:*` gates the client billing rate cards (sensitive partner financials) and is **Super Admin only** by default — Admin/Manager/Rep do NOT see rate cards; a custom "Business Partner" role can be granted `billing_rates:view`. Managing the **product-type catalogue** is gated `commission:edit`. `notifications:broadcast` is **Super Admin only** and is the only path that targets notification recipients freely; all other (automatic) events have intrinsic, non-re-targetable recipients (RPT-012/RPT-013).
 
 ### 4.2 UI / Screen Requirements
 
@@ -226,11 +227,14 @@ Program partners and their admin-created product catalogues, plus client billing
 | **ID**       | **Requirement**                                                                                                                                             | **Pri** |
 |--------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **CLNT-001** | An Admin/Super Admin can create and edit clients (code, name, market CA/US, whether the partner supplies MPU IDs, active flag).                             | **M**   |
-| **CLNT-002** | Products are created per client with a product type (internet / greenfield_internet / tv / home_phone); there is no fixed global catalogue.                 | **M**   |
+| **CLNT-002** | Products are created per client, choosing a product type from the **configurable product-type catalogue** (no fixed enum). Creating a product may optionally set its **initial client-billing rate** inline (requires `billing_rates:create`). product_type is immutable after creation. | **M**   |
 | **CLNT-003** | Client billing rates are configured per client/product with a rate kind (product / tv_addon / hp_addon / bundle_bonus / spiff) and an effective date range. | **M**   |
-| **CLNT-004** | A new billing rate with a future effective date supersedes a pending one for the same scope; closed periods are never altered.                              | **M**   |
+| **CLNT-004** | A new billing rate with a future effective date supersedes a pending one for the same scope; closed periods are never altered. A **PENDING** rate may be edited or deleted; a current/past rate is immutable (supersede instead). | **M**   |
 | **CLNT-005** | Client billing rates are stored and computed entirely separately from rep commission rates and are never combined.                                          | **M**   |
 | **CLNT-006** | Clients and products can be deactivated without deleting historical references.                                                                             | **S**   |
+| **CLNT-007** | **Product-type catalogue (configurable).** The SA can add product types at runtime (gated `commission:edit`). Each type carries a LOCKED behaviour: `tiered` (internet — counts toward the tally), `greenfield` (flat, excluded), or `standard_addon`. **New types are always `standard_addon`** (billable, flat-rated, NOT tiered, NOT greenfield — never changes tally/greenfield logic); the 4 core types are system types (behaviour immutable, non-deletable). A type may optionally be created with an inline COMMISSION flat rate. | **M**   |
+| **CLNT-008** | **Modular rate-card visibility.** Client billing rate cards are gated by a discrete `billing_rates` permission set (view/create/edit/delete), granted by default to **Super Admin only**. Roles without `billing_rates:view` cannot see rate cards (server-enforced). | **M**   |
+| **CLNT-009** | **Client custom fields.** The SA can add/edit/remove repeatable name/value custom fields on a client; they persist and show on the client detail. | **S**   |
 
 ### 6.2 UI / Screen Requirements
 
@@ -242,7 +246,7 @@ Program partners and their admin-created product catalogues, plus client billing
 
 ### 6.3 Data Touchpoints
 
-clients, products, client_billing_rates.
+clients, client_custom_fields, products, product_type_catalogue, client_billing_rates.
 
 ## 7. Commission Configuration
 
@@ -253,12 +257,13 @@ Rep-side commission rules (Schedule C v2): the tier schedule, flat rates, holdba
 | **ID**       | **Requirement**                                                                                                                                                                                                       | **Pri** |
 |--------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **COMM-001** | The Super Admin can configure the tier schedule: four tiers with count thresholds and a per-activation rate each, effective-dated.                                                                                    | **M**   |
-| **COMM-002** | The Super Admin can configure flat rates for greenfield internet, TV, and home phone, effective-dated.                                                                                                                | **M**   |
+| **COMM-002** | The Super Admin can configure flat rates per **non-tiered product type** (greenfield internet, TV, home phone, and any SA-added standard add-on), effective-dated. A tiered type (internet) is rejected (it's priced by the tier schedule). | **M**   |
 | **COMM-003** | The Super Admin can configure the advance/holdback split (default 70% / 30%), effective-dated.                                                                                                                        | **M**   |
 | **COMM-004** | **Holdback release setting (bulk, sticky).** The Super Admin sets which pay cycle a period's 30% holdback releases into; the setting applies in bulk and persists until changed. *[PROPOSED — confirm rule in §17]* | **M**   |
 | **COMM-005** | The Super Admin can create incentives/spiffs: scope (client/product/all), target type (per-activation or target-based), target count, date window, and amount.                                                        | **M**   |
 | **COMM-006** | A later configuration change with a future effective date supersedes a pending change; changes apply prospectively only and never recompute a closed period.                                                          | **M**   |
 | **COMM-007** | Rate changes generate a system notification; email is sent only if enabled for the rate_change event (default off).                                                                                                   | **S**   |
+| **COMM-008** | **Consistent effective-dated CRUD.** Tier schedules, flat rates, and the holdback split support edit/delete of a **PENDING** (not-yet-effective) row; a current/past row is immutable (supersede instead). An incentive may be deleted only if never applied to a paid item (else it is ended). | **S**   |
 
 ### 7.2 Tier Schedule (Schedule C v2)
 

@@ -100,8 +100,9 @@ The data model is the foundation of the system. It is designed so that business 
 |----------------------------|----------------------------------------------|--------------------------------------------------------------------------------------------------|
 | Rep / Distributor          | A field salesperson and their HR record.     | 1 Rep → many Sales, Expenses, Pay-Run Lines, Equipment, Documents. Has 1 Field Manager (a User). |
 | User & Role                | Any system login; role drives module access. | 1 Role → many Users; Role ↔ Modules (many-to-many permissions).                                  |
-| Client (Program Partner)   | VF, RF, CTI, and future partners.            | 1 Client → many Products; 1 Client → many Sales.                                                 |
-| Product                    | An admin-created, per-client sellable item.  | Belongs to 1 Client; referenced by Sales; has effective-dated client + rep rates.                |
+| Client (Program Partner)   | VF, RF, CTI, and future partners.            | 1 Client → many Products; 1 Client → many Sales; carries optional SA-defined custom fields.       |
+| Product Type (catalogue)   | Configurable product types + commission behaviour (tiered/greenfield/standard add-on). | The SA adds types at runtime (always standard add-on); core types are locked.                     |
+| Product                    | An admin-created, per-client sellable item.  | Belongs to 1 Client; has a product type from the catalogue; referenced by Sales; has effective-dated client + rep rates. |
 | Sale                       | One customer/household activation.           | Belongs to Rep + Client + Product(s); has 1 unique Sale ID; spawns 0..1 Clawback.                |
 | Rate Card / Tier Config    | Effective-dated commission rules.            | Referenced by the commission engine at period close.                                             |
 | Incentive / Spiff          | Admin-defined, time-boxed bonus.             | Applied to qualifying Sales; recorded per Sale.                                                  |

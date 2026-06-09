@@ -216,6 +216,32 @@ Program partners and their admin-created product catalogues. CLIENT BILLING RATE
 | **is_active**       | bool      | —       |                                                     |
 | **created_at**      | timestamp | —       |                                                     |
 
+#### `client_custom_fields`
+
+*SA-defined name/value pairs carrying extra info about a client. Replace-in-place on client create/edit.*
+
+| **Field**         | **Type**  | **Key** | **Notes**                  |
+|-------------------|-----------|---------|----------------------------|
+| **id**            | uuid      | **PK**  |                            |
+| **client_id**     | uuid      | **FK**  | -> clients.id              |
+| **field_name**    | varchar   | —       |                            |
+| **field_value**   | varchar   | —       |                            |
+| **display_order** | int       | —       | Order as supplied.         |
+| **created_at**    | timestamp | —       |                            |
+
+#### `product_type_catalogue`
+
+*The configurable set of product types + their LOCKED commission behaviour (replaces the old fixed enum). The SA adds types at runtime (always `standard_addon`); the 4 core types are system types (behaviour immutable, non-deletable). Read by the engine seam (the engine itself stays string-keyed).*
+
+| **Field**      | **Type**  | **Key** | **Notes**                                                              |
+|----------------|-----------|---------|------------------------------------------------------------------------|
+| **key**        | varchar   | **PK**  | Natural key (e.g. internet). Referenced by product_type columns.       |
+| **label**      | varchar   | —       | Display label.                                                         |
+| **behaviour**  | enum      | —       | tiered (internet, #5) / greenfield (#9) / standard_addon (default).    |
+| **is_system**  | bool      | —       | True for the 4 core types — behaviour locked, non-deletable.           |
+| **is_active**  | bool      | —       |                                                                        |
+| **created_at** | timestamp | —       |                                                                        |
+
 #### `products`
 
 *An admin-created, per-client sellable item.*
@@ -225,7 +251,7 @@ Program partners and their admin-created product catalogues. CLIENT BILLING RATE
 | **id**           | uuid      | **PK**  |                                                   |
 | **client_id**    | uuid      | **FK**  | -> clients.id                                    |
 | **name**         | varchar   | —       | e.g. Fibre 1gig/2.5gig.                           |
-| **product_type** | enum      | —       | internet / greenfield_internet / tv / home_phone. |
+| **product_type** | varchar   | **FK**  | -> product_type_catalogue.key (was an enum).      |
 | **is_active**    | bool      | —       |                                                   |
 | **created_at**   | timestamp | —       |                                                   |
 
@@ -279,7 +305,7 @@ REP commission rules (Schedule C v2): the tier table, flat rates, holdback split
 | **Field**          | **Type** | **Key** | **Notes**                              |
 |--------------------|----------|---------|----------------------------------------|
 | **id**             | uuid     | **PK**  |                                        |
-| **product_type**   | enum     | —       | greenfield_internet / tv / home_phone. |
+| **product_type**   | varchar  | **FK**  | -> product_type_catalogue.key (non-tiered types). |
 | **amount**         | decimal  | —       | $100 / $30 / $30.                   |
 | **effective_from** | date     | —       |                                        |
 | **effective_to**   | date     | —       | Nullable.                              |
@@ -317,7 +343,7 @@ REP commission rules (Schedule C v2): the tier table, flat rates, holdback split
 | **id**                 | uuid     | **PK**  |                                   |
 | **name**               | varchar  | —       |                                   |
 | **scope_client_id**    | uuid     | **FK**  | -> clients.id (nullable = all).  |
-| **scope_product_type** | enum     | —       | Nullable = all.                   |
+| **scope_product_type** | varchar  | **FK**  | -> product_type_catalogue.key. Nullable = all. |
 | **target_type**        | enum     | —       | per_activation / target_based.    |
 | **target_count**       | int      | —       | Nullable (e.g. 5 sales in 1 day). |
 | **window_start**       | date     | —       |                                   |
@@ -364,7 +390,7 @@ The atomic financial unit. A Sale is one customer/household activation with a co
 | **id**                  | uuid     | **PK**  |                                                   |
 | **sale_id**             | uuid     | **FK**  | -> sales.id                                      |
 | **product_id**          | uuid     | **FK**  | -> products.id                                   |
-| **product_type**        | enum     | —       | internet / greenfield_internet / tv / home_phone. |
+| **product_type**        | varchar  | —       | Catalogue key, frozen snapshot (no FK — #2 immutable). |
 | **counts_toward_tally** | bool     | —       | True only for non-greenfield internet.            |
 | **tier_at_payment**     | int      | —       | **SNAPSHOT (internet only); frozen at payment.**  |
 | **rate_applied**        | decimal  | —       | **SNAPSHOT of the rate used.**                    |
@@ -801,6 +827,10 @@ Key foreign-key relationships across the model (cardinality shown from the child
 | **rep_documents**               | 1:N       | reps                    |              |
 | **rep_equipment**               | 1:N       | reps                    |              |
 | **products**                    | 1:N       | clients                 |              |
+| **products**                    | N:1       | product_type_catalogue  | product_type → key |
+| **client_custom_fields**        | 1:N       | clients                 |              |
+| **commission_flat_rates**       | N:1       | product_type_catalogue  | product_type → key |
+| **incentives**                  | N:1       | product_type_catalogue  | scope_product_type → key (nullable) |
 | **client_billing_rates**        | 1:N       | clients                 |              |
 | **client_billing_rates**        | 1:N       | products                |              |
 | **commission_tiers**            | 1:N       | commission_tier_configs |              |
