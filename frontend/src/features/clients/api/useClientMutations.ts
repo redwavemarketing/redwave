@@ -27,6 +27,21 @@ export function useUpdateClient() {
   });
 }
 
+/** Bulk soft-deactivate — fan out the per-client is_active PATCH (no bulk endpoint); report done/failed. */
+export function useBulkDeactivateClients() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => unwrap<Client>(api.PATCH('/v1/clients/{id}', { params: { path: { id } }, body: { is_active: false } }))),
+      );
+      const done = results.filter((r) => r.status === 'fulfilled').length;
+      return { done, failed: results.length - done };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: clientsKeys.all }),
+  });
+}
+
 export function useCreateProduct() {
   const qc = useQueryClient();
   return useMutation({
@@ -41,6 +56,21 @@ export function useUpdateProduct() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateProductBody }) =>
       unwrap<Product>(api.PATCH('/v1/products/{id}', { params: { path: { id } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: productKeys.all }),
+  });
+}
+
+/** Bulk soft-deactivate products — fan out the per-product is_active PATCH; report done/failed. */
+export function useBulkDeactivateProducts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => unwrap<Product>(api.PATCH('/v1/products/{id}', { params: { path: { id } }, body: { is_active: false } }))),
+      );
+      const done = results.filter((r) => r.status === 'fulfilled').length;
+      return { done, failed: results.length - done };
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: productKeys.all }),
   });
 }

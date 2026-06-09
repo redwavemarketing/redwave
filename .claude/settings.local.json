@@ -19,7 +19,10 @@
       "Bash(node backend/smoke-billing-commission-shape.mjs)",
       "PowerShell($c = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { try { Stop-Process -Id $_ -Force -ErrorAction Stop; \"stopped PID $_\" } catch {} } } else { \"no listener on :3000\" })",
       "Bash(node -e \"const w=async\\(\\)=>{for\\(let i=0;i<90;i++\\){try{const r=await fetch\\('http://localhost:3000/health'\\);if\\(r.ok\\){console.log\\('READY'\\);process.exit\\(0\\);}}catch{}await new Promise\\(s=>setTimeout\\(s,1000\\)\\);}console.log\\('NOT READY'\\);process.exit\\(1\\);};w\\(\\);\")",
-      "Bash(node backend/smoke-gate4-shape.mjs)"
+      "Bash(node backend/smoke-gate4-shape.mjs)",
+      "Bash(git add *)",
+      "Bash(git --no-pager diff --cached --stat)",
+      "Bash(git commit *)"
     ]
   }
 }

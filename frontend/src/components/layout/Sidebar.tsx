@@ -173,10 +173,17 @@ const NAV: NavGroup[] = [
       },
       { label: 'Notifications', icon: Bell, to: '/admin/notifications', show: (a) => a.permissions.has('settings:view') },
       {
-        label: 'Clients & Products',
+        label: 'Clients',
         icon: ShoppingBag,
         to: '/admin/clients',
         match: (l) => l.pathname.startsWith('/admin/clients'),
+        show: (a) => a.permissions.has('clients:view'),
+      },
+      {
+        label: 'Products',
+        icon: ShoppingCart,
+        to: '/admin/products',
+        match: (l) => l.pathname.startsWith('/admin/products'),
         show: (a) => a.permissions.has('clients:view'),
       },
       {

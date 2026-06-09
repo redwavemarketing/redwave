@@ -10,6 +10,7 @@ import {
   Receipt,
   ShieldCheck,
   ShoppingBag,
+  ShoppingCart,
   SlidersHorizontal,
   UserCog,
   Users,
@@ -43,7 +44,8 @@ const CARDS: HubCard[] = [
   { title: 'Roles & Permissions', description: 'Build roles from a module × action permission matrix.', icon: <UserCog size={20} />, permission: 'roles:view', to: '/admin/roles' },
   { title: 'Notification settings', description: 'Configure which events notify in-app and by email.', icon: <Bell size={20} />, permission: 'settings:view', to: '/admin/notifications' },
   { title: 'Commission Config', description: 'Tiers, flat rates, holdback split, and incentives.', icon: <SlidersHorizontal size={20} />, permission: 'commission:edit', to: '/admin/commission' },
-  { title: 'Clients & Products', description: 'Partners, their products, and billing rates.', icon: <ShoppingBag size={20} />, permission: 'clients:view', to: '/admin/clients' },
+  { title: 'Clients', description: 'Partners, their products, and billing rates.', icon: <ShoppingBag size={20} />, permission: 'clients:view', to: '/admin/clients' },
+  { title: 'Products', description: 'Every per-client product across all partners.', icon: <ShoppingCart size={20} />, permission: 'clients:view', to: '/admin/products' },
   { title: 'Expense categories', description: 'Category catalogue and receipt requirements.', icon: <Receipt size={20} />, permission: 'expenses:edit' },
 ];
 

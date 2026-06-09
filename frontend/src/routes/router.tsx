@@ -34,6 +34,7 @@ const ExpenseDetailPage = lazy(() => import('../features/expenses/pages/ExpenseD
 const ExpenseApprovalsPage = lazy(() => import('../features/expenses/pages/ExpenseApprovalsPage'));
 const ClientsPage = lazy(() => import('../features/clients/pages/ClientsPage'));
 const ClientDetailPage = lazy(() => import('../features/clients/pages/ClientDetailPage'));
+const ProductsListPage = lazy(() => import('../features/products/pages/ProductsListPage'));
 const CommissionConfigPage = lazy(() => import('../features/commission/pages/CommissionConfigPage'));
 const PayRunListPage = lazy(() => import('../features/payrun/pages/PayRunListPage'));
 const PayRunDetailPage = lazy(() => import('../features/payrun/pages/PayRunDetailPage'));
@@ -104,6 +105,7 @@ export const router = createBrowserRouter([
           { path: 'admin/notifications', element: lazyEl(<NotificationSettingsPage />) },
           { path: 'admin/clients', element: lazyEl(<ClientsPage />) },
           { path: 'admin/clients/:id', element: lazyEl(<ClientDetailPage />) },
+          { path: 'admin/products', element: lazyEl(<ProductsListPage />) },
           { path: 'admin/commission', element: lazyEl(<CommissionConfigPage />) },
         ],
       },
