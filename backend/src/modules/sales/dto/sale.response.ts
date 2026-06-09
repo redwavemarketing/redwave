@@ -8,7 +8,7 @@
  * to `Record<string, never>` (the documented quirk). — CLAUDE §13
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ProductType, SaleItemStatus, SaleStatus } from '@prisma/client';
+import { SaleItemStatus, SaleStatus } from '@prisma/client';
 import { PageMetaResponse } from '../../../common/pagination/page.response';
 
 /** The 4-field pay period DERIVED onto a sale by list/findOne (sale_date → period). NOT the full Pay Run shape. */
@@ -36,8 +36,8 @@ export class SaleItemResponse {
   @ApiProperty()
   product_id!: string;
 
-  @ApiProperty({ enum: ProductType })
-  product_type!: ProductType;
+  @ApiProperty({ type: String, example: 'internet', description: 'Product-type catalogue key (snapshot).' })
+  product_type!: string;
 
   @ApiProperty({ description: 'internet && !greenfield — the only items that count toward the tier tally.' })
   counts_toward_tally!: boolean;

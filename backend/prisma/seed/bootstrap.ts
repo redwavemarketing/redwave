@@ -9,7 +9,7 @@
  *   • Genesis Schedule C v2 commission config (tiers, flat rates, holdback split, release setting).
  *   • The 2026 bi-weekly pay periods, expense-category catalogue, notification settings, chatbot config.
  */
-import { PrismaClient, PermissionAction, ProductType } from '@prisma/client';
+import { PrismaClient, PermissionAction } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import {
   ALL_ACTIONS,
@@ -218,6 +218,22 @@ export async function seedBootstrap(prisma: PrismaClient): Promise<{ superAdminU
     create: { user_id: superAdminUser.id, role_id: superAdminRole.id },
   });
 
+  // 5b. Product-type catalogue — the 4 core types with their LOCKED commission behaviour (#5/#9).
+  // is_system=true → behaviour immutable, non-deletable, non-deactivatable. New SA types are standard_addon.
+  const CORE_PRODUCT_TYPES = [
+    { key: 'internet', label: 'Internet', behaviour: 'tiered' as const },
+    { key: 'greenfield_internet', label: 'Greenfield Internet', behaviour: 'greenfield' as const },
+    { key: 'tv', label: 'TV', behaviour: 'standard_addon' as const },
+    { key: 'home_phone', label: 'Home Phone', behaviour: 'standard_addon' as const },
+  ];
+  for (const t of CORE_PRODUCT_TYPES) {
+    await prisma.productTypeCatalogue.upsert({
+      where: { key: t.key },
+      update: { label: t.label, behaviour: t.behaviour, is_system: true }, // behaviour is locked for core types
+      create: { key: t.key, label: t.label, behaviour: t.behaviour, is_system: true, is_active: true },
+    });
+  }
+
   // 6. Genesis Schedule C v2 commission config (back-dated genesis so it is always the current config).
   const effectiveFrom = genesisDate(SCHEDULE_C_V2.effectiveFrom);
   let tierConfig = await prisma.commissionTierConfig.findFirst({ where: { effective_from: effectiveFrom } });
@@ -233,11 +249,11 @@ export async function seedBootstrap(prisma: PrismaClient): Promise<{ superAdminU
   // Greenfield internet is flat $100 and EXCLUDED from the tier tally (#9). Tiers cover internet only.
   for (const [productType, amount] of Object.entries(SCHEDULE_C_V2.flatRates)) {
     const existingFlat = await prisma.commissionFlatRate.findFirst({
-      where: { product_type: productType as ProductType, effective_from: effectiveFrom },
+      where: { product_type: productType, effective_from: effectiveFrom },
     });
     if (!existingFlat) {
       await prisma.commissionFlatRate.create({
-        data: { product_type: productType as ProductType, amount, effective_from: effectiveFrom, created_by: superAdminUser.id },
+        data: { product_type: productType, amount, effective_from: effectiveFrom, created_by: superAdminUser.id },
       });
     }
   }

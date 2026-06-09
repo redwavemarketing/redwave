@@ -3,7 +3,7 @@
  * `BillingRateResponse.amount` is a money STRING (#1) + carries the server-derived effective-dating `status`.
  */
 import { ApiProperty } from '@nestjs/swagger';
-import { Market, ProductType, RateKind } from '@prisma/client';
+import { Market, RateKind } from '@prisma/client';
 import { PageMetaResponse } from '../../../common/pagination/page.response';
 
 const RATE_STATUS = ['current', 'pending', 'past'] as const;
@@ -42,8 +42,8 @@ export class ProductResponse {
   @ApiProperty()
   name!: string;
 
-  @ApiProperty({ enum: ProductType })
-  product_type!: ProductType;
+  @ApiProperty({ type: String, example: 'internet', description: 'Product-type catalogue key.' })
+  product_type!: string;
 
   @ApiProperty()
   is_active!: boolean;

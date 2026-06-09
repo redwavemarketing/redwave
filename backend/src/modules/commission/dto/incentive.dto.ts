@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IncentiveStatus, IncentiveTargetType, ProductType } from '@prisma/client';
+import { IncentiveStatus, IncentiveTargetType } from '@prisma/client';
 import {
   IsEnum,
   IsIn,
@@ -29,12 +29,13 @@ export class CreateIncentiveDto {
   scope_client_id?: string;
 
   @ApiPropertyOptional({
-    enum: ProductType,
-    description: 'Scope to a product type; omit/null = all.',
+    type: String,
+    example: 'tv',
+    description: 'Scope to a product-type catalogue key; omit/null = all.',
   })
   @IsOptional()
-  @IsEnum(ProductType)
-  scope_product_type?: ProductType;
+  @IsString()
+  scope_product_type?: string;
 
   @ApiProperty({
     enum: IncentiveTargetType,

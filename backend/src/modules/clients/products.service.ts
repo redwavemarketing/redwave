@@ -2,7 +2,7 @@
  * ProductsService — per-client products with soft-deactivate. No global catalogue: a product
  * always belongs to a client. product_type is immutable after creation. — SRS CLNT-002/006
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
@@ -48,6 +48,7 @@ export class ProductsService {
 
   async create(clientId: string, dto: CreateProductDto, actorId: string) {
     await this.assertClientExists(clientId);
+    await this.assertProductTypeActive(dto.product_type);
     const product = await this.prisma.product.create({
       data: {
         client_id: clientId, // attaches the product to the correct client — CLNT-002
@@ -93,6 +94,14 @@ export class ProductsService {
     });
     if (!client) {
       throw new NotFoundException('Client not found');
+    }
+  }
+
+  /** A product's type must be an ACTIVE catalogue key (the DTO no longer enforces a fixed enum). */
+  private async assertProductTypeActive(key: string): Promise<void> {
+    const type = await this.prisma.productTypeCatalogue.findUnique({ where: { key }, select: { is_active: true } });
+    if (!type || !type.is_active) {
+      throw new UnprocessableEntityException(`Unknown or inactive product type '${key}'`);
     }
   }
 }

@@ -82,11 +82,12 @@ enum Market {
   US
 }
 
-enum ProductType {
-  internet
-  greenfield_internet
-  tv
-  home_phone
+// Commission BEHAVIOUR classification for a product type (read by the engine seam, not the engine
+// itself). LOCKED for the 4 core types; new SA types are always standard_addon. — §3 #5/#9, §6
+enum ProductTypeBehaviour {
+  tiered // counts toward the internet tier tally (internet only) — #5
+  greenfield // flat-rated, excluded from the tally (greenfield_internet) — #9
+  standard_addon // billable, flat-rated, NOT tiered, NOT greenfield (tv / home_phone / new types)
 }
 
 enum RateKind {
@@ -476,14 +477,35 @@ model Client {
   @@map("clients")
 }
 
+// PRODUCT-TYPE CATALOGUE — the configurable set of product types + their LOCKED commission
+// behaviour. internet=tiered (#5), greenfield_internet=greenfield (#9, flat $100 excluded from the
+// tally), tv/home_phone=standard_addon. New SA types are forced standard_addon and can NEVER change
+// tally/greenfield logic. The 4 core types are is_system (behaviour immutable, non-deletable). The
+// `key` is the natural PK that product_type columns reference. — §6
+model ProductTypeCatalogue {
+  key        String               @id
+  label      String
+  behaviour  ProductTypeBehaviour
+  is_system  Boolean
+  is_active  Boolean
+  created_at DateTime             @default(now())
+
+  products   Product[]
+  flat_rates CommissionFlatRate[]
+  incentives Incentive[]
+
+  @@map("product_type_catalogue")
+}
+
 model Product {
-  id           String      @id @default(uuid()) @db.Uuid
-  client_id    String      @db.Uuid
-  client       Client      @relation(fields: [client_id], references: [id])
-  name         String
-  product_type ProductType
-  is_active    Boolean
-  created_at   DateTime    @default(now())
+  id                String               @id @default(uuid()) @db.Uuid
+  client_id         String               @db.Uuid
+  client            Client               @relation(fields: [client_id], references: [id])
+  name              String
+  product_type      String // FK → product_type_catalogue.key
+  product_type_ref  ProductTypeCatalogue @relation(fields: [product_type], references: [key])
+  is_active         Boolean
+  created_at        DateTime             @default(now())
 
   client_billing_rates ClientBillingRate[]
   sale_items           SaleItem[]
@@ -540,13 +562,14 @@ model CommissionTier {
 }
 
 model CommissionFlatRate {
-  id             String      @id @default(uuid()) @db.Uuid
-  product_type   ProductType
-  amount         Decimal     @db.Decimal(12, 2)
-  effective_from DateTime    @db.Date
-  effective_to   DateTime?   @db.Date
-  created_by     String      @db.Uuid
-  creator        User        @relation("FlatRateCreatedBy", fields: [created_by], references: [id])
+  id               String               @id @default(uuid()) @db.Uuid
+  product_type     String // FK → product_type_catalogue.key
+  product_type_ref ProductTypeCatalogue @relation(fields: [product_type], references: [key])
+  amount           Decimal              @db.Decimal(12, 2)
+  effective_from   DateTime             @db.Date
+  effective_to     DateTime?            @db.Date
+  created_by       String               @db.Uuid
+  creator          User                 @relation("FlatRateCreatedBy", fields: [created_by], references: [id])
 
   @@map("commission_flat_rates")
 }
@@ -573,11 +596,12 @@ model HoldbackReleaseSetting {
 
 model Incentive {
   id                 String              @id @default(uuid()) @db.Uuid
-  name               String
-  scope_client_id    String?             @db.Uuid
-  scope_client       Client?             @relation(fields: [scope_client_id], references: [id])
-  scope_product_type ProductType?
-  target_type        IncentiveTargetType
+  name                   String
+  scope_client_id        String?               @db.Uuid
+  scope_client           Client?               @relation(fields: [scope_client_id], references: [id])
+  scope_product_type     String? // FK → product_type_catalogue.key (null = all types)
+  scope_product_type_ref ProductTypeCatalogue? @relation(fields: [scope_product_type], references: [key])
+  target_type            IncentiveTargetType
   target_count       Int?
   window_start       DateTime            @db.Date
   window_end         DateTime            @db.Date
@@ -638,7 +662,7 @@ model SaleItem {
   sale                Sale           @relation(fields: [sale_id], references: [id])
   product_id          String         @db.Uuid
   product             Product        @relation(fields: [product_id], references: [id])
-  product_type        ProductType
+  product_type        String // frozen snapshot (no FK — #2 immutable)
   counts_toward_tally Boolean
   tier_at_payment     Int? // SNAPSHOT (internet only; null until paid)
   rate_applied        Decimal?       @db.Decimal(12, 2) // SNAPSHOT

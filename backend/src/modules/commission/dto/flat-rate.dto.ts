@@ -1,17 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ProductType } from '@prisma/client';
-import { IsEnum, IsIn, IsOptional, Matches } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
 
 const MONEY = /^\d+(\.\d{1,2})?$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export class CreateFlatRateDto {
   @ApiProperty({
-    enum: ProductType,
-    description: 'Flat-rated product. internet is tiered (not allowed here).',
+    type: String,
+    example: 'tv',
+    description: 'Product-type catalogue key. A tiered type (e.g. internet) is rejected (422).',
   })
-  @IsEnum(ProductType)
-  product_type!: ProductType;
+  @IsString()
+  @Matches(/^[a-z][a-z0-9_]*$/, { message: 'product_type must be a lowercase snake_case catalogue key' })
+  product_type!: string;
 
   @ApiProperty({ example: '30.00', description: 'Exact decimal STRING — never a float.' })
   @Matches(MONEY, { message: 'amount must be a decimal string with up to 2 decimal places' })

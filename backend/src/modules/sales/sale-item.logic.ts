@@ -5,8 +5,8 @@
  * phone never count. This module records the flag; Pay Run consumes it at period close (it maps a
  * greenfield internet activation to the flat $100 rate when building engine inputs).
  */
-import { ProductType } from '@prisma/client';
-
-export function countsTowardTally(productType: ProductType, isGreenfield: boolean): boolean {
-  return productType === ProductType.internet && !isGreenfield;
+// product_type is a catalogue key (string). Only the tiered type 'internet' can count; greenfield
+// internet, TV, home phone, and any new standard add-on never count. — CLAUDE §3 #5/#9
+export function countsTowardTally(productType: string, isGreenfield: boolean): boolean {
+  return productType === 'internet' && !isGreenfield;
 }

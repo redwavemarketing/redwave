@@ -6,7 +6,7 @@
  * The leaderboard carries NO money field (counts only). Nothing here exposes another rep's earnings.
  */
 import { ApiProperty } from '@nestjs/swagger';
-import { ClawbackStatus, NotificationChannel, ProductType } from '@prisma/client';
+import { ClawbackStatus, NotificationChannel } from '@prisma/client';
 
 const CHAT_INTENTS = [
   'my_sales_count',
@@ -28,8 +28,8 @@ export class DashPeriodResponse {
 }
 
 export class ProductCountResponse {
-  @ApiProperty({ enum: ProductType })
-  product_type!: ProductType;
+  @ApiProperty({ type: String, example: 'internet', description: 'Product-type catalogue key.' })
+  product_type!: string;
 
   @ApiProperty()
   count!: number;

@@ -1,12 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ProductType } from '@prisma/client';
 import {
   IsBoolean,
-  IsEnum,
   IsIn,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -19,9 +18,11 @@ export class CreateProductDto {
   @MaxLength(150)
   name!: string;
 
-  @ApiProperty({ enum: ProductType })
-  @IsEnum(ProductType)
-  product_type!: ProductType;
+  // product_type is a key into the product-type catalogue (existence + active checked in the service).
+  @ApiProperty({ example: 'internet', description: 'Product-type catalogue key.' })
+  @IsString()
+  @Matches(/^[a-z][a-z0-9_]*$/, { message: 'product_type must be a lowercase snake_case catalogue key' })
+  product_type!: string;
 }
 
 export class UpdateProductDto {
@@ -57,10 +58,10 @@ export class ListAllProductsQuery extends PaginationQuery {
   @IsUUID()
   client_id?: string;
 
-  @ApiPropertyOptional({ enum: ProductType })
+  @ApiPropertyOptional({ description: 'Filter by product-type catalogue key.' })
   @IsOptional()
-  @IsEnum(ProductType)
-  product_type?: ProductType;
+  @IsString()
+  product_type?: string;
 
   @ApiPropertyOptional({ enum: ['active', 'inactive', 'all'], default: 'active' })
   @IsOptional()

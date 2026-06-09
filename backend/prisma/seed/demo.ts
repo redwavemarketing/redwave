@@ -11,7 +11,7 @@
  * live whenever it runs. Billing rates and commission rates stay in SEPARATE tables (#3 / BRD §8.2).
  */
 import { INestApplicationContext } from '@nestjs/common';
-import { PrismaClient, ProductType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { AuthUser } from '../../src/common/rbac/auth-user.type';
 import { BUILTIN_ROLES } from '../../src/common/rbac/rbac.constants';
@@ -74,20 +74,20 @@ export async function seedDemo(
     { code: 'RF', name: 'RF Now', mpu: true },
     { code: 'CTI', name: 'CTI', mpu: false },
   ];
-  const PRODUCTS: { type: ProductType; name: string; bill: string }[] = [
+  const PRODUCTS: { type: string; name: string; bill: string }[] = [
     { type: 'internet', name: 'Internet', bill: '60.00' },
     { type: 'tv', name: 'TV', bill: '25.00' },
     { type: 'home_phone', name: 'Home Phone', bill: '20.00' },
   ];
   // clientByCode[code] = { id, client_code, products: { [type]: productId } }
-  const clientByCode: Record<string, { id: string; client_code: string; mpu: boolean; products: Partial<Record<ProductType, string>> }> = {};
+  const clientByCode: Record<string, { id: string; client_code: string; mpu: boolean; products: Record<string, string> }> = {};
   for (const c of CLIENTS) {
     const client = await prisma.client.upsert({
       where: { client_code: c.code },
       update: { name: c.name, supplies_mpu_id: c.mpu, is_active: true },
       create: { client_code: c.code, name: c.name, market: 'CA', supplies_mpu_id: c.mpu, is_active: true },
     });
-    const products: Partial<Record<ProductType, string>> = {};
+    const products: Record<string, string> = {};
     for (const p of PRODUCTS) {
       let product = await prisma.product.findFirst({ where: { client_id: client.id, name: p.name } });
       if (!product) {
@@ -171,7 +171,7 @@ export async function seedDemo(
     clientCode: string;
     saleDate: string;
     customer: string;
-    items: ProductType[];
+    items: string[];
     greenfield?: boolean;
     validated?: boolean;
   };
@@ -211,7 +211,7 @@ export async function seedDemo(
   };
 
   // Bulk helper: N single-product sales (distinct customers) for a rep/client/date.
-  const bulk = async (repCode: string, clientCode: string, date: string, type: ProductType, count: number, validated = true, greenfield = false) => {
+  const bulk = async (repCode: string, clientCode: string, date: string, type: string, count: number, validated = true, greenfield = false) => {
     for (let i = 0; i < count; i += 1) {
       await createSale({ repCode, clientCode, saleDate: date, customer: `${repCode.slice(-2)}-${clientCode}-${type}-${i + 1}`, items: [type], validated, greenfield });
     }
