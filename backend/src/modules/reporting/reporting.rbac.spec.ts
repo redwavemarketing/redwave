@@ -7,10 +7,10 @@ import { RBAC_KEY } from '../../common/decorators/require-permission.decorator';
 const meta = (ctor: any, method: string) => Reflect.getMetadata(RBAC_KEY, ctor.prototype[method]);
 
 describe('Reporting RBAC metadata — arch §6.12', () => {
-  it('rep dashboard is authenticated-only (scoped in the service); others require reports:view', () => {
+  it('rep dashboard is authenticated-only (scoped in the service); manager/admin need reports:view; business needs reports:business', () => {
     expect(meta(DashboardsController, 'rep')).toBeUndefined(); // "self" — no permission, scoped to repId
     expect(meta(DashboardsController, 'manager')).toEqual({ moduleKey: 'reports', action: 'view' });
-    expect(meta(DashboardsController, 'business')).toEqual({ moduleKey: 'reports', action: 'view' });
+    expect(meta(DashboardsController, 'business')).toEqual({ moduleKey: 'reports', action: 'business' });
     expect(meta(DashboardsController, 'admin')).toEqual({ moduleKey: 'reports', action: 'view' });
     expect(meta(LeaderboardController, 'list')).toEqual({ moduleKey: 'reports', action: 'view' });
   });

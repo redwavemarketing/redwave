@@ -58,6 +58,7 @@ enum PermissionAction {
   delete
   export
   broadcast // one off-grid action: gates the manual notification broadcast (Super Admin)
+  business // off-grid: gates the business/executive dashboard + cross-period trends (Super Admin)
 }
 
 enum ProfileChangeStatus {

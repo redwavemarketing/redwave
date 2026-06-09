@@ -1,8 +1,8 @@
 /**
  * Dashboards + leaderboard controllers — /v1/dashboards/* and /v1/leaderboard. — arch §6.12
- * Rep dashboard is authenticated-only (scoped to the caller's own rep in the service). Manager/business/
- * admin require reports:view and are further scope-gated in the service (manager=roster, business=SA,
- * admin=Admin/SA). The leaderboard is counts-only.
+ * Rep dashboard is authenticated-only (scoped to the caller's own rep in the service). Manager/admin require
+ * reports:view + a service scope-gate (manager=roster, admin=Admin/SA); the business dashboard + trends
+ * require the off-grid reports:business (Super Admin only). The leaderboard is counts-only.
  */
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -44,8 +44,8 @@ export class DashboardsController {
   }
 
   @Get('business')
-  @RequirePermission('reports', 'view')
-  @ApiOperation({ summary: 'Business / executive dashboard', description: 'Requires reports:view AND Super Admin (else 403).' })
+  @RequirePermission('reports', 'business')
+  @ApiOperation({ summary: 'Business / executive dashboard', description: 'Requires reports:business (Super Admin only).' })
   @ApiOkResponse({ type: BusinessDashboardResponse })
   business(@CurrentUser() user: AuthUser, @Query() query: DashboardQuery) {
     return this.dashboards.business(user, query);

@@ -154,13 +154,19 @@ export async function seedBootstrap(prisma: PrismaClient): Promise<{ superAdminU
       });
     }
   }
-  // 2b. The ONE off-grid action: notifications:broadcast (gates the manual broadcast — Super Admin only).
-  //     Kept out of the module×action grid so `broadcast` doesn't cross-product onto every module.
+  // 2b. Off-grid actions — kept OUT of the module×action grid so they don't cross-product onto every module.
+  //     notifications:broadcast (manual broadcast) + reports:business (business dashboard + trends). SA only.
   const notificationsModuleId = modules.find((m) => m.key === 'notifications')!.id;
   await prisma.permission.upsert({
     where: { module_id_action: { module_id: notificationsModuleId, action: 'broadcast' } },
     update: {},
     create: { module_id: notificationsModuleId, action: 'broadcast' },
+  });
+  const reportsModuleId = modules.find((m) => m.key === 'reports')!.id;
+  await prisma.permission.upsert({
+    where: { module_id_action: { module_id: reportsModuleId, action: 'business' } },
+    update: {},
+    create: { module_id: reportsModuleId, action: 'business' },
   });
   const permissions = await prisma.permission.findMany({
     select: { id: true, action: true, module: { select: { key: true } } },
