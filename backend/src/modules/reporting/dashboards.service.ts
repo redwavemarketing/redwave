@@ -208,10 +208,9 @@ export class DashboardsService {
         _sum: { amount: true },
       }),
     ]);
-    const rev = dec(revAgg._sum.total_amount);
+    const stmtRev = dec(revAgg._sum.total_amount); // confirmed client-statement revenue (billing stream)
     const payout = dec(payAgg._sum.net_payout);
     const commission70 = dec(payAgg._sum.commission_70);
-    const margin = rev.minus(payout);
     const expenseTotal = expenseGroups.reduce((a, g) => a.plus(dec(g._sum.amount)), new Decimal(0));
     const expenseKm = expenseGroups.filter((g) => g.category === 'km').reduce((a, g) => a.plus(dec(g._sum.amount)), new Decimal(0));
 
@@ -238,6 +237,24 @@ export class DashboardsService {
       }
     }
 
+    // ── Historical (migrated) sales blend INTO the business view ONLY: product/client activation volume +
+    // a billing-stream reference revenue. They NEVER touch tally / greenfield / tier / payout (#2/#3/#5). ──
+    const histItems = await this.prisma.saleItem.findMany({
+      where: { sale: { status: 'historical', ...saleDateIn(period) } },
+      select: { product_type: true, historical_billed_amount: true, sale: { select: { client_id: true } } },
+    });
+    const histRevByClient = new Map<string, Decimal>();
+    let histRevenue = new Decimal(0);
+    for (const it of histItems) {
+      byProduct.set(it.product_type, (byProduct.get(it.product_type) ?? 0) + 1);
+      byClient.set(it.sale.client_id, (byClient.get(it.sale.client_id) ?? 0) + 1);
+      const amt = dec(it.historical_billed_amount);
+      histRevenue = histRevenue.plus(amt);
+      histRevByClient.set(it.sale.client_id, (histRevByClient.get(it.sale.client_id) ?? new Decimal(0)).plus(amt));
+    }
+    const rev = stmtRev.plus(histRevenue); // business revenue = confirmed statements + historical billed (billing stream, #3)
+    const margin = rev.minus(payout);
+
     // ── Tier distribution over ALL active reps (0-activation reps land in the entry tier). ──
     const [activeReps, brackets, clients, catalogue, revByClientRows, funnelGroups] = await Promise.all([
       this.prisma.rep.findMany({ where: { status: 'active' }, select: { id: true } }),
@@ -257,7 +274,8 @@ export class DashboardsService {
     const clientById = new Map(clients.map((c) => [c.id, c]));
     const typeLabel = new Map(catalogue.map((t) => [t.key, t.label]));
     const revByClient = new Map(revByClientRows.map((r) => [r.client_id, dec(r._sum.total_amount)]));
-    const totalVolume = items.length;
+    for (const [cid, amt] of histRevByClient) revByClient.set(cid, (revByClient.get(cid) ?? new Decimal(0)).plus(amt));
+    const totalVolume = items.length + histItems.length;
     const clientMix = clients
       .map((c) => {
         const r = revByClient.get(c.id) ?? new Decimal(0);
@@ -277,13 +295,16 @@ export class DashboardsService {
     const funnelOf = (s: SaleStatus) => funnelGroups.find((g) => g.status === s)?._count._all ?? 0;
 
     // ── Period-over-period growth ──
-    const [revPrevAgg, actPrev] = await Promise.all([
+    const [revPrevAgg, actPrev, histPrevAgg] = await Promise.all([
       prev ? this.prisma.clientStatement.aggregate({ where: { pay_period_id: prev.id }, _sum: { total_amount: true } }) : Promise.resolve(null),
       prev
         ? this.prisma.saleItem.count({ where: { sale: { status: { in: CONFIRMED }, sale_date: { gte: prev.start_date, lte: prev.end_date } } } })
         : Promise.resolve(0),
+      prev
+        ? this.prisma.saleItem.aggregate({ where: { sale: { status: 'historical', sale_date: { gte: prev.start_date, lte: prev.end_date } } }, _sum: { historical_billed_amount: true } })
+        : Promise.resolve(null),
     ]);
-    const revPrev = dec(revPrevAgg?._sum.total_amount);
+    const revPrev = dec(revPrevAgg?._sum.total_amount).plus(dec(histPrevAgg?._sum.historical_billed_amount)); // blend historical (apples-to-apples)
     const growthPct = (cur: Decimal | number, prv: Decimal | number): string | null => {
       const c = new Decimal(cur.toString());
       const p = new Decimal(prv.toString());
@@ -304,7 +325,7 @@ export class DashboardsService {
       clawback_total: money(clawAgg._sum.amount),
       clawback_rate: commission70.isZero() ? '0.0000' : dec(clawAgg._sum.amount).div(commission70).toFixed(4),
       expense: { total: expenseTotal.toFixed(2), km: expenseKm.toFixed(2), other: expenseTotal.minus(expenseKm).toFixed(2) },
-      total_activations: items.length,
+      total_activations: items.length + histItems.length, // confirmed + historical (business view)
       internet_activations: internet,
       greenfield: { count: greenfieldCount, amount: greenfieldAmt.toFixed(2) },
       activations_by_product: [...byProduct.entries()]
@@ -349,7 +370,7 @@ export class DashboardsService {
     const periodOf = (d: Date) =>
       periods.find((p) => p.start_date.getTime() <= d.getTime() && p.end_date.getTime() >= d.getTime()) ?? null;
 
-    const [statements, lines, claws, clients, brackets, activeReps, items] = await Promise.all([
+    const [statements, lines, claws, clients, brackets, activeReps, items, histItems] = await Promise.all([
       this.prisma.clientStatement.findMany({ where: { pay_period_id: { in: periodIds } }, select: { pay_period_id: true, client_id: true, total_amount: true } }),
       this.prisma.payRunLine.findMany({ where: { pay_run: { pay_period_id: { in: periodIds } } }, select: { net_payout: true, holdback_release_30: true, pay_run: { select: { pay_period_id: true } } } }),
       this.prisma.clawback.findMany({ where: { applied_in_pay_run: { pay_period_id: { in: periodIds } } }, select: { amount: true, applied_in_pay_run: { select: { pay_period_id: true } } } }),
@@ -359,6 +380,11 @@ export class DashboardsService {
       this.prisma.saleItem.findMany({
         where: { sale: { status: { in: CONFIRMED }, sale_date: { gte: minStart, lte: maxEnd } } },
         select: { product_type: true, counts_toward_tally: true, sale: { select: { sale_date: true, rep_id: true } } },
+      }),
+      // Historical (migrated) items — blended into the business trends only (revenue + activation volume).
+      this.prisma.saleItem.findMany({
+        where: { sale: { status: 'historical', sale_date: { gte: minStart, lte: maxEnd } } },
+        select: { product_type: true, historical_billed_amount: true, sale: { select: { sale_date: true, client_id: true } } },
       }),
     ]);
 
@@ -398,6 +424,22 @@ export class DashboardsService {
         tm.set(it.sale.rep_id, (tm.get(it.sale.rep_id) ?? 0) + 1);
         tallyByPeriodRep.set(p.id, tm);
       }
+    }
+    // Historical blend: revenue + activation volume + product/client mix; never internet tally/tier.
+    for (const it of histItems) {
+      const p = periodOf(it.sale.sale_date);
+      if (!p) continue;
+      const acc = perPeriod.get(p.id)!;
+      const amt = dec(it.historical_billed_amount);
+      acc.revenue = acc.revenue.plus(amt);
+      acc.activations += 1;
+      const pm = productByPeriod.get(p.id) ?? new Map<string, number>();
+      pm.set(it.product_type, (pm.get(it.product_type) ?? 0) + 1);
+      productByPeriod.set(p.id, pm);
+      const code = clientCode.get(it.sale.client_id) ?? it.sale.client_id;
+      const m = revByPeriodClient.get(p.id) ?? new Map<string, Decimal>();
+      m.set(code, (m.get(code) ?? new Decimal(0)).plus(amt));
+      revByPeriodClient.set(p.id, m);
     }
 
     return {

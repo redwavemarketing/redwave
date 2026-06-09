@@ -2855,6 +2855,7 @@ paths:
               - paid
               - clawed_back
               - deleted
+              - historical
         - name: rep_id
           required: false
           in: query
@@ -4889,24 +4890,40 @@ paths:
         - Documents & E-Signature
   /v1/imports:
     post:
-      description: Requires import:create. Stages + classifies rows (file upload
-        stubbed — rows fed in the body). Nothing is written to live tables until
-        commit.
+      description: "Requires import:create. Multipart: an .xlsx/.xls/.csv/.tsv file +
+        metadata. The server parses, cleans, auto-suggests a mapping (or applies
+        field_mapping_id), and classifies. Nothing is written to live tables
+        until commit. Returns the staged batch + parsed headers + the applied
+        mapping."
       operationId: ImportController_create_v1
       parameters: []
       requestBody:
         required: true
         content:
-          application/json:
+          multipart/form-data:
             schema:
-              $ref: "#/components/schemas/CreateImportDto"
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                source_type:
+                  type: string
+                import_type:
+                  type: string
+                client_id:
+                  type: string
+                field_mapping_id:
+                  type: string
+                reconcile_total:
+                  type: string
       responses:
         "201":
           description: ""
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ImportBatchResponse"
+                $ref: "#/components/schemas/StagedImportResponse"
         "400": &a195
           description: Bad Request — validation failed
           content:
@@ -4945,7 +4962,7 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a201
         - bearer: []
-      summary: Create a staged import batch
+      summary: Upload + stage an import batch (Excel/CSV)
       tags: &a202
         - Data Import & Integration
     get:
@@ -4980,6 +4997,7 @@ paths:
               - reps
               - clients
               - products
+              - billing_rates
               - sales
               - holdback
               - clawback
@@ -5028,6 +5046,62 @@ paths:
         "422": *a200
       security: *a201
       summary: Preview a staged batch
+      tags: *a202
+  /v1/imports/{id}/error-report:
+    get:
+      description: Requires import:view. The unmatched/duplicate/error rows for
+        hand-cleaning.
+      operationId: ImportController_errorReport_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+        "400": *a195
+        "401": *a196
+        "403": *a197
+        "404": *a198
+        "409": *a199
+        "422": *a200
+      security: *a201
+      summary: Download a CSV of the rows still needing attention
+      tags: *a202
+  /v1/imports/{id}/remap:
+    post:
+      description: Requires import:edit. Re-maps + re-cleans + re-classifies the
+        stored rows (no re-upload).
+      operationId: ImportController_remap_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemapDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StagedImportResponse"
+        "400": *a195
+        "401": *a196
+        "403": *a197
+        "404": *a198
+        "409": *a199
+        "422": *a200
+      security: *a201
+      summary: Re-apply a mapping to the staged rows
       tags: *a202
   /v1/imports/{id}/reconcile:
     post:
@@ -5090,18 +5164,34 @@ paths:
       security: *a201
       summary: Commit the batch (atomic + idempotent; reconcile-gated)
       tags: *a202
-  /v1/dashboards/rep:
+  /v1/import-mappings:
     get:
-      description: Authenticated; scoped to the caller’s own rep.
-      operationId: DashboardsController_rep_v1
-      parameters: []
+      description: Requires import:view.
+      operationId: ImportMappingsController_list_v1
+      parameters:
+        - name: source_type
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - client_report
+              - master_migration
+              - balance_migration
+        - name: client_id
+          required: false
+          in: query
+          schema:
+            type: string
       responses:
         "200":
           description: ""
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RepDashboardResponse"
+                type: array
+                items:
+                  $ref: "#/components/schemas/ImportFieldMappingResponse"
         "400": &a203
           description: Bad Request — validation failed
           content:
@@ -5140,8 +5230,144 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a209
         - bearer: []
-      summary: Rep's own dashboard
+      summary: List saved field mappings
       tags: &a210
+        - Data Import & Integration
+    post:
+      description: Requires import:create.
+      operationId: ImportMappingsController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMappingDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportFieldMappingResponse"
+        "400": *a203
+        "401": *a204
+        "403": *a205
+        "404": *a206
+        "409": *a207
+        "422": *a208
+      security: *a209
+      summary: Save a reusable field mapping
+      tags: *a210
+  /v1/import-mappings/{id}:
+    patch:
+      description: Requires import:edit.
+      operationId: ImportMappingsController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMappingDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportFieldMappingResponse"
+        "400": *a203
+        "401": *a204
+        "403": *a205
+        "404": *a206
+        "409": *a207
+        "422": *a208
+      security: *a209
+      summary: Update a saved field mapping
+      tags: *a210
+    delete:
+      description: Requires import:edit.
+      operationId: ImportMappingsController_remove_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400": *a203
+        "401": *a204
+        "403": *a205
+        "404": *a206
+        "409": *a207
+        "422": *a208
+      security: *a209
+      summary: Delete a saved field mapping
+      tags: *a210
+  /v1/dashboards/rep:
+    get:
+      description: Authenticated; scoped to the caller’s own rep.
+      operationId: DashboardsController_rep_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepDashboardResponse"
+        "400": &a211
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a212
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a213
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a214
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a215
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a216
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a217
+        - bearer: []
+      summary: Rep's own dashboard
+      tags: &a218
         - Reporting & Dashboards
   /v1/dashboards/manager:
     get:
@@ -5155,15 +5381,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ManagerDashboardResponse"
-        "400": *a203
-        "401": *a204
-        "403": *a205
-        "404": *a206
-        "409": *a207
-        "422": *a208
-      security: *a209
+        "400": *a211
+        "401": *a212
+        "403": *a213
+        "404": *a214
+        "409": *a215
+        "422": *a216
+      security: *a217
       summary: Manager dashboard
-      tags: *a210
+      tags: *a218
   /v1/dashboards/business:
     get:
       description: Requires reports:business (Super Admin only).
@@ -5194,15 +5420,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BusinessDashboardResponse"
-        "400": *a203
-        "401": *a204
-        "403": *a205
-        "404": *a206
-        "409": *a207
-        "422": *a208
-      security: *a209
+        "400": *a211
+        "401": *a212
+        "403": *a213
+        "404": *a214
+        "409": *a215
+        "422": *a216
+      security: *a217
       summary: Business / executive dashboard
-      tags: *a210
+      tags: *a218
   /v1/dashboards/business/trends:
     get:
       description: Requires reports:business (Super Admin). Headline series +
@@ -5225,15 +5451,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BusinessTrendsResponse"
-        "400": *a203
-        "401": *a204
-        "403": *a205
-        "404": *a206
-        "409": *a207
-        "422": *a208
-      security: *a209
+        "400": *a211
+        "401": *a212
+        "403": *a213
+        "404": *a214
+        "409": *a215
+        "422": *a216
+      security: *a217
       summary: Cross-period business trends
-      tags: *a210
+      tags: *a218
   /v1/dashboards/admin:
     get:
       description: Requires reports:view AND Admin/Super Admin.
@@ -5246,15 +5472,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminDashboardResponse"
-        "400": *a203
-        "401": *a204
-        "403": *a205
-        "404": *a206
-        "409": *a207
-        "422": *a208
-      security: *a209
+        "400": *a211
+        "401": *a212
+        "403": *a213
+        "404": *a214
+        "409": *a215
+        "422": *a216
+      security: *a217
       summary: Admin operational home (queues)
-      tags: *a210
+      tags: *a218
   /v1/leaderboard:
     get:
       description: Requires reports:view. Ranked by internet activation count for the
@@ -5329,46 +5555,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SalesTargetResponse"
-        "400": &a211
+        "400": &a219
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a212
+        "401": &a220
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a213
+        "403": &a221
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a214
+        "404": &a222
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a215
+        "409": &a223
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a216
+        "422": &a224
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a217
+      security: &a225
         - bearer: []
       summary: List sales targets (scoped)
-      tags: &a218
+      tags: &a226
         - Reporting & Dashboards
     put:
       description: Requires hrm:edit; a manager may only set targets for reps they manage.
@@ -5387,15 +5613,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SalesTargetResponse"
-        "400": *a211
-        "401": *a212
-        "403": *a213
-        "404": *a214
-        "409": *a215
-        "422": *a216
-      security: *a217
+        "400": *a219
+        "401": *a220
+        "403": *a221
+        "404": *a222
+        "409": *a223
+        "422": *a224
+      security: *a225
       summary: Set / replace a rep target for a period
-      tags: *a218
+      tags: *a226
   /v1/notifications:
     get:
       description: Authenticated; only the caller’s own. Paginated
@@ -5446,190 +5672,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotificationPageResponse"
-        "400": &a219
-          description: Bad Request — validation failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a220
-          description: Unauthorized — missing/invalid token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a221
-          description: Forbidden — RBAC denied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a222
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a223
-          description: Conflict — invalid state transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a224
-          description: Unprocessable Entity — domain rule violated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a225
-        - bearer: []
-      summary: My notifications
-      tags: &a226
-        - Reporting & Dashboards
-  /v1/notifications/unread-count:
-    get:
-      description: Authenticated; for the top-bar bell badge (polled).
-      operationId: NotificationsController_unreadCount_v1
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UnreadCountResponse"
-        "400": *a219
-        "401": *a220
-        "403": *a221
-        "404": *a222
-        "409": *a223
-        "422": *a224
-      security: *a225
-      summary: My unread count
-      tags: *a226
-  /v1/notifications/mark-all-read:
-    post:
-      description: Authenticated; marks all the caller’s unread notifications read.
-      operationId: NotificationsController_markAllRead_v1
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BulkMarkResultResponse"
-        "400": *a219
-        "401": *a220
-        "403": *a221
-        "404": *a222
-        "409": *a223
-        "422": *a224
-      security: *a225
-      summary: Mark all read
-      tags: *a226
-  /v1/notifications/mark-read:
-    post:
-      description: Authenticated; own-scoped bulk toggle.
-      operationId: NotificationsController_bulkMark_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BulkMarkDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BulkMarkResultResponse"
-        "400": *a219
-        "401": *a220
-        "403": *a221
-        "404": *a222
-        "409": *a223
-        "422": *a224
-      security: *a225
-      summary: Bulk mark read/unread
-      tags: *a226
-  /v1/notifications/broadcast:
-    post:
-      description: Requires notifications:broadcast (Super Admin). Fans out to a role
-        / specific users / everyone.
-      operationId: NotificationsController_broadcast_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BroadcastDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BroadcastResultResponse"
-        "400": *a219
-        "401": *a220
-        "403": *a221
-        "404": *a222
-        "409": *a223
-        "422": *a224
-      security: *a225
-      summary: Send a manual broadcast
-      tags: *a226
-  /v1/notifications/{id}:
-    patch:
-      description: Authenticated; only the caller’s own.
-      operationId: NotificationsController_setReadState_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MarkNotificationDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AppNotificationResponse"
-        "400": *a219
-        "401": *a220
-        "403": *a221
-        "404": *a222
-        "409": *a223
-        "422": *a224
-      security: *a225
-      summary: Mark a notification read/unread
-      tags: *a226
-  /v1/notification-settings:
-    get:
-      description: Requires settings:view (Super Admin).
-      operationId: NotificationSettingsController_list_v1
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/NotificationSettingResponse"
         "400": &a227
           description: Bad Request — validation failed
           content:
@@ -5668,8 +5710,192 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a233
         - bearer: []
-      summary: Notification event settings
+      summary: My notifications
       tags: &a234
+        - Reporting & Dashboards
+  /v1/notifications/unread-count:
+    get:
+      description: Authenticated; for the top-bar bell badge (polled).
+      operationId: NotificationsController_unreadCount_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnreadCountResponse"
+        "400": *a227
+        "401": *a228
+        "403": *a229
+        "404": *a230
+        "409": *a231
+        "422": *a232
+      security: *a233
+      summary: My unread count
+      tags: *a234
+  /v1/notifications/mark-all-read:
+    post:
+      description: Authenticated; marks all the caller’s unread notifications read.
+      operationId: NotificationsController_markAllRead_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkMarkResultResponse"
+        "400": *a227
+        "401": *a228
+        "403": *a229
+        "404": *a230
+        "409": *a231
+        "422": *a232
+      security: *a233
+      summary: Mark all read
+      tags: *a234
+  /v1/notifications/mark-read:
+    post:
+      description: Authenticated; own-scoped bulk toggle.
+      operationId: NotificationsController_bulkMark_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkMarkDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkMarkResultResponse"
+        "400": *a227
+        "401": *a228
+        "403": *a229
+        "404": *a230
+        "409": *a231
+        "422": *a232
+      security: *a233
+      summary: Bulk mark read/unread
+      tags: *a234
+  /v1/notifications/broadcast:
+    post:
+      description: Requires notifications:broadcast (Super Admin). Fans out to a role
+        / specific users / everyone.
+      operationId: NotificationsController_broadcast_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BroadcastDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BroadcastResultResponse"
+        "400": *a227
+        "401": *a228
+        "403": *a229
+        "404": *a230
+        "409": *a231
+        "422": *a232
+      security: *a233
+      summary: Send a manual broadcast
+      tags: *a234
+  /v1/notifications/{id}:
+    patch:
+      description: Authenticated; only the caller’s own.
+      operationId: NotificationsController_setReadState_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkNotificationDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppNotificationResponse"
+        "400": *a227
+        "401": *a228
+        "403": *a229
+        "404": *a230
+        "409": *a231
+        "422": *a232
+      security: *a233
+      summary: Mark a notification read/unread
+      tags: *a234
+  /v1/notification-settings:
+    get:
+      description: Requires settings:view (Super Admin).
+      operationId: NotificationSettingsController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationSettingResponse"
+        "400": &a235
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a236
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a237
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a238
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a239
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a240
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a241
+        - bearer: []
+      summary: Notification event settings
+      tags: &a242
         - Reporting & Dashboards
     patch:
       description: Requires settings:edit (Super Admin). Per-event in-app/email
@@ -5691,15 +5917,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/NotificationSettingResponse"
-        "400": *a227
-        "401": *a228
-        "403": *a229
-        "404": *a230
-        "409": *a231
-        "422": *a232
-      security: *a233
+        "400": *a235
+        "401": *a236
+        "403": *a237
+        "404": *a238
+        "409": *a239
+        "422": *a240
+      security: *a241
       summary: Configure event×channel settings
-      tags: *a234
+      tags: *a242
   /v1/chatbot/query:
     post:
       description: Authenticated. Answers from Redwave data within the caller’s scope
@@ -7082,7 +7308,7 @@ components:
           type: string
         status:
           type: string
-          enum: &a235
+          enum: &a243
             - current
             - pending
             - past
@@ -7179,7 +7405,7 @@ components:
           type: string
         status:
           type: string
-          enum: *a235
+          enum: *a243
       required:
         - id
         - product_type
@@ -7248,7 +7474,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: *a235
+          enum: *a243
       required:
         - id
         - advance_pct
@@ -7683,6 +7909,7 @@ components:
             - paid
             - clawed_back
             - deleted
+            - historical
         validated_by:
           type: string
           nullable: true
@@ -7826,6 +8053,7 @@ components:
             - paid
             - clawed_back
             - deleted
+            - historical
           example: deleted
       required:
         - id
@@ -7949,7 +8177,7 @@ components:
       properties:
         category:
           type: string
-          enum: &a236
+          enum: &a244
             - km
             - meals
             - hotel
@@ -8209,7 +8437,7 @@ components:
       properties:
         category:
           type: string
-          enum: *a236
+          enum: *a244
           example: meals
         client_id:
           type: string
@@ -8408,7 +8636,7 @@ components:
           format: date-time
         status:
           type: string
-          enum: &a237
+          enum: &a245
             - draft
             - finalized
             - exported
@@ -8516,7 +8744,7 @@ components:
           format: date-time
         status:
           type: string
-          enum: *a237
+          enum: *a245
         executed_by:
           type: string
         created_at:
@@ -9072,49 +9300,6 @@ components:
         - request_id
         - status
         - document_status
-    CreateImportDto:
-      type: object
-      properties:
-        source_type:
-          type: string
-          enum:
-            - client_report
-            - master_migration
-            - balance_migration
-          example: client_report
-        import_type:
-          type: string
-          enum:
-            - reps
-            - clients
-            - products
-            - sales
-            - holdback
-            - clawback
-            - mixed
-          example: sales
-        client_id:
-          type: string
-          description: Client scope (required for client_report).
-        field_mapping_id:
-          type: string
-          description: A saved field mapping to apply to each row.
-        reconcile_total:
-          type: string
-          example: "48200.00"
-          description: Operator-provided source total (required to commit a balance
-            migration). Decimal string.
-        rows:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-          description: Raw source rows (file upload stubbed). Each is an arbitrary
-            key→value object.
-      required:
-        - source_type
-        - import_type
-        - rows
     ImportRowResponse:
       type: object
       properties:
@@ -9163,7 +9348,7 @@ components:
         - matched_entity_id
         - issue
         - resolved_by
-    ImportBatchResponse:
+    StagedImportResponse:
       type: object
       properties:
         id:
@@ -9172,16 +9357,17 @@ components:
           type: string
         source_type:
           type: string
-          enum:
+          enum: &a246
             - client_report
             - master_migration
             - balance_migration
         import_type:
           type: string
-          enum:
+          enum: &a247
             - reps
             - clients
             - products
+            - billing_rates
             - sales
             - holdback
             - clawback
@@ -9194,7 +9380,7 @@ components:
           nullable: true
         status:
           type: string
-          enum:
+          enum: &a248
             - staged
             - committed
             - failed
@@ -9215,8 +9401,89 @@ components:
           description: Decimal string — operator-provided source total.
         error_summary:
           type: object
-          additionalProperties:
+          additionalProperties: &a249
             type: number
+          nullable: true
+          description: Counts by classification (matched/unmatched/...).
+        run_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        committed_at:
+          type: string
+          format: date-time
+          nullable: true
+        import_rows:
+          description: Present on detail/stage/reconcile/commit; absent on the list.
+          type: array
+          items:
+            $ref: "#/components/schemas/ImportRowResponse"
+        source_headers:
+          description: The parsed source column headers.
+          type: array
+          items:
+            type: string
+        applied_mapping:
+          type: object
+          additionalProperties:
+            type: string
+          description: "The applied `{ systemField: sourceColumn }` mapping."
+      required:
+        - id
+        - source_file_url
+        - source_type
+        - import_type
+        - client_id
+        - field_mapping_id
+        - status
+        - total_rows
+        - matched_rows
+        - error_rows
+        - reconcile_total
+        - error_summary
+        - run_by
+        - created_at
+        - committed_at
+    ImportBatchResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        source_file_url:
+          type: string
+        source_type:
+          type: string
+          enum: *a246
+        import_type:
+          type: string
+          enum: *a247
+        client_id:
+          type: string
+          nullable: true
+        field_mapping_id:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: *a248
+        total_rows:
+          type: number
+          example: 3
+        matched_rows:
+          type: number
+          example: 2
+        error_rows:
+          type: number
+          example: 1
+        reconcile_total:
+          type: string
+          nullable: true
+          example: "100.00"
+          description: Decimal string — operator-provided source total.
+        error_summary:
+          type: object
+          additionalProperties: *a249
           nullable: true
           description: Counts by classification (matched/unmatched/...).
         run_by:
@@ -9249,6 +9516,19 @@ components:
         - run_by
         - created_at
         - committed_at
+    RemapDto:
+      type: object
+      properties:
+        mapping_json:
+          type: object
+          additionalProperties:
+            type: string
+          description: "The `{ systemField: sourceColumn }` mapping to apply."
+          example:
+            mpu_id: "MPU #"
+            sale_date: Sale Date
+      required:
+        - mapping_json
     RowResolution:
       type: object
       properties:
@@ -9280,6 +9560,71 @@ components:
             $ref: "#/components/schemas/RowResolution"
       required:
         - resolutions
+    ImportFieldMappingResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        source_type:
+          type: string
+          enum:
+            - client_report
+            - master_migration
+            - balance_migration
+        client_id:
+          type: string
+          nullable: true
+        mapping_json:
+          type: object
+          additionalProperties:
+            type: string
+        created_by:
+          type: string
+      required:
+        - id
+        - name
+        - source_type
+        - client_id
+        - mapping_json
+        - created_by
+    CreateMappingDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: RF Now monthly report
+        source_type:
+          type: string
+          enum:
+            - client_report
+            - master_migration
+            - balance_migration
+        client_id:
+          type: string
+          description: Optional client scope.
+        mapping_json:
+          type: object
+          additionalProperties:
+            type: string
+          description: "`{ systemField: sourceColumn }`."
+          example:
+            mpu_id: "MPU #"
+      required:
+        - name
+        - source_type
+        - mapping_json
+    UpdateMappingDto:
+      type: object
+      properties:
+        name:
+          type: string
+          example: RF Now monthly report
+        mapping_json:
+          type: object
+          additionalProperties:
+            type: string
     DashPeriodResponse:
       type: object
       properties:
@@ -9384,6 +9729,7 @@ components:
             - paid
             - clawed_back
             - deleted
+            - historical
         is_greenfield:
           type: boolean
         sale_date:

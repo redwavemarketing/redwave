@@ -120,6 +120,26 @@ describe('DashboardsService.business (Super Admin only — RPT-003)', () => {
     expect(result.validation_funnel).toEqual({ entered: 0, validated: 0, in_pay_run: 0, paid: 0 });
     expect(Array.isArray(result.tier_distribution)).toBe(true);
   });
+
+  it('HISTORICAL sales blend into the business view ONLY: revenue + activations + product mix', async () => {
+    const { service, prisma } = make('all');
+    prisma.clientStatement.aggregate.mockResolvedValue({ _sum: { total_amount: '1000.00' } });
+    // 1st saleItem.findMany = confirmed items (none); 2nd = historical items (blended)
+    prisma.saleItem.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { product_type: 'internet', historical_billed_amount: '250.00', sale: { client_id: 'c1' } },
+        { product_type: 'tv', historical_billed_amount: '30.00', sale: { client_id: 'c1' } },
+      ]);
+    const result = await service.business(user({ isSuperAdmin: true }), {});
+    expect(result.revenue).toBe('1280.00'); // 1000 statements + 250 + 30 historical billed (#3 billing stream)
+    expect(result.total_activations).toBe(2); // historical counted in the business activation volume
+    expect(result.internet_activations).toBe(0); // but NOT in the internet tally (commission/tier concept)
+    expect(result.greenfield).toEqual({ count: 0, amount: '0.00' }); // never greenfield
+    expect(result.activations_by_product).toEqual(
+      expect.arrayContaining([{ key: 'internet', label: 'internet', count: 1 }, { key: 'tv', label: 'tv', count: 1 }]),
+    );
+  });
 });
 
 describe('DashboardsService.businessTrends (Super Admin only)', () => {
