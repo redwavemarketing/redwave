@@ -203,6 +203,19 @@ enum SignatureStatus {
   declined
 }
 
+enum SignatureFieldType {
+  signature
+  initial
+  date
+  text
+}
+
+enum SignatureMethod {
+  drawn
+  typed
+  uploaded
+}
+
 enum TargetType {
   daily
   weekly
@@ -293,6 +306,8 @@ model User {
   documents_owned               Document[]                 @relation("DocumentOwner")
   signature_requests_sent       SignatureRequest[]         @relation("SignatureRequestedBy")
   document_signatures           DocumentSignature[]        @relation("SignatureRecipient")
+  signature_fields_assigned     SignatureField[]           @relation("SignatureFieldRecipient")
+  user_signatures               UserSignature[]            @relation("UserSignatureOwner")
   notif_settings_updated        NotificationEventSetting[] @relation("NotifSettingUpdatedBy")
   notifications                 Notification[]
   chatbot_conversations         ChatbotConversation[]
@@ -985,17 +1000,19 @@ model Document {
 }
 
 model SignatureRequest {
-  id           String                 @id @default(uuid()) @db.Uuid
-  document_id  String                 @db.Uuid
-  document     Document               @relation(fields: [document_id], references: [id])
-  requested_by String                 @db.Uuid
-  requester    User                   @relation("SignatureRequestedBy", fields: [requested_by], references: [id])
-  message      String?
-  due_date     DateTime?              @db.Date
-  status       SignatureRequestStatus
-  created_at   DateTime               @default(now())
+  id                  String                 @id @default(uuid()) @db.Uuid
+  document_id         String                 @db.Uuid
+  document            Document               @relation(fields: [document_id], references: [id])
+  requested_by        String                 @db.Uuid
+  requester           User                   @relation("SignatureRequestedBy", fields: [requested_by], references: [id])
+  message             String?
+  due_date            DateTime?              @db.Date
+  status              SignatureRequestStatus
+  completed_file_path String? // the final all-signatures copy (stamped when the request completes, DOC-005)
+  created_at          DateTime               @default(now())
 
   document_signatures DocumentSignature[]
+  signature_fields    SignatureField[]
 
   @@map("signature_requests")
 }
@@ -1007,12 +1024,51 @@ model DocumentSignature {
   recipient_user_id    String           @db.Uuid
   recipient            User             @relation("SignatureRecipient", fields: [recipient_user_id], references: [id])
   status               SignatureStatus
-  signed_file_url      String?
+  signed_file_url      String? // the per-signer signed copy (object path); the original is never mutated (DOC-004)
   signed_at            DateTime?
   method               String?
   ip_address           String?
 
   @@map("document_signatures")
+}
+
+// A signature FIELD the requester places on the PDF for a specific recipient (where/what to sign).
+// Coordinates are normalized fractions 0..1 of the page (TOP-LEFT origin, to match pdf.js/CSS); the
+// server converts to pdf-lib points at stamp time. value_* are filled at signing. — SRS DOC-003
+model SignatureField {
+  id                   String             @id @default(uuid()) @db.Uuid
+  signature_request_id String             @db.Uuid
+  signature_request    SignatureRequest   @relation(fields: [signature_request_id], references: [id])
+  recipient_user_id    String             @db.Uuid
+  recipient            User               @relation("SignatureFieldRecipient", fields: [recipient_user_id], references: [id])
+  type                 SignatureFieldType
+  page                 Int // 0-based page index
+  x                    Decimal            @db.Decimal(6, 5) // left, fraction of page width
+  y                    Decimal            @db.Decimal(6, 5) // top, fraction of page height
+  w                    Decimal            @db.Decimal(6, 5) // width fraction
+  h                    Decimal            @db.Decimal(6, 5) // height fraction
+  value_text           String? // filled for text/date fields at signing
+  value_image_path     String? // filled for signature/initial fields (the applied signature image path)
+  created_at           DateTime           @default(now())
+
+  @@index([signature_request_id])
+  @@map("signature_fields")
+}
+
+// A user's saved, reusable signature (private + own-scoped). Image stored in object storage; one default.
+// — SRS DOC (saved signature)
+model UserSignature {
+  id         String          @id @default(uuid()) @db.Uuid
+  user_id    String          @db.Uuid
+  user       User            @relation("UserSignatureOwner", fields: [user_id], references: [id])
+  label      String
+  file_path  String // private object path; served via a short-TTL signed URL, own-scoped
+  method     SignatureMethod
+  is_default Boolean
+  created_at DateTime        @default(now())
+
+  @@index([user_id])
+  @@map("user_signatures")
 }
 
 // ════════════════════════════════════════════════════════════════════════════════

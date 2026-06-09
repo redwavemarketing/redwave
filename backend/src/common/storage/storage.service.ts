@@ -1,9 +1,16 @@
 /**
  * StorageService — real object-storage uploads to a Supabase Storage bucket, with access-controlled
  * (signed) URLs. Env-gated + graceful: reads SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY /
- * SUPABASE_STORAGE_BUCKET; when any is missing it returns a selection-only reference (no real upload),
- * so the feature works without storage configured and the operator lights it up later. The service-role
- * key is a server-only secret (never exposed to the browser). — arch §11 / CLAUDE §12
+ * SUPABASE_STORAGE_BUCKET; when any is missing it returns a selection-only `local://` reference (no real
+ * upload), so callers work without storage configured and the operator lights it up later. The
+ * service-role key is a server-only secret (never exposed to the browser). — arch §11 / CLAUDE §12
+ *
+ * Two shapes of result:
+ *  - `StoredObject { path, stored }` — `upload`/`uploadBuffer` return the object PATH (the row stores the
+ *    path; access goes through a freshly-signed short-TTL URL on each read via `signedUrl`). This is the
+ *    "access-controlled, not public" model used by Documents/HRM.
+ *  - `StoredFile { url, stored }` — the legacy `uploadReceipt` returns a long-lived signed URL stored
+ *    directly on the row (Batch-5 receipts; kept for backward compatibility).
  */
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -18,14 +25,22 @@ export interface UploadedFile {
   size: number;
 }
 
-export interface StoredFile {
-  /** A viewable URL (signed when stored in Supabase; a placeholder reference in fallback mode). */
-  url: string;
+/** Result of storing an object — the PATH to persist (re-signed on read), + whether it was really stored. */
+export interface StoredObject {
+  /** The object key within the bucket (real) or a `local://…` reference (fallback mode). */
+  path: string;
   /** True when the file was really uploaded to object storage; false in selection-only fallback mode. */
   stored: boolean;
 }
 
-const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year — re-signing on read is a future refinement
+/** Legacy result — a viewable URL stored directly on the row (receipts). */
+export interface StoredFile {
+  url: string;
+  stored: boolean;
+}
+
+const SIGNED_URL_TTL_RECEIPT = 60 * 60 * 24 * 365; // 1 year — receipts store the URL directly (legacy)
+const SIGNED_URL_TTL_SHORT = 60 * 5; // 5 minutes — minted per access for path-backed files (documents/HRM)
 
 @Injectable()
 export class StorageService {
@@ -46,35 +61,80 @@ export class StorageService {
     return this.client !== null;
   }
 
-  /**
-   * Upload a receipt under a unique key and return a signed URL. When storage is unconfigured, returns a
-   * selection-only reference (graceful fallback) so the receipt field still works.
-   */
-  async uploadReceipt(file: UploadedFile): Promise<StoredFile> {
+  /** Store an uploaded file under `${folder}/${yyyy}/${uuid}-${name}`; returns the PATH (re-signed on read). */
+  async upload(folder: string, file: UploadedFile): Promise<StoredObject> {
     const safeName = sanitize(file.originalname);
     if (!this.client) {
-      // No storage configured — selection-only reference (matches the prior stubbed behaviour).
-      return { url: `local://receipts/${safeName}`, stored: false };
+      return { path: `local://${folder}/${safeName}`, stored: false };
     }
+    const key = objectKey(folder, safeName);
+    await this.putObject(key, file.buffer, file.mimetype);
+    return { path: key, stored: true };
+  }
 
-    const key = `${new Date().getUTCFullYear()}/${randomUUID()}-${safeName}`;
-    const { error: uploadError } = await this.client.storage
-      .from(this.bucket)
-      .upload(key, file.buffer, { contentType: file.mimetype, upsert: false });
-    if (uploadError) {
-      this.logger.error(`Receipt upload failed: ${uploadError.message}`);
-      throw new InternalServerErrorException('failed to store the receipt');
+  /** Store a server-generated buffer (e.g. a pdf-lib stamped copy, or a signature PNG); returns the PATH. */
+  async uploadBuffer(folder: string, filename: string, buffer: Buffer, contentType: string): Promise<StoredObject> {
+    const safeName = sanitize(filename);
+    if (!this.client) {
+      return { path: `local://${folder}/${safeName}`, stored: false };
     }
+    const key = objectKey(folder, safeName);
+    await this.putObject(key, buffer, contentType);
+    return { path: key, stored: true };
+  }
 
-    const { data, error: signError } = await this.client.storage
-      .from(this.bucket)
-      .createSignedUrl(key, SIGNED_URL_TTL_SECONDS);
-    if (signError || !data) {
-      this.logger.error(`Receipt sign-url failed: ${signError?.message ?? 'no data'}`);
+  /** Download a stored object's bytes (e.g. the original PDF to stamp). Null when unstored/unconfigured. */
+  async download(path: string): Promise<Buffer | null> {
+    if (!this.client || !path || path.startsWith('local://')) return null;
+    const { data, error } = await this.client.storage.from(this.bucket).download(path);
+    if (error || !data) {
+      this.logger.warn(`Storage download failed for ${path}: ${error?.message ?? 'no data'}`);
+      return null;
+    }
+    return Buffer.from(await data.arrayBuffer());
+  }
+
+  /** Mint a fresh short-TTL signed URL for a stored PATH; null when unconfigured / a local ref / on error. */
+  async signedUrl(path: string, ttlSeconds: number = SIGNED_URL_TTL_SHORT): Promise<string | null> {
+    if (!this.client || !path || path.startsWith('local://')) return null;
+    const { data, error } = await this.client.storage.from(this.bucket).createSignedUrl(path, ttlSeconds);
+    if (error || !data) {
+      this.logger.warn(`Sign-url failed for ${path}: ${error?.message ?? 'no data'}`);
+      return null;
+    }
+    return data.signedUrl;
+  }
+
+  /**
+   * Legacy: upload a receipt and return a long-lived signed URL stored directly on the row. When storage
+   * is unconfigured, returns a selection-only reference (graceful fallback). — Batch 5
+   */
+  async uploadReceipt(file: UploadedFile): Promise<StoredFile> {
+    const obj = await this.upload('receipts', file);
+    if (!obj.stored) {
+      return { url: obj.path, stored: false };
+    }
+    const url = await this.signedUrl(obj.path, SIGNED_URL_TTL_RECEIPT);
+    if (!url) {
       throw new InternalServerErrorException('failed to sign the receipt URL');
     }
-    return { url: data.signedUrl, stored: true };
+    return { url, stored: true };
   }
+
+  private async putObject(key: string, body: Buffer, contentType: string): Promise<void> {
+    const { error } = await this.client!.storage
+      .from(this.bucket)
+      .upload(key, body, { contentType, upsert: false });
+    if (error) {
+      this.logger.error(`Storage upload failed for ${key}: ${error.message}`);
+      throw new InternalServerErrorException('failed to store the file');
+    }
+  }
+}
+
+/** Build a unique object key: `${folder}/${yyyy}/${uuid}-${safeName}`. */
+function objectKey(folder: string, safeName: string): string {
+  return `${folder}/${new Date().getUTCFullYear()}/${randomUUID()}-${safeName}`;
 }
 
 /** Keep the original filename's stem/extension but strip path + unsafe characters for the storage key. */

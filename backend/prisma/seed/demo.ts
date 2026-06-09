@@ -306,8 +306,15 @@ export async function seedDemo(
   );
 
   // ── A document with a PENDING signature request (→ admin queue + a signature_requested notification). ──
+  // A minimal valid PDF (header + EOF) — stored gracefully (local:// ref when storage is unconfigured).
+  const stubPdf = {
+    buffer: Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n'),
+    originalname: 'compensation-agreement-2026.pdf',
+    mimetype: 'application/pdf',
+    size: 46,
+  };
   const rep1UserId = (await prisma.rep.findUniqueOrThrow({ where: { rep_code: 'RW-D-0001' }, select: { user_id: true } })).user_id;
-  const doc = await documents.upload({ title: 'Compensation Agreement 2026', doc_type: 'compensation_agreement' }, sa);
+  const doc = await documents.upload({ title: 'Compensation Agreement 2026', doc_type: 'compensation_agreement' }, stubPdf, sa);
   if (rep1UserId) {
     await documents.requestSignature(doc.id, { recipient_user_ids: [rep1UserId], message: 'Please review and sign your 2026 compensation agreement.' }, sa);
   }

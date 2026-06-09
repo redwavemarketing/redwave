@@ -10,6 +10,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   DocumentStatus,
   DocumentType,
+  SignatureFieldType,
   SignatureRequestStatus,
   SignatureStatus,
 } from '@prisma/client';
@@ -24,14 +25,41 @@ export class DocumentSignatureResponse {
   @ApiProperty({ enum: SignatureStatus })
   status!: SignatureStatus;
 
-  @ApiProperty({ type: String, nullable: true, description: 'Per-signer signed copy (stub).' })
+  @ApiProperty({ type: String, nullable: true, description: 'Per-signer signed copy (object path; served via a signed URL).' })
   signed_file_url!: string | null;
 
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
   signed_at!: string | null;
 
-  @ApiProperty({ type: String, nullable: true, description: 'e.g. click_to_sign.' })
+  @ApiProperty({ type: String, nullable: true, description: 'drawn / typed / uploaded / click_to_sign.' })
   method!: string | null;
+}
+
+/** A placed signature field (where/what a recipient signs). Coordinates are fractions 0..1 (top-left). */
+export class SignatureFieldResponse {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  recipient_user_id!: string;
+
+  @ApiProperty({ enum: SignatureFieldType })
+  type!: SignatureFieldType;
+
+  @ApiProperty({ example: 0 })
+  page!: number;
+
+  @ApiProperty({ type: String, example: '0.10000', description: 'Left fraction (decimal string).' })
+  x!: string;
+
+  @ApiProperty({ type: String, example: '0.80000', description: 'Top fraction (decimal string).' })
+  y!: string;
+
+  @ApiProperty({ type: String, example: '0.25000', description: 'Width fraction (decimal string).' })
+  w!: string;
+
+  @ApiProperty({ type: String, example: '0.06000', description: 'Height fraction (decimal string).' })
+  h!: string;
 }
 
 export class SignatureRequestResponse {
@@ -53,11 +81,17 @@ export class SignatureRequestResponse {
   @ApiProperty({ enum: SignatureRequestStatus })
   status!: SignatureRequestStatus;
 
+  @ApiProperty({ type: String, nullable: true, description: 'The final all-signatures copy (object path) once completed.' })
+  completed_file_path!: string | null;
+
   @ApiProperty({ type: String, format: 'date-time' })
   created_at!: string;
 
   @ApiProperty({ type: () => [DocumentSignatureResponse] })
   document_signatures!: DocumentSignatureResponse[];
+
+  @ApiProperty({ type: () => [SignatureFieldResponse] })
+  signature_fields!: SignatureFieldResponse[];
 }
 
 export class DocumentResponse {
@@ -73,7 +107,7 @@ export class DocumentResponse {
   @ApiProperty()
   owner_user_id!: string;
 
-  @ApiProperty({ description: 'Stub storage reference; never mutated (DOC-004).' })
+  @ApiProperty({ description: 'Object path of the unsigned original; never mutated (DOC-001/004). Fetch bytes via /file-url.' })
   original_file_url!: string;
 
   @ApiProperty({ enum: DocumentStatus })
@@ -105,6 +139,15 @@ export class SignActionResultResponse {
 
   @ApiProperty({ enum: DocumentStatus })
   documentStatus!: DocumentStatus;
+}
+
+/** An access-controlled short-TTL signed URL for a stored file + a suggested download filename. */
+export class FileUrlResponse {
+  @ApiProperty({ description: 'A short-TTL signed URL (preview/download); never the raw object path.' })
+  url!: string;
+
+  @ApiProperty({ example: 'Compensation-Agreement-2026.pdf' })
+  filename!: string;
 }
 
 /** The result of cancelling a request. */

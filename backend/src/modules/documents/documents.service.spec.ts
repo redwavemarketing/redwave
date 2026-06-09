@@ -15,10 +15,12 @@ const user = (over: Partial<AuthUser> = {}): AuthUser => ({
 });
 const admin = user({ id: 'admin', roleNames: ['Admin'] });
 
+const pdfFile = { buffer: Buffer.from('%PDF-1.4'), originalname: 'comp.pdf', mimetype: 'application/pdf', size: 8 };
+
 function make() {
   const tx = {
     signatureRequest: {
-      create: jest.fn().mockResolvedValue({ id: 'req1', document_signatures: [] }),
+      create: jest.fn().mockResolvedValue({ id: 'req1', document_signatures: [], signature_fields: [] }),
       findMany: jest.fn().mockResolvedValue([
         { status: 'pending', document_signatures: [{ status: 'pending' }, { status: 'pending' }] },
       ]),
@@ -27,8 +29,8 @@ function make() {
   };
   const prisma = {
     document: {
-      create: jest.fn().mockResolvedValue({ id: 'doc1' }),
-      update: jest.fn().mockResolvedValue({ id: 'doc1', original_file_url: 's3://redwave-docs/doc1.pdf' }),
+      create: jest.fn().mockResolvedValue({ id: 'doc1', original_file_url: 'documents/2026/abc-comp.pdf' }),
+      update: jest.fn().mockResolvedValue({ id: 'doc1' }),
       findUnique: jest.fn(),
       findFirst: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
@@ -36,19 +38,26 @@ function make() {
     $transaction: jest.fn().mockImplementation(async (cb: (t: typeof tx) => unknown) => cb(tx)),
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
+  // Storage stores the object PATH; the original is never re-written (DOC-001/004).
+  const storage = {
+    upload: jest.fn().mockResolvedValue({ path: 'documents/2026/abc-comp.pdf', stored: true }),
+    signedUrl: jest.fn().mockResolvedValue('https://signed/x.pdf'),
+  };
   const emitter = { emit: jest.fn().mockResolvedValue(undefined) };
-  const service = new DocumentsService(prisma as never, audit as never, emitter as never);
-  return { service, prisma, tx, audit, emitter };
+  const service = new DocumentsService(prisma as never, audit as never, storage as never, emitter as never);
+  return { service, prisma, tx, audit, storage, emitter };
 }
 
-describe('DocumentsService.upload (DOC-001)', () => {
-  it('creates a draft document owned by the caller with a stubbed file ref', async () => {
-    const { service, prisma, audit } = make();
-    await service.upload({ title: 'Comp Agreement', doc_type: 'compensation_agreement' }, user());
+describe('DocumentsService.upload (DOC-001 — real storage, original never mutated)', () => {
+  it('stores the uploaded PDF and saves its object PATH (no second mutation of the original)', async () => {
+    const { service, prisma, storage, audit } = make();
+    await service.upload({ title: 'Comp Agreement', doc_type: 'compensation_agreement' }, pdfFile, user());
+    expect(storage.upload).toHaveBeenCalledWith('documents', pdfFile);
     const createData = (prisma.document.create.mock.calls[0][0] as { data: Record<string, unknown> }).data;
     expect(createData.owner_user_id).toBe('u1');
     expect(createData.status).toBe('draft');
-    expect(createData.original_file_url).toMatch(/^s3:\/\//);
+    expect(createData.original_file_url).toBe('documents/2026/abc-comp.pdf');
+    expect(prisma.document.update).not.toHaveBeenCalled(); // the original is written once, never re-mutated
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'create', entityType: 'documents' }));
   });
 });
@@ -97,6 +106,23 @@ describe('DocumentsService.requestSignature (DOC-002 share == signature request)
     const { service, prisma } = make();
     prisma.document.findUnique.mockResolvedValue(null);
     await expect(service.requestSignature('nope', dto, user())).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('persists placed fields; a field targeting a non-recipient → 422 (DOC-003)', async () => {
+    const { service, prisma, tx } = make();
+    prisma.document.findUnique.mockResolvedValue({ id: 'doc1', owner_user_id: 'u1' });
+    const field = { type: 'signature' as const, recipient_user_id: 'r1', page: 0, x: 0.1, y: 0.8, w: 0.25, h: 0.06 };
+    await service.requestSignature('doc1', { ...dto, fields: [field] }, user());
+    const createArg = (tx.signatureRequest.create.mock.calls[0][0] as {
+      data: { signature_fields: { create: { recipient_user_id: string; x: string }[] } };
+    }).data;
+    expect(createArg.signature_fields.create).toEqual([
+      { recipient_user_id: 'r1', type: 'signature', page: 0, x: '0.1', y: '0.8', w: '0.25', h: '0.06' },
+    ]);
+
+    await expect(
+      service.requestSignature('doc1', { ...dto, fields: [{ ...field, recipient_user_id: 'not-a-recipient' }] }, user()),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 });
 
