@@ -69,6 +69,17 @@ export class DashboardsService {
       take: 5,
       select: { id: true, amount: true, reason: true, status: true, created_at: true },
     });
+    // Own target for the period (count goal) + recent own sales (status + greenfield at a glance).
+    const targetRow = await this.prisma.salesTarget.findFirst({
+      where: { rep_id: repId, ...(period ? { period_start: period.start_date, period_end: period.end_date } : {}) },
+      select: { target_count: true },
+    });
+    const recentSales = await this.prisma.sale.findMany({
+      where: { rep_id: repId, status: { not: 'deleted' } },
+      orderBy: { created_at: 'desc' },
+      take: 8,
+      select: { id: true, sale_code: true, customer_name: true, status: true, is_greenfield: true, sale_date: true },
+    });
 
     return {
       period: period ? { id: period.id, period_number: period.period_number } : null,
@@ -83,6 +94,12 @@ export class DashboardsService {
         net_payout: money(commission._sum.net_payout),
       },
       holdback_pending_release: money(heldAgg._sum.amount_held),
+      target: {
+        target_activations: targetRow?.target_count ?? null,
+        actual: internetTally,
+        to_go: targetRow ? Math.max(0, targetRow.target_count - internetTally) : null,
+      },
+      recent_sales: recentSales,
       recent_clawbacks: recentClawbacks.map((c) => ({ ...c, amount: money(c.amount) })),
     };
   }
@@ -102,28 +119,53 @@ export class DashboardsService {
       ...(period ? { sale_date: { gte: period.start_date, lte: period.end_date } } : {}),
     };
 
-    const teamInternet = await this.prisma.saleItem.count({
-      where: { sale: saleWhere, product_type: 'internet', counts_toward_tally: true },
-    });
-    const pendingValidations = await this.prisma.sale.count({
-      where: { ...(repFilter ? { rep_id: repFilter } : {}), status: 'entered' },
-    });
-    const pendingExpenseApprovals = await this.prisma.expenseReport.count({
-      where: { ...(repFilter ? { rep_id: repFilter } : {}), status: 'submitted' },
-    });
-    const perRep = await this.prisma.saleItem.groupBy({
-      by: ['sale_id'],
-      where: { sale: saleWhere, product_type: 'internet', counts_toward_tally: true },
-      _count: { _all: true },
-    });
+    const canSeeMoney = user.permissions.has('hrm:edit'); // per-rep payout/money-ranking gate (Q3)
+    const payRunLineWhere = { ...(repFilter ? { rep_id: repFilter } : {}), ...(period ? { pay_run: { pay_period_id: period.id } } : {}) };
+
+    const [teamInternet, pendingValidations, pendingExpenseApprovals, perRep, rosterPayout, rosterHoldback, rosterReps, rosterItems, targetRows, pendingProfile] =
+      await Promise.all([
+        this.prisma.saleItem.count({ where: { sale: saleWhere, product_type: 'internet', counts_toward_tally: true } }),
+        this.prisma.sale.count({ where: { ...(repFilter ? { rep_id: repFilter } : {}), status: 'entered' } }),
+        this.prisma.expenseReport.count({ where: { ...(repFilter ? { rep_id: repFilter } : {}), status: 'submitted' } }),
+        this.prisma.saleItem.groupBy({ by: ['sale_id'], where: { sale: saleWhere, product_type: 'internet', counts_toward_tally: true }, _count: { _all: true } }),
+        this.prisma.payRunLine.aggregate({ where: payRunLineWhere, _sum: { net_payout: true } }),
+        this.prisma.holdbackLedger.aggregate({ where: { ...(repFilter ? { rep_id: repFilter } : {}), release_status: { in: ['held', 'scheduled'] } }, _sum: { amount_held: true } }),
+        this.prisma.rep.findMany({ where: repIds ? { id: { in: repIds } } : {}, select: { id: true, full_name: true } }),
+        this.prisma.saleItem.findMany({ where: { sale: saleWhere, product_type: 'internet', counts_toward_tally: true }, select: { sale: { select: { rep_id: true } } } }),
+        this.prisma.salesTarget.findMany({ where: { ...(repIds ? { rep_id: { in: repIds } } : {}), ...(period ? { period_start: period.start_date, period_end: period.end_date } : {}) }, select: { rep_id: true, target_count: true } }),
+        this.prisma.profileChangeRequest.count({ where: { status: 'pending', ...this.scope.profileReviewWhere(user) } }),
+      ]);
+
+    const tallyByRep = new Map<string, number>();
+    for (const it of rosterItems) tallyByRep.set(it.sale.rep_id, (tallyByRep.get(it.sale.rep_id) ?? 0) + 1);
+    const targetByRep = new Map(targetRows.filter((t) => t.rep_id).map((t) => [t.rep_id!, t.target_count]));
+
+    // Per-rep payout ONLY when the caller holds hrm:edit (else money-ranking/per-rep money is withheld server-side).
+    let payoutByRep = new Map<string, string>();
+    if (canSeeMoney) {
+      const lines = await this.prisma.payRunLine.groupBy({ by: ['rep_id'], where: payRunLineWhere, _sum: { net_payout: true } });
+      payoutByRep = new Map(lines.map((l) => [l.rep_id, money(l._sum.net_payout)]));
+    }
+
+    const topPerformers = rosterReps
+      .map((r) => ({ rep_id: r.id, rep_name: r.full_name, activations: tallyByRep.get(r.id) ?? 0, payout: canSeeMoney ? payoutByRep.get(r.id) ?? '0.00' : null }))
+      .sort((a, b) => b.activations - a.activations)
+      .slice(0, 5);
+    const targets = rosterReps.map((r) => ({ rep_id: r.id, rep_name: r.full_name, target_activations: targetByRep.get(r.id) ?? null, actual: tallyByRep.get(r.id) ?? 0 }));
 
     return {
       period: period ? { id: period.id, period_number: period.period_number } : null,
       roster_size: repIds ? repIds.length : null,
       team_internet_activations: teamInternet,
+      sales_in_period: perRep.length,
+      roster_payout: money(rosterPayout._sum.net_payout),
+      roster_holdback: money(rosterHoldback._sum.amount_held),
+      can_see_rep_money: canSeeMoney,
+      top_performers: topPerformers,
+      targets,
       pending_validations: pendingValidations,
       pending_expense_approvals: pendingExpenseApprovals,
-      sales_in_period: perRep.length,
+      pending_profile_changes: pendingProfile,
     };
   }
 

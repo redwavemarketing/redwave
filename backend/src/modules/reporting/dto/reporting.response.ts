@@ -6,7 +6,7 @@
  * The leaderboard carries NO money field (counts only). Nothing here exposes another rep's earnings.
  */
 import { ApiProperty } from '@nestjs/swagger';
-import { ClawbackStatus, NotificationChannel } from '@prisma/client';
+import { ClawbackStatus, NotificationChannel, SaleStatus } from '@prisma/client';
 
 const CHAT_INTENTS = [
   'my_sales_count',
@@ -80,6 +80,27 @@ export class RepClawbackResponse {
   created_at!: string;
 }
 
+/** Rep's own target for the period (count-based; null when no target is set). */
+export class RepTargetResponse {
+  @ApiProperty({ type: Number, nullable: true, example: 20 })
+  target_activations!: number | null;
+
+  @ApiProperty({ example: 12, description: 'Actual internet activations this period.' })
+  actual!: number;
+
+  @ApiProperty({ type: Number, nullable: true, example: 8, description: 'Remaining to hit target (null if none).' })
+  to_go!: number | null;
+}
+
+export class RepRecentSaleResponse {
+  @ApiProperty() id!: string;
+  @ApiProperty({ example: '2026-01-10-VF' }) sale_code!: string;
+  @ApiProperty() customer_name!: string;
+  @ApiProperty({ enum: SaleStatus }) status!: SaleStatus;
+  @ApiProperty() is_greenfield!: boolean;
+  @ApiProperty({ type: String, format: 'date-time' }) sale_date!: string;
+}
+
 export class RepDashboardResponse {
   @ApiProperty({ type: () => DashPeriodResponse, nullable: true })
   period!: DashPeriodResponse | null;
@@ -99,8 +120,28 @@ export class RepDashboardResponse {
   @ApiProperty({ type: String, example: '0.00', description: 'Decimal string — held, awaiting release.' })
   holdback_pending_release!: string;
 
+  @ApiProperty({ type: () => RepTargetResponse })
+  target!: RepTargetResponse;
+
+  @ApiProperty({ type: () => [RepRecentSaleResponse] })
+  recent_sales!: RepRecentSaleResponse[];
+
   @ApiProperty({ type: () => [RepClawbackResponse] })
   recent_clawbacks!: RepClawbackResponse[];
+}
+
+export class ManagerTopPerformerResponse {
+  @ApiProperty() rep_id!: string;
+  @ApiProperty() rep_name!: string;
+  @ApiProperty({ example: 12, description: 'Internet activations (the count-ranking signal).' }) activations!: number;
+  @ApiProperty({ type: String, nullable: true, description: 'Per-rep payout — present ONLY with hrm:edit.' }) payout!: string | null;
+}
+
+export class ManagerTargetRowResponse {
+  @ApiProperty() rep_id!: string;
+  @ApiProperty() rep_name!: string;
+  @ApiProperty({ type: Number, nullable: true }) target_activations!: number | null;
+  @ApiProperty() actual!: number;
 }
 
 export class ManagerDashboardResponse {
@@ -114,13 +155,33 @@ export class ManagerDashboardResponse {
   team_internet_activations!: number;
 
   @ApiProperty()
+  sales_in_period!: number;
+
+  // Roster AGGREGATE money — a manager always sees totals (never another rep's earnings exposed here).
+  @ApiProperty({ type: String, example: '8000.00', description: 'Decimal — roster total net payout (period).' })
+  roster_payout!: string;
+
+  @ApiProperty({ type: String, example: '3000.00', description: 'Decimal — roster outstanding holdback.' })
+  roster_holdback!: string;
+
+  @ApiProperty({ description: 'True when the caller holds hrm:edit (per-rep payout is then populated).' })
+  can_see_rep_money!: boolean;
+
+  @ApiProperty({ type: () => [ManagerTopPerformerResponse] })
+  top_performers!: ManagerTopPerformerResponse[];
+
+  @ApiProperty({ type: () => [ManagerTargetRowResponse] })
+  targets!: ManagerTargetRowResponse[];
+
+  // Queue counts (roster-scoped).
+  @ApiProperty()
   pending_validations!: number;
 
   @ApiProperty()
   pending_expense_approvals!: number;
 
   @ApiProperty()
-  sales_in_period!: number;
+  pending_profile_changes!: number;
 }
 
 // BusinessDashboardResponse moved to ./business-dashboard.response.ts (rich, period-aware KPI set).

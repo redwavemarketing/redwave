@@ -28,7 +28,8 @@ function make(scopeLevel: 'all' | 'roster' | 'self' = 'self', repIds: string[] =
     productTypeCatalogue: { findMany: jest.fn().mockResolvedValue([]) },
     expenseItem: { groupBy: jest.fn().mockResolvedValue([]) },
     commissionTierConfig: { findMany: jest.fn().mockResolvedValue([{ effective_from: D('2000-01-01'), effective_to: null, tiers: [{ tier_number: 4, min_count: 0, max_count: 6 }] }]) },
-    sale: { count: jest.fn().mockResolvedValue(2), groupBy: jest.fn().mockResolvedValue([]) },
+    sale: { count: jest.fn().mockResolvedValue(2), groupBy: jest.fn().mockResolvedValue([]), findMany: jest.fn().mockResolvedValue([]) },
+    salesTarget: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
     expenseReport: { count: jest.fn().mockResolvedValue(1) },
     profileChangeRequest: { count: jest.fn().mockResolvedValue(3) },
     signatureRequest: { count: jest.fn().mockResolvedValue(4) },
@@ -36,7 +37,10 @@ function make(scopeLevel: 'all' | 'roster' | 'self' = 'self', repIds: string[] =
     rep: { count: jest.fn().mockResolvedValue(7), findMany: jest.fn().mockResolvedValue([]) },
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const scope = { getRepScope: jest.fn().mockResolvedValue(scopeLevel === 'all' ? { level: 'all' } : { level: scopeLevel, repIds }) };
+  const scope = {
+    getRepScope: jest.fn().mockResolvedValue(scopeLevel === 'all' ? { level: 'all' } : { level: scopeLevel, repIds }),
+    profileReviewWhere: jest.fn().mockReturnValue({}),
+  };
   const service = new DashboardsService(prisma as never, audit as never, scope as never);
   return { service, prisma, audit };
 }
@@ -69,6 +73,25 @@ describe('DashboardsService.manager (roster only — RPT-002)', () => {
   it('a bare rep (scope=self) → 403', async () => {
     const { service } = make('self', ['rep-1']);
     await expect(service.manager(user())).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('per-rep payout is WITHHELD without hrm:edit, and money-ranking is count-based; roster aggregate is shown', async () => {
+    const { service, prisma } = make('roster', ['r1']);
+    prisma.rep.findMany.mockResolvedValue([{ id: 'r1', full_name: 'Rep One' }]);
+    prisma.payRunLine.aggregate.mockResolvedValue({ _sum: { net_payout: '5000.00' } });
+    const result = await service.manager(user()); // no hrm:edit
+    expect(result.can_see_rep_money).toBe(false);
+    expect(result.roster_payout).toBe('5000.00'); // aggregate is fine
+    expect(result.top_performers[0].payout).toBeNull(); // per-rep money withheld
+  });
+
+  it('per-rep payout IS present with hrm:edit', async () => {
+    const { service, prisma } = make('roster', ['r1']);
+    prisma.rep.findMany.mockResolvedValue([{ id: 'r1', full_name: 'Rep One' }]);
+    (prisma.payRunLine as Record<string, jest.Mock>).groupBy = jest.fn().mockResolvedValue([{ rep_id: 'r1', _sum: { net_payout: '1200.00' } }]);
+    const result = await service.manager(user({ permissions: new Set(['hrm:edit']) }));
+    expect(result.can_see_rep_money).toBe(true);
+    expect(result.top_performers[0].payout).toBe('1200.00');
   });
 });
 
