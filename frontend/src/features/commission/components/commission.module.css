@@ -1,5 +1,11 @@
 /* Shared styles for the Commission Config feature. Tokens only. */
 
+.rowActions {
+  display: inline-flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
 .page {
   display: flex;
   flex-direction: column;

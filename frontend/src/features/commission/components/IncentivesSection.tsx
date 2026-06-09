@@ -3,12 +3,13 @@
  * and create/edit/end. Reuses the playbook (Table + DataState + Modal). The scope client name comes from a
  * clients reference read (gated clients:view), not a rate-stream join (#3). Tokens only.
  */
-import { MoreHorizontal, Pencil, Square } from 'lucide-react';
+import { MoreHorizontal, Pencil, Square, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import {
   Badge,
   Button,
   Card,
+  ConfirmDialog,
   DropdownMenu,
   IconButton,
   ProposedChip,
@@ -29,7 +30,7 @@ import { displayDate } from '../../../lib/format/date';
 import { money } from '../../../lib/format/money';
 import { productTypeLabel } from '../../../lib/format/productType';
 import { useClients, useIncentives } from '../api/useCommission';
-import { useUpdateIncentive } from '../api/useCommissionMutations';
+import { useDeleteIncentive, useUpdateIncentive } from '../api/useCommissionMutations';
 import { IncentiveModal, type IncentiveFormState } from './IncentiveModal';
 import type { Incentive, IncentiveStatus } from '../commission.types';
 
@@ -47,19 +48,31 @@ export function IncentivesSection() {
   const onError = useApiErrorToast();
   const [status, setStatus] = useState<IncentiveStatus | 'all'>('all');
   const [modal, setModal] = useState<IncentiveFormState>(null);
+  const [deleteInc, setDeleteInc] = useState<Incentive | null>(null);
   const q = useIncentives(status);
   const clients = useClients(canViewClients);
   const update = useUpdateIncentive();
+  const remove = useDeleteIncentive();
 
   const clientName = (id: string | null) => (id ? clients.data?.find((c) => c.id === id)?.name ?? 'A client' : 'All clients');
   const end = (inc: Incentive) =>
     update.mutate({ id: inc.id, body: { status: 'ended' } }, { onSuccess: () => toast({ title: 'Incentive ended', tone: 'success' }), onError });
+
+  const onConfirmDelete = () => {
+    if (!deleteInc) return;
+    remove.mutate(deleteInc.id, {
+      onSuccess: () => { toast({ title: 'Incentive deleted', tone: 'success' }); setDeleteInc(null); },
+      onError: (e) => { onError(e); setDeleteInc(null); },
+    });
+  };
 
   const rowMenu = (inc: Incentive): MenuEntry[] => {
     const items: MenuEntry[] = [{ label: 'Edit', icon: <Pencil size={15} />, onSelect: () => setModal({ mode: 'edit', incentive: inc }) }];
     if (inc.status === 'active') {
       items.push('separator', { label: 'End', icon: <Square size={15} />, danger: true, onSelect: () => end(inc) });
     }
+    // Delete is only valid for an incentive never applied to a paid item; the server 422s otherwise.
+    items.push({ label: 'Delete', icon: <Trash2 size={15} />, danger: true, onSelect: () => setDeleteInc(inc) });
     return items;
   };
 
@@ -124,6 +137,15 @@ export function IncentivesSection() {
         </Table>
       </DataState>
       <IncentiveModal state={modal} onClose={() => setModal(null)} />
+      <ConfirmDialog
+        open={!!deleteInc}
+        onOpenChange={(o) => !o && setDeleteInc(null)}
+        title="Delete incentive?"
+        description="This permanently removes the incentive. If it has already been applied to a paid item, the server will refuse — end it instead."
+        confirmLabel="Delete"
+        loading={remove.isPending}
+        onConfirm={onConfirmDelete}
+      />
     </Card>
   );
 }

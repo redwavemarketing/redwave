@@ -20,7 +20,10 @@ import type {
   SetHoldbackConfigBody,
   SetHoldbackReleaseBody,
   TierConfig,
+  UpdateFlatRateBody,
+  UpdateHoldbackConfigBody,
   UpdateIncentiveBody,
+  UpdateTierScheduleBody,
 } from '../commission.types';
 
 export function useCreateTierSchedule() {
@@ -33,6 +36,25 @@ export function useCreateTierSchedule() {
   });
 }
 
+/** Edit a PENDING tier schedule (server 422s current/past). */
+export function useUpdateTierSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateTierScheduleBody }) =>
+      unwrap<TierConfig>(api.PATCH('/v1/commission/tiers/{id}', { params: { path: { id } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
+  });
+}
+
+/** Delete a PENDING tier schedule (server 422s current/past). */
+export function useDeleteTierSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => unwrap<void>(api.DELETE('/v1/commission/tiers/{id}', { params: { path: { id } } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
+  });
+}
+
 export function useCreateFlatRate() {
   const qc = useQueryClient();
   return useMutation({
@@ -41,10 +63,44 @@ export function useCreateFlatRate() {
   });
 }
 
+export function useUpdateFlatRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateFlatRateBody }) =>
+      unwrap<FlatRate>(api.PATCH('/v1/commission/flat-rates/{id}', { params: { path: { id } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
+  });
+}
+
+export function useDeleteFlatRate() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => unwrap<void>(api.DELETE('/v1/commission/flat-rates/{id}', { params: { path: { id } } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
+  });
+}
+
 export function useSetHoldback() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: SetHoldbackConfigBody) => unwrap<HoldbackConfig>(api.PATCH('/v1/commission/holdback-config', { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
+  });
+}
+
+export function useUpdateHoldback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateHoldbackConfigBody }) =>
+      unwrap<HoldbackConfig>(api.PATCH('/v1/commission/holdback-config/{id}', { params: { path: { id } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
+  });
+}
+
+export function useDeleteHoldback() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => unwrap<void>(api.DELETE('/v1/commission/holdback-config/{id}', { params: { path: { id } } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
   });
 }
@@ -71,6 +127,15 @@ export function useUpdateIncentive() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: UpdateIncentiveBody }) =>
       unwrap<Incentive>(api.PATCH('/v1/incentives/{id}', { params: { path: { id } }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
+  });
+}
+
+/** Delete an UNUSED incentive (server 422s one already applied to a paid item — end it instead). */
+export function useDeleteIncentive() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => unwrap<void>(api.DELETE('/v1/incentives/{id}', { params: { path: { id } } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: commissionKeys.all }),
   });
 }

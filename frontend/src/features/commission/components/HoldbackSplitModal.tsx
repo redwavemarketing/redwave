@@ -12,12 +12,14 @@ import { cx } from '../../../components/ui';
 import { PayPeriodSelect } from '../../../components/data/PayPeriodSelect';
 import { useApiErrorToast } from '../../../lib/api/apiError';
 import { todayIso } from '../../../lib/format/date';
-import { useSetHoldback } from '../api/useCommissionMutations';
+import { useSetHoldback, useUpdateHoldback } from '../api/useCommissionMutations';
 import { pctLabel, totalsToHundred } from '../pct';
+import type { HoldbackConfig } from '../commission.types';
 import styles from './commission.module.css';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const PCT = /^[01](\.\d{1,4})?$/;
+const dateOnly = (v: string | null | undefined) => (v ? v.slice(0, 10) : '');
 
 const schema = z
   .object({
@@ -32,27 +34,34 @@ const schema = z
   });
 type FormValues = z.infer<typeof schema>;
 
-export function HoldbackSplitModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function HoldbackSplitModal({ open, row, onClose }: { open: boolean; row?: HoldbackConfig; onClose: () => void }) {
+  const isEdit = !!row;
   const { toast } = useToast();
   const onError = useApiErrorToast();
   const set = useSetHoldback();
+  const update = useUpdateHoldback();
   const { control, register, handleSubmit, formState } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { advance_pct: '0.70', holdback_pct: '0.30', effective_from: '', effective_to: '' },
+    defaultValues: row
+      ? { advance_pct: row.advance_pct, holdback_pct: row.holdback_pct, effective_from: dateOnly(row.effective_from), effective_to: dateOnly(row.effective_to) }
+      : { advance_pct: '0.70', holdback_pct: '0.30', effective_from: '', effective_to: '' },
   });
   const errors = formState.errors;
   const advance = useWatch({ control, name: 'advance_pct' }) ?? '';
   const holdback = useWatch({ control, name: 'holdback_pct' }) ?? '';
   const ok = totalsToHundred(advance, holdback);
 
-  const onSubmit = (values: FormValues) =>
-    set.mutate(
-      { advance_pct: values.advance_pct, holdback_pct: values.holdback_pct, effective_from: values.effective_from, effective_to: values.effective_to || undefined },
-      { onSuccess: () => { toast({ title: 'Holdback split set', tone: 'success' }); onClose(); }, onError },
-    );
+  const onSubmit = (values: FormValues) => {
+    const body = { advance_pct: values.advance_pct, holdback_pct: values.holdback_pct, effective_from: values.effective_from, effective_to: values.effective_to || undefined };
+    if (isEdit && row) {
+      update.mutate({ id: row.id, body }, { onSuccess: () => { toast({ title: 'Holdback split updated', tone: 'success' }); onClose(); }, onError });
+      return;
+    }
+    set.mutate(body, { onSuccess: () => { toast({ title: 'Holdback split set', tone: 'success' }); onClose(); }, onError });
+  };
 
   return (
-    <Modal open={open} onOpenChange={(o) => !o && onClose()} title="Set holdback split">
+    <Modal open={open} onOpenChange={(o) => !o && onClose()} title={isEdit ? 'Edit holdback split' : 'Set holdback split'}>
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
         <Banner tone="info" title="Effective-dated">
           A future-dated split supersedes the pending one and bounds the current.
@@ -92,8 +101,8 @@ export function HoldbackSplitModal({ open, onClose }: { open: boolean; onClose: 
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" loading={set.isPending} disabled={!ok}>
-            Set split
+          <Button variant="primary" type="submit" loading={set.isPending || update.isPending} disabled={!ok}>
+            {isEdit ? 'Save changes' : 'Set split'}
           </Button>
         </div>
       </form>

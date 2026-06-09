@@ -25,8 +25,11 @@ export type Incentive = components['schemas']['IncentiveResponse'];
 // ── Request bodies ───────────────────────────────────────────────────────────────
 // The max_count swagger quirk is fixed (Batch A #2), so the generated tier DTO is now usable directly.
 export type CreateTierScheduleBody = components['schemas']['CreateTierScheduleDto'];
+export type UpdateTierScheduleBody = components['schemas']['UpdateTierScheduleDto'];
 export type CreateFlatRateBody = components['schemas']['CreateFlatRateDto'];
+export type UpdateFlatRateBody = components['schemas']['UpdateFlatRateDto'];
 export type SetHoldbackConfigBody = components['schemas']['SetHoldbackConfigDto'];
+export type UpdateHoldbackConfigBody = components['schemas']['UpdateHoldbackConfigDto'];
 export type SetHoldbackReleaseBody = components['schemas']['SetHoldbackReleaseSettingDto'];
 export type CreateIncentiveBody = components['schemas']['CreateIncentiveDto'];
 export type UpdateIncentiveBody = components['schemas']['UpdateIncentiveDto'];
