@@ -596,7 +596,8 @@ Redwave can bring its own files and client data into the system seamlessly. Ever
 | **IMP-008** | **Traceability.** Every imported row carries its import_batch_id, so any record can be traced to its source file and distinguished from manually entered data.                                                                                                                                                                                   | **M**   |
 | **IMP-009** | **Import history & audit.** Each batch is stored with source, type, scope, row counts, errors, who ran it, and when; committed and failed batches are both retained.                                                                                                                                                                             | **M**   |
 | **IMP-010** | **Unified with bulk validation.** The recurring client-report ingestion used for sales validation (SALE-007) is a consumer of this same pipeline — one ingestion mechanism, not two.                                                                                                                                                             | **M**   |
-| **IMP-011** | Supported source formats are Excel and CSV.                                                                                                                                                                                                                                                                                                      | **S**   |
+| **IMP-011** | Supported source formats are Excel (.xlsx/.xls) and CSV/TSV — uploaded as a real file, parsed server-side (exceljs / papaparse), with cleansing (whitespace trimmed, **dates → 'YYYY-MM-DD'**, **money → exact decimal CAD**, **client codes normalised** — kills the VF/Vf inconsistency). On upload the mapping is **auto-suggested** from the column headers; the operator adjusts + **saves** it for reuse (IMP-002). **Downloadable templates** (Excel + CSV) for every target — incl. the VF / RF Now / CTI client-report formats — are provided so Redwave has the exact columns. | **M**   |
+| **IMP-012** | **Historical sales (CONFIRMED, reference-only).** Imported historical / already-paid sales get a `historical` status: they are **REFERENCE-ONLY** — never paid, never enter a pay run, and are **excluded** from rep commission, the tier tally, the leaderboard, holdback, and clawbacks. They appear **only** in the owner's business-side aggregations (Business dashboard revenue + activations), capturing client / product / rep / sale_date / activation_date / billed amount (`sale_items.historical_billed_amount`, a billing-stream reference — never commission, #3). Historical data must never pollute current rep-facing commission or the live pay pipeline. | **M**   |
 
 ### 15.2 Worked Examples (acceptance criteria)
 
@@ -619,7 +620,7 @@ Redwave can bring its own files and client data into the system seamlessly. Ever
 
 ### 15.4 Data Touchpoints
 
-import_batches, import_field_mappings, import_rows; writes (on commit) to reps, clients, products, sales, sale_items, holdback_ledger, clawbacks — each tagged with import_batch_id.
+import_batches, import_field_mappings, import_rows; writes (on commit) to reps, clients, products, client_billing_rates, sales (incl. `historical`), sale_items, holdback_ledger. Provenance is one-directional via `import_rows.matched_entity_id`; imported **sales** additionally carry `import_batch_id` (so migrated/historical sales are distinguishable from manual entry, IMP-008). Supported targets: client_report→sales (bulk validation, SALE-007); master_migration→clients / products(+rate) / billing_rates / reps / sales(historical); balance_migration→holdback.
 
 ## 16. Sale Lifecycle State Machine
 
@@ -633,6 +634,7 @@ The authoritative state model for a sale. Transitions not listed are invalid and
 | Paid        | Commission paid; snapshots frozen on items.             | → Clawed Back (post-close cancellation entered).                        |
 | Clawed Back | A flat clawback was applied for a cancelled item.       | Terminal (further items may be clawed back independently).              |
 | Deleted     | Removed before payout; never counts toward any tally.   | Terminal.                                                               |
+| Historical  | Migrated/already-paid sale (set only at import). Reference-only — excluded from the pay pipeline (commission/tier/leaderboard/holdback/clawback); shown only in business aggregations. | Terminal (no transitions in or out). |
 
 > **Key invariants**
 > • A sale never changes pay period after entry — sale_date is fixed.

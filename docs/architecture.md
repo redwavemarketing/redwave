@@ -225,13 +225,18 @@ Representative endpoints per module (not exhaustive; the OpenAPI spec is authori
 
 ### 6.11 Data Import & Integration
 
-| **Verb** | **Path**                   | **Purpose**                                 | **Permission** |
-|----------|----------------------------|---------------------------------------------|----------------|
-| **POST** | /v1/imports                | Upload file + mapping; create staged batch. | import:create  |
-| **GET**  | /v1/imports/{id}           | Preview staged rows + match status.         | import:view    |
-| **POST** | /v1/imports/{id}/reconcile | Resolve unmatched rows.                     | import:edit    |
-| **POST** | /v1/imports/{id}/commit    | Commit (idempotent; reconcile-gated).       | import:approve |
-| **GET**  | /v1/imports                | Import/migration history.                   | import:view    |
+| **Verb**   | **Path**                          | **Purpose**                                            | **Permission** |
+|------------|-----------------------------------|--------------------------------------------------------|----------------|
+| **POST**   | /v1/imports                       | **Multipart**: upload an Excel/CSV file (+ metadata); parse + clean + auto-map + classify + stage. | import:create  |
+| **GET**    | /v1/imports                       | Import/migration history.                              | import:view    |
+| **GET**    | /v1/imports/{id}                  | Preview staged rows + match status.                   | import:view    |
+| **GET**    | /v1/imports/{id}/error-report     | CSV of the unmatched/duplicate/error rows.            | import:view    |
+| **POST**   | /v1/imports/{id}/remap            | Re-apply an adjusted mapping to the stored rows.      | import:edit    |
+| **POST**   | /v1/imports/{id}/reconcile        | Resolve unmatched rows (match/edit/ignore).          | import:edit    |
+| **POST**   | /v1/imports/{id}/commit           | Commit (atomic + idempotent; reconcile-gated).       | import:approve |
+| **GET/POST/PATCH/DELETE** | /v1/import-mappings[...] | Reusable saved column→field mappings (IMP-002).      | import:view/create/edit |
+
+Supported targets: client_report→sales (bulk validation), master_migration→clients / products / billing_rates / reps / sales (historical), balance_migration→holdback. No new permission — mapping CRUD + remap + error-report ride the existing import:{view,create,edit}.
 
 ### 6.12 Reporting & Platform
 

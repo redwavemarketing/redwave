@@ -375,10 +375,11 @@ The atomic financial unit. A Sale is one customer/household activation with a co
 | **postal_code**     | varchar   | —       |                                                                  |
 | **mpu_id**          | varchar   | —       | Client house ID where supplied (nullable).                       |
 | **is_greenfield**   | bool      | —       | Confirmed state at close; admin-settable either way.             |
-| **status**          | enum      | —       | entered / validated / in_pay_run / paid / clawed_back / deleted. |
+| **status**          | enum      | —       | entered / validated / in_pay_run / paid / clawed_back / deleted / **historical** (migrated, reference-only — never in the pay pipeline; set only at import). |
 | **validated_by**    | uuid      | **FK**  | -> users.id (nullable).                                         |
 | **validated_at**    | timestamp | —       | Nullable.                                                        |
 | **pay_run_id**      | uuid      | **FK**  | -> pay_runs.id (nullable until paid).                           |
+| **import_batch_id** | uuid      | —       | Provenance for imported (bulk-validated / historical) sales; no FK (polymorphic, IMP-008). Nullable. |
 | **created_at**      | timestamp | —       |                                                                  |
 
 #### `sale_items`
@@ -397,6 +398,7 @@ The atomic financial unit. A Sale is one customer/household activation with a co
 | **commission_paid**     | decimal  | —       | **SNAPSHOT of exact $ paid for this item.**      |
 | **incentive_id**        | uuid     | **FK**  | -> incentives.id (nullable).                     |
 | **incentive_amount**    | decimal  | —       | **SNAPSHOT (nullable).**                          |
+| **historical_billed_amount** | decimal | —    | Historical sales only — the source-file BILLED amount (a billing-stream reference for business aggregations; NOT commission, never joined to commission_*, #3). Nullable. |
 | **item_status**         | enum     | —       | active / cancelled / clawed_back.                 |
 
 ## 8. Pay Run & Holdback
@@ -803,9 +805,9 @@ Seamless ingestion of Redwave's own files and client data. Every import runs thr
 | **Field**            | **Type**  | **Key** | **Notes**                                                        |
 |----------------------|-----------|---------|------------------------------------------------------------------|
 | **id**               | uuid      | **PK**  |                                                                  |
-| **source_file_url**  | varchar   | —       | The uploaded Excel/CSV.                                          |
+| **source_file_url**  | varchar   | —       | The uploaded Excel/CSV — a real object-storage path (Supabase).  |
 | **source_type**      | enum      | —       | client_report / master_migration / balance_migration.            |
-| **import_type**      | enum      | —       | reps / clients / products / sales / holdback / clawback / mixed. |
+| **import_type**      | enum      | —       | reps / clients / products / billing_rates / sales / holdback / clawback / mixed. |
 | **client_id**        | uuid      | **FK**  | -> clients.id (nullable; for client reports).                   |
 | **field_mapping_id** | uuid      | **FK**  | -> import_field_mappings.id (nullable).                         |
 | **status**           | enum      | —       | staged / committed / failed / cancelled.                         |
