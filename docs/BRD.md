@@ -345,7 +345,7 @@ Each client has its own product catalogue and its own billing rates, created and
 
 ### 9.4 Rate-Change Mechanism
 
-Rate/tier/threshold changes are entered by the Super Admin with a custom effective date. A later change supersedes/overwrites a pending one (e.g. if partners reverse a decision before it takes effect). The 14-day notice required by Schedule C is handled by Redwave manually outside the system.
+Rate/tier/threshold changes are entered by the Super Admin with an effective date that is **selected as a pay period**, not a free calendar date: the admin picks the pay period the change takes effect in (`Period N · start–end`) and the system stores that period's boundary date (the start date for *effective from*, the end date for *effective to*). This keeps every rate window aligned to pay-period boundaries and avoids mid-period changes. The effective date must be today's period or later — **back-dating is rejected** (closed/in-progress periods are never altered). A later change supersedes/overwrites a pending one (e.g. if partners reverse a decision before it takes effect). The 14-day notice required by Schedule C is handled by Redwave manually outside the system.
 
 ### 9.5 AI Chatbot (Integrated)
 

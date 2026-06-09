@@ -229,7 +229,7 @@ Program partners and their admin-created product catalogues, plus client billing
 |--------------------------|-------------------------------------------------------------------------------------------------------------|
 | **Client List**          | All clients with status and market; add-client button.                                                      |
 | **Client Detail**        | Client info; Products tab (create/edit per-client products); Billing Rates tab (effective-dated rate rows). |
-| **Product / Rate Forms** | Product creation with type; billing-rate entry with rate kind and effective-from/to date pickers.           |
+| **Product / Rate Forms** | Product creation with type; billing-rate entry with rate kind and an effective-from/to **pay-period selector** (`Period N · start–end`, mapped to the period boundary date; back-dating rejected — BRD §9.4). |
 
 ### 6.3 Data Touchpoints
 
