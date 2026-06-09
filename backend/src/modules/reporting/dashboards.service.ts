@@ -18,6 +18,7 @@ import { winnipegDateOnly } from '../../common/timezone';
 import { currentPeriod } from './period.logic';
 import { countToTier, TierBracket } from './tier-progress.logic';
 import { DashboardQuery } from './dto/dashboard-query.dto';
+import { BusinessTrendsQuery } from './dto/business-trends.dto';
 
 const CONFIRMED: SaleStatus[] = ['validated', 'in_pay_run', 'paid'];
 const dec = (v: { toString(): string } | null | undefined): Decimal => new Decimal((v ?? 0).toString());
@@ -281,6 +282,111 @@ export class DashboardsService {
       client_mix: clientMix,
       revenue_growth: { current: rev.toFixed(2), previous: revPrev.toFixed(2), pct: growthPct(rev, revPrev) },
       activation_growth: { current: internet, previous: actPrev, pct: growthPct(internet, actPrev) },
+    };
+  }
+
+  // ── BUSINESS TRENDS — Super Admin only. Last N periods, headline series + breakdowns. ──
+  // Bounded (≤24 periods) in-app aggregation over the Batch-1 indexes; materialized views stay deferred.
+  async businessTrends(user: AuthUser, query: BusinessTrendsQuery) {
+    if (!user.isSuperAdmin) {
+      await this.deny(user, 'business trends are Super Admin only');
+    }
+    const n = query.periods ?? 6;
+    const recent = await this.prisma.payPeriod.findMany({
+      orderBy: { period_number: 'desc' },
+      take: n,
+      select: { id: true, period_number: true, start_date: true, end_date: true },
+    });
+    const periods = [...recent].sort((a, b) => a.period_number - b.period_number); // display ascending
+    if (periods.length === 0) {
+      return { periods: [], by_product: [], by_client_revenue: [], tier_distribution: [] };
+    }
+    const periodIds = periods.map((p) => p.id);
+    const minStart = periods[0].start_date;
+    const maxEnd = periods[periods.length - 1].end_date;
+    const periodOf = (d: Date) =>
+      periods.find((p) => p.start_date.getTime() <= d.getTime() && p.end_date.getTime() >= d.getTime()) ?? null;
+
+    const [statements, lines, claws, clients, brackets, activeReps, items] = await Promise.all([
+      this.prisma.clientStatement.findMany({ where: { pay_period_id: { in: periodIds } }, select: { pay_period_id: true, client_id: true, total_amount: true } }),
+      this.prisma.payRunLine.findMany({ where: { pay_run: { pay_period_id: { in: periodIds } } }, select: { net_payout: true, holdback_release_30: true, pay_run: { select: { pay_period_id: true } } } }),
+      this.prisma.clawback.findMany({ where: { applied_in_pay_run: { pay_period_id: { in: periodIds } } }, select: { amount: true, applied_in_pay_run: { select: { pay_period_id: true } } } }),
+      this.prisma.client.findMany({ select: { id: true, client_code: true } }),
+      this.effectiveTierBrackets(),
+      this.prisma.rep.findMany({ where: { status: 'active' }, select: { id: true } }),
+      this.prisma.saleItem.findMany({
+        where: { sale: { status: { in: CONFIRMED }, sale_date: { gte: minStart, lte: maxEnd } } },
+        select: { product_type: true, counts_toward_tally: true, sale: { select: { sale_date: true, rep_id: true } } },
+      }),
+    ]);
+
+    const init = () => ({ revenue: new Decimal(0), payout: new Decimal(0), released: new Decimal(0), clawback: new Decimal(0), activations: 0, internet: 0 });
+    const perPeriod = new Map(periods.map((p) => [p.id, init()]));
+    const clientCode = new Map(clients.map((c) => [c.id, c.client_code]));
+    const revByPeriodClient = new Map<string, Map<string, Decimal>>();
+    const productByPeriod = new Map<string, Map<string, number>>();
+    const tallyByPeriodRep = new Map<string, Map<string, number>>();
+
+    for (const s of statements) {
+      perPeriod.get(s.pay_period_id)!.revenue = perPeriod.get(s.pay_period_id)!.revenue.plus(dec(s.total_amount));
+      const code = clientCode.get(s.client_id) ?? s.client_id;
+      const m = revByPeriodClient.get(s.pay_period_id) ?? new Map<string, Decimal>();
+      m.set(code, (m.get(code) ?? new Decimal(0)).plus(dec(s.total_amount)));
+      revByPeriodClient.set(s.pay_period_id, m);
+    }
+    for (const l of lines) {
+      const acc = perPeriod.get(l.pay_run.pay_period_id);
+      if (acc) { acc.payout = acc.payout.plus(dec(l.net_payout)); acc.released = acc.released.plus(dec(l.holdback_release_30)); }
+    }
+    for (const c of claws) {
+      const pid = c.applied_in_pay_run?.pay_period_id;
+      if (pid && perPeriod.has(pid)) perPeriod.get(pid)!.clawback = perPeriod.get(pid)!.clawback.plus(dec(c.amount));
+    }
+    for (const it of items) {
+      const p = periodOf(it.sale.sale_date);
+      if (!p) continue;
+      const acc = perPeriod.get(p.id)!;
+      acc.activations += 1;
+      const pm = productByPeriod.get(p.id) ?? new Map<string, number>();
+      pm.set(it.product_type, (pm.get(it.product_type) ?? 0) + 1);
+      productByPeriod.set(p.id, pm);
+      if (it.product_type === 'internet' && it.counts_toward_tally) {
+        acc.internet += 1;
+        const tm = tallyByPeriodRep.get(p.id) ?? new Map<string, number>();
+        tm.set(it.sale.rep_id, (tm.get(it.sale.rep_id) ?? 0) + 1);
+        tallyByPeriodRep.set(p.id, tm);
+      }
+    }
+
+    return {
+      periods: periods.map((p) => {
+        const a = perPeriod.get(p.id)!;
+        return {
+          period_number: p.period_number,
+          revenue: a.revenue.toFixed(2),
+          payout: a.payout.toFixed(2),
+          net_margin: a.revenue.minus(a.payout).toFixed(2),
+          activations: a.activations,
+          internet_activations: a.internet,
+          holdback_released: a.released.toFixed(2),
+          clawback_total: a.clawback.toFixed(2),
+        };
+      }),
+      by_product: periods.flatMap((p) =>
+        [...(productByPeriod.get(p.id) ?? new Map<string, number>()).entries()].map(([product_type, count]) => ({ period_number: p.period_number, product_type, count })),
+      ),
+      by_client_revenue: periods.flatMap((p) =>
+        [...(revByPeriodClient.get(p.id) ?? new Map<string, Decimal>()).entries()].map(([client_code, amt]) => ({ period_number: p.period_number, client_code, amount: amt.toFixed(2) })),
+      ),
+      tier_distribution: periods.flatMap((p) => {
+        const tm = tallyByPeriodRep.get(p.id) ?? new Map<string, number>();
+        const counts = new Map<number, number>();
+        for (const r of activeReps) {
+          const t = countToTier(brackets, tm.get(r.id) ?? 0);
+          if (t) counts.set(t.tier_number, (counts.get(t.tier_number) ?? 0) + 1);
+        }
+        return [...counts.entries()].map(([tier_number, rep_count]) => ({ period_number: p.period_number, tier_number, rep_count }));
+      }),
     };
   }
 

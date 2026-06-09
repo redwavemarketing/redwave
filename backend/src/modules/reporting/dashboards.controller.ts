@@ -13,6 +13,7 @@ import { AuthUser } from '../../common/rbac/auth-user.type';
 import { DashboardsService } from './dashboards.service';
 import { LeaderboardService } from './leaderboard.service';
 import { DashboardQuery } from './dto/dashboard-query.dto';
+import { BusinessTrendsQuery } from './dto/business-trends.dto';
 import {
   AdminDashboardResponse,
   LeaderboardResponse,
@@ -20,6 +21,7 @@ import {
   RepDashboardResponse,
 } from './dto/reporting.response';
 import { BusinessDashboardResponse } from './dto/business-dashboard.response';
+import { BusinessTrendsResponse } from './dto/business-trends.response';
 
 @ApiTags('Reporting & Dashboards')
 @ApiBearerAuth()
@@ -49,6 +51,17 @@ export class DashboardsController {
   @ApiOkResponse({ type: BusinessDashboardResponse })
   business(@CurrentUser() user: AuthUser, @Query() query: DashboardQuery) {
     return this.dashboards.business(user, query);
+  }
+
+  @Get('business/trends')
+  @RequirePermission('reports', 'business')
+  @ApiOperation({
+    summary: 'Cross-period business trends',
+    description: 'Requires reports:business (Super Admin). Headline series + by-product / by-client / tier breakdowns over the last N periods.',
+  })
+  @ApiOkResponse({ type: BusinessTrendsResponse })
+  businessTrends(@CurrentUser() user: AuthUser, @Query() query: BusinessTrendsQuery) {
+    return this.dashboards.businessTrends(user, query);
   }
 
   @Get('admin')

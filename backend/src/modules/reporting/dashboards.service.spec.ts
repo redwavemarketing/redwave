@@ -20,10 +20,10 @@ function make(scopeLevel: 'all' | 'roster' | 'self' = 'self', repIds: string[] =
   const prisma = {
     payPeriod: { findMany: jest.fn().mockResolvedValue([{ id: 'P1', period_number: 1, start_date: D('2000-01-01'), end_date: D('2100-01-01') }]) },
     saleItem: { groupBy: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
-    payRunLine: { aggregate: jest.fn().mockResolvedValue(agg) },
+    payRunLine: { aggregate: jest.fn().mockResolvedValue(agg), findMany: jest.fn().mockResolvedValue([]) },
     holdbackLedger: { aggregate: jest.fn().mockResolvedValue(agg) },
     clawback: { findMany: jest.fn().mockResolvedValue([]), aggregate: jest.fn().mockResolvedValue(agg) },
-    clientStatement: { aggregate: jest.fn().mockResolvedValue(agg), groupBy: jest.fn().mockResolvedValue([]) },
+    clientStatement: { aggregate: jest.fn().mockResolvedValue(agg), groupBy: jest.fn().mockResolvedValue([]), findMany: jest.fn().mockResolvedValue([]) },
     client: { findMany: jest.fn().mockResolvedValue([]) },
     productTypeCatalogue: { findMany: jest.fn().mockResolvedValue([]) },
     expenseItem: { groupBy: jest.fn().mockResolvedValue([]) },
@@ -94,6 +94,24 @@ describe('DashboardsService.business (Super Admin only — RPT-003)', () => {
     expect(result.clawback_rate).toBe('0.1000'); // 50 / 500 (paid commission), exact-decimal ratio
     expect(result.expense).toEqual({ total: '0.00', km: '0.00', other: '0.00' });
     expect(result.validation_funnel).toEqual({ entered: 0, validated: 0, in_pay_run: 0, paid: 0 });
+    expect(Array.isArray(result.tier_distribution)).toBe(true);
+  });
+});
+
+describe('DashboardsService.businessTrends (Super Admin only)', () => {
+  it('a non-Super-Admin → 403', async () => {
+    const { service } = make('all');
+    await expect(service.businessTrends(user({ roleNames: ['Admin'] }), {})).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('a Super Admin gets the trend series shape (one period row per pay period)', async () => {
+    const { service } = make('all');
+    const result = await service.businessTrends(user({ isSuperAdmin: true }), { periods: 6 });
+    expect(result.periods).toHaveLength(1); // the single mocked period
+    expect(result.periods[0]).toEqual(
+      expect.objectContaining({ period_number: 1, revenue: '0.00', payout: '0.00', net_margin: '0.00', activations: 0 }),
+    );
+    expect(result.by_product).toEqual([]);
     expect(Array.isArray(result.tier_distribution)).toBe(true);
   });
 });
