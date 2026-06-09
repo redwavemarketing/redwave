@@ -230,37 +230,44 @@ export class PayRunService {
             });
           }
 
-          // (d) Release prior holds scheduled into THIS period; sum → holdback_release_30.
+          // (d) Release prior holds scheduled into THIS period, applying the rep's pending clawback as a
+          // SET-OFF first: a clawback reduces a pending release (recorded as clawback_applied on the
+          // ledger), and only the UNCOVERED remainder deducts from net — so the clawback is recovered
+          // exactly once (net is unchanged; the books just show where it came from). — SRS §17.1
+          const clawback = await this.clawbackSeam.getClawbackTotal(repId, period.id);
           const due = await tx.holdbackLedger.findMany({
-            where: {
-              rep_id: repId,
-              scheduled_release_period_id: period.id,
-              release_status: 'scheduled',
-            },
+            where: { rep_id: repId, scheduled_release_period_id: period.id, release_status: 'scheduled' },
           });
-          let released = new Decimal(0);
+          const grossDue = due.reduce((s, h) => s.plus(dec(h.amount_held)), new Decimal(0));
+          const setOff = Decimal.min(clawback, grossDue); // the clawback consumes the pending release first
+          let remainingSetOff = setOff;
+          let released = new Decimal(0); // net cash released to the rep after the set-off
           for (const hold of due) {
             const amount = dec(hold.amount_held);
-            released = released.plus(amount);
+            const holdSetOff = Decimal.min(remainingSetOff, amount);
+            remainingSetOff = remainingSetOff.minus(holdSetOff);
+            const paidOut = amount.minus(holdSetOff);
+            released = released.plus(paidOut);
             await tx.holdbackLedger.update({
               where: { id: hold.id },
               data: {
                 release_status: 'released',
                 released_in_pay_run_id: run.id,
-                amount_released: money(amount),
+                amount_released: money(paidOut),
+                clawback_applied: holdSetOff.isZero() ? null : money(holdSetOff),
               },
             });
           }
+          const netClawback = clawback.minus(setOff); // the remainder deducts from net
 
-          // (e/f) Compose net via the seams (0 now) + bonus.
+          // (e/f) Compose net via the seams + bonus.
           const expense = await this.expenseSeam.getApprovedExpenseTotal(repId, period.id);
-          const clawback = await this.clawbackSeam.getClawbackTotal(repId, period.id);
           const bonus = existingBonuses.get(repId) ?? { amount: new Decimal(0), note: null };
           const amounts = buildLineAmounts(result, {
             released,
             expense,
             bonus: bonus.amount,
-            clawback,
+            clawback: netClawback,
           });
           await tx.payRunLine.create({ data: this.lineData(run.id, repId, amounts, bonus.note) });
           notices.push({ repId, net: amounts.net_payout, released });

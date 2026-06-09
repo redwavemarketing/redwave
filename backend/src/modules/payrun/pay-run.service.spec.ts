@@ -42,7 +42,7 @@ const ENGINE_RESULT = {
 
 const decLike = (s: string) => ({ toString: () => s });
 
-function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknown[] } = {}) {
+function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknown[]; clawbackTotal?: string } = {}) {
   const runStatus = opts.runStatus ?? 'draft';
   const period = {
     id: 'P1',
@@ -103,6 +103,9 @@ function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknow
   const config = { getEngineConfig: jest.fn().mockResolvedValue({}) };
   const engine = { computePeriod: jest.fn().mockReturnValue(ENGINE_RESULT) };
   const emitter = { emit: jest.fn(), emitMany: jest.fn(), emitRole: jest.fn() };
+  const clawbackSeam = opts.clawbackTotal
+    ? { getClawbackTotal: jest.fn().mockResolvedValue(new Decimal(opts.clawbackTotal)), markApplied: jest.fn().mockResolvedValue(undefined) }
+    : new ZeroClawbackTotalProvider();
   const service = new PayRunService(
     prisma as never,
     audit as never,
@@ -110,7 +113,7 @@ function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknow
     config as never,
     engine as never,
     new ZeroExpenseTotalProvider(),
-    new ZeroClawbackTotalProvider(),
+    clawbackSeam as never,
     emitter as never,
   );
   return { service, prisma, tx };
@@ -194,6 +197,33 @@ describe('PayRunService.finalize', () => {
     expect(lineArg(tx).expense_total).toBe('0.00');
     expect(lineArg(tx).clawback_total).toBe('0.00');
     expect(lineArg(tx).net_payout).toBe('127.00'); // 77 + 50 bonus
+  });
+
+  it('CLAWBACK SET-OFF: a pending clawback reduces the due release first, then the remainder hits net', async () => {
+    // A $33 hold is due; a $20 clawback sets off against it → $13 released, ledger records clawback_applied 20.
+    const { service, tx } = make({ dueHolds: [{ id: 'h0', amount_held: decLike('33.00') }], clawbackTotal: '20.00' });
+    await service.finalize('run-1', user);
+    expect(tx.holdbackLedger.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'h0' },
+        data: expect.objectContaining({ release_status: 'released', amount_released: '13.00', clawback_applied: '20.00' }),
+      }),
+    );
+    expect(lineArg(tx).holdback_release_30).toBe('13.00'); // 33 − 20 set-off
+    expect(lineArg(tx).clawback_total).toBe('0.00'); // fully covered by the set-off → 0 remainder on net
+    // net unchanged either way: 77 advance + 13 released − 0 = 90  (== 77 + 33 − 20)
+    expect(lineArg(tx).net_payout).toBe('90.00');
+  });
+
+  it('CLAWBACK SET-OFF: a clawback larger than the release consumes it all; the remainder deducts from net', async () => {
+    const { service, tx } = make({ dueHolds: [{ id: 'h0', amount_held: decLike('33.00') }], clawbackTotal: '50.00' });
+    await service.finalize('run-1', user);
+    expect(tx.holdbackLedger.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'h0' }, data: expect.objectContaining({ amount_released: '0.00', clawback_applied: '33.00' }) }),
+    );
+    expect(lineArg(tx).holdback_release_30).toBe('0.00'); // fully consumed
+    expect(lineArg(tx).clawback_total).toBe('17.00'); // 50 − 33 remainder on net
+    expect(lineArg(tx).net_payout).toBe('60.00'); // 77 + 0 − 17  (== 77 + 33 − 50)
   });
 });
 
