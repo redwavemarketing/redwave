@@ -26,6 +26,29 @@ export class SetHoldbackConfigDto {
   effective_to?: string;
 }
 
+/** Edit a PENDING split (the resulting advance_pct + holdback_pct must still equal 1). */
+export class UpdateHoldbackConfigDto {
+  @ApiPropertyOptional({ example: '0.7000', description: 'Advance fraction (0..1), decimal STRING.' })
+  @IsOptional()
+  @Matches(PCT, { message: 'advance_pct must be a decimal string 0..1 with up to 4 decimals' })
+  advance_pct?: string;
+
+  @ApiPropertyOptional({ example: '0.3000', description: 'Holdback fraction; the pair must sum to 1.' })
+  @IsOptional()
+  @Matches(PCT, { message: 'holdback_pct must be a decimal string 0..1 with up to 4 decimals' })
+  holdback_pct?: string;
+
+  @ApiPropertyOptional({ example: '2026-07-01', description: 'YYYY-MM-DD; must be today or future.' })
+  @IsOptional()
+  @Matches(DATE, { message: 'effective_from must be a YYYY-MM-DD date' })
+  effective_from?: string;
+
+  @ApiPropertyOptional({ example: '2026-12-31' })
+  @IsOptional()
+  @Matches(DATE, { message: 'effective_to must be a YYYY-MM-DD date' })
+  effective_to?: string;
+}
+
 /**
  * PROPOSED (SRS §17.1) — pending Redwave confirmation. The Super Admin sets, in bulk and stickily,
  * which cycle a period's 30% holdback releases into. `release_rule` is stored as a free-form string;

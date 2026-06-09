@@ -3,10 +3,23 @@
  * Every route declares its (commission, action) permission; the global guard enforces it.
  * REP commission stream only — no path to client_billing_rates (#3).
  */
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiCreatedResponse,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -19,9 +32,13 @@ import { FlatRateService } from './flat-rate.service';
 import { HoldbackService } from './holdback.service';
 import { IncentiveService } from './incentive.service';
 import { ProductTypeService } from './product-type.service';
-import { CreateTierScheduleDto } from './dto/tier.dto';
-import { CreateFlatRateDto, ListFlatRatesQuery } from './dto/flat-rate.dto';
-import { SetHoldbackConfigDto, SetHoldbackReleaseSettingDto } from './dto/holdback.dto';
+import { CreateTierScheduleDto, UpdateTierScheduleDto } from './dto/tier.dto';
+import { CreateFlatRateDto, ListFlatRatesQuery, UpdateFlatRateDto } from './dto/flat-rate.dto';
+import {
+  SetHoldbackConfigDto,
+  SetHoldbackReleaseSettingDto,
+  UpdateHoldbackConfigDto,
+} from './dto/holdback.dto';
 import { CreateIncentiveDto, ListIncentivesQuery, UpdateIncentiveDto } from './dto/incentive.dto';
 import { CreateProductTypeDto, ListProductTypesQuery, UpdateProductTypeDto } from './dto/product-type.dto';
 import {
@@ -68,6 +85,33 @@ export class CommissionController {
     return this.tiers.create(dto, actorId);
   }
 
+  @Patch('tiers/:id')
+  @RequirePermission('commission', 'edit')
+  @ApiOperation({
+    summary: 'Edit a PENDING tier schedule',
+    description: 'Requires commission:edit. Only a pending schedule can be edited; current/past → 422 (supersede).',
+  })
+  @ApiOkResponse({ type: TierConfigResponse })
+  updateTiers(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateTierScheduleDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.tiers.update(id, dto, actorId);
+  }
+
+  @Delete('tiers/:id')
+  @RequirePermission('commission', 'edit')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete a PENDING tier schedule',
+    description: 'Requires commission:edit. Only a pending schedule can be deleted; current/past → 422.',
+  })
+  @ApiNoContentResponse()
+  removeTiers(@Param('id', ParseUUIDPipe) id: string, @CurrentUser('id') actorId: string) {
+    return this.tiers.remove(id, actorId);
+  }
+
   // ── Flat rates ────────────────────────────────────────────────────────────────────────────────
 
   @Get('flat-rates')
@@ -93,6 +137,33 @@ export class CommissionController {
     return this.flatRates.create(dto, actorId);
   }
 
+  @Patch('flat-rates/:id')
+  @RequirePermission('commission', 'edit')
+  @ApiOperation({
+    summary: 'Edit a PENDING flat rate',
+    description: 'Requires commission:edit. Only a pending rate can be edited; current/past → 422 (supersede).',
+  })
+  @ApiOkResponse({ type: FlatRateResponse })
+  updateFlatRate(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateFlatRateDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.flatRates.update(id, dto, actorId);
+  }
+
+  @Delete('flat-rates/:id')
+  @RequirePermission('commission', 'edit')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete a PENDING flat rate',
+    description: 'Requires commission:edit. Only a pending rate can be deleted; current/past → 422.',
+  })
+  @ApiNoContentResponse()
+  removeFlatRate(@Param('id', ParseUUIDPipe) id: string, @CurrentUser('id') actorId: string) {
+    return this.flatRates.remove(id, actorId);
+  }
+
   // ── Holdback split ────────────────────────────────────────────────────────────────────────────
 
   @Get('holdback-config')
@@ -116,6 +187,33 @@ export class CommissionController {
   @ApiOkResponse({ type: HoldbackConfigResponse })
   setHoldbackConfig(@Body() dto: SetHoldbackConfigDto, @CurrentUser('id') actorId: string) {
     return this.holdback.setConfig(dto, actorId);
+  }
+
+  @Patch('holdback-config/:id')
+  @RequirePermission('commission', 'edit')
+  @ApiOperation({
+    summary: 'Edit a PENDING advance/holdback split',
+    description: 'Requires commission:edit. Only a pending split can be edited; current/past → 422. Pair must = 1.',
+  })
+  @ApiOkResponse({ type: HoldbackConfigResponse })
+  updateHoldbackConfig(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateHoldbackConfigDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.holdback.updateConfig(id, dto, actorId);
+  }
+
+  @Delete('holdback-config/:id')
+  @RequirePermission('commission', 'edit')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete a PENDING advance/holdback split',
+    description: 'Requires commission:edit. Only a pending split can be deleted; current/past → 422.',
+  })
+  @ApiNoContentResponse()
+  removeHoldbackConfig(@Param('id', ParseUUIDPipe) id: string, @CurrentUser('id') actorId: string) {
+    return this.holdback.removeConfig(id, actorId);
   }
 
   // ── Holdback release setting (PROPOSED, SRS §17.1) ────────────────────────────────────────────
@@ -189,6 +287,19 @@ export class IncentivesController {
     @CurrentUser('id') actorId: string,
   ) {
     return this.incentives.update(id, dto, actorId);
+  }
+
+  @Delete(':id')
+  @RequirePermission('commission', 'edit')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Delete an unused incentive',
+    description: 'Requires commission:edit. Only an incentive never applied to a paid item can be deleted; ' +
+      'a referenced incentive is part of a frozen snapshot — end it instead (→ 422).',
+  })
+  @ApiNoContentResponse()
+  remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser('id') actorId: string) {
+    return this.incentives.remove(id, actorId);
   }
 }
 

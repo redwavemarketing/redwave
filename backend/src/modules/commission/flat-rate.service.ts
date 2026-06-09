@@ -3,12 +3,13 @@
  * phone. internet is tiered (rejected here). Scope = product_type; reuses shared supersession.
  * — SRS COMM-002, §7.2
  */
-import { Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
-import { deriveStatus, planSupersession, toUtcDateOnly } from '../../common/effective-dating';
+import { deriveStatus, planSupersession, previousDay, toUtcDateOnly } from '../../common/effective-dating';
 import { parseEffectiveWindow } from './effective-dates.util';
-import { CreateFlatRateDto, ListFlatRatesQuery } from './dto/flat-rate.dto';
+import { assertPending, resolveEditWindow } from './effective-edit.util';
+import { CreateFlatRateDto, ListFlatRatesQuery, UpdateFlatRateDto } from './dto/flat-rate.dto';
 
 @Injectable()
 export class FlatRateService {
@@ -75,6 +76,59 @@ export class FlatRateService {
       },
     });
     return { ...created, status: deriveStatus(created, today) };
+  }
+
+  /** Edit a PENDING flat rate (amount / effective window). product_type (the scope) is immutable. — #10 */
+  async update(id: string, dto: UpdateFlatRateDto, actorId: string) {
+    const row = await this.prisma.commissionFlatRate.findUnique({ where: { id } });
+    if (!row) {
+      throw new NotFoundException('Flat rate not found');
+    }
+    assertPending(row);
+    const { from, to, today } = resolveEditWindow(row, dto);
+
+    const others = await this.prisma.commissionFlatRate.findMany({
+      where: { product_type: row.product_type, id: { not: id } },
+      select: { id: true, effective_from: true, effective_to: true },
+    });
+    const plan = planSupersession(others, from, today);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (plan.deletePendingIds.length > 0) {
+        await tx.commissionFlatRate.deleteMany({ where: { id: { in: plan.deletePendingIds } } });
+      }
+      if (plan.boundCurrent) {
+        await tx.commissionFlatRate.update({
+          where: { id: plan.boundCurrent.id },
+          data: { effective_to: plan.boundCurrent.effectiveTo },
+        });
+      }
+      return tx.commissionFlatRate.update({
+        where: { id },
+        data: { amount: dto.amount ?? row.amount, effective_from: from, effective_to: to },
+      });
+    });
+
+    await this.audit.log({ actorId, entityType: 'commission_flat_rates', entityId: id, action: 'update', before: row, after: updated });
+    return { ...updated, status: deriveStatus(updated, toUtcDateOnly(new Date())) };
+  }
+
+  /** Delete a PENDING flat rate; re-open any predecessor it had bounded (no gap). — #10 */
+  async remove(id: string, actorId: string) {
+    const row = await this.prisma.commissionFlatRate.findUnique({ where: { id } });
+    if (!row) {
+      throw new NotFoundException('Flat rate not found');
+    }
+    assertPending(row);
+    const predecessorEnd = previousDay(row.effective_from);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.commissionFlatRate.delete({ where: { id } });
+      await tx.commissionFlatRate.updateMany({
+        where: { product_type: row.product_type, effective_to: predecessorEnd },
+        data: { effective_to: null },
+      });
+    });
+    await this.audit.log({ actorId, entityType: 'commission_flat_rates', entityId: id, action: 'delete', before: row });
   }
 
   /**

@@ -91,4 +91,25 @@ export class IncentiveService {
     });
     return updated;
   }
+
+  /** Delete an incentive that was NEVER applied (no sale_item references it). A referenced incentive is part
+   *  of a frozen pay snapshot — end it instead (status). — #2 */
+  async remove(id: string, actorId: string) {
+    const incentive = await this.prisma.incentive.findUnique({ where: { id } });
+    if (!incentive) {
+      throw new NotFoundException('Incentive not found');
+    }
+    const referenced = await this.prisma.saleItem.count({ where: { incentive_id: id } });
+    if (referenced > 0) {
+      throw new UnprocessableEntityException('This incentive has been applied to paid items — end it instead of deleting');
+    }
+    await this.prisma.incentive.delete({ where: { id } });
+    await this.audit.log({
+      actorId,
+      entityType: 'incentives',
+      entityId: id,
+      action: 'delete',
+      before: { name: incentive.name, status: incentive.status },
+    });
+  }
 }

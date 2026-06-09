@@ -3,10 +3,10 @@ import { FlatRateService } from './flat-rate.service';
 
 function make() {
   const tx = {
-    commissionFlatRate: { deleteMany: jest.fn(), update: jest.fn(), create: jest.fn() },
+    commissionFlatRate: { deleteMany: jest.fn(), update: jest.fn(), create: jest.fn(), updateMany: jest.fn(), delete: jest.fn() },
   };
   const prisma = {
-    commissionFlatRate: { findMany: jest.fn().mockResolvedValue([]) },
+    commissionFlatRate: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn() },
     // The flat-ratable check reads behaviour from the catalogue (default: a standard add-on).
     productTypeCatalogue: { findUnique: jest.fn().mockResolvedValue({ behaviour: 'standard_addon', is_active: true }) },
     $transaction: jest.fn().mockImplementation(async (cb: (t: typeof tx) => unknown) => cb(tx)),
@@ -19,6 +19,12 @@ const iso = (n: number) => {
   const d = new Date();
   d.setUTCMonth(d.getUTCMonth() + n);
   return d.toISOString().slice(0, 10);
+};
+const monthsOut = (n: number) => {
+  const d = new Date();
+  d.setUTCMonth(d.getUTCMonth() + n);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
 };
 
 describe('FlatRateService.create (COMM-002)', () => {
@@ -67,5 +73,40 @@ describe('FlatRateService.create (COMM-002)', () => {
     expect(prisma.commissionFlatRate.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { product_type: 'tv' } }), // scope = product_type
     );
+  });
+});
+
+describe('FlatRateService.update / remove (pending-only — #10)', () => {
+  const pending = () => ({ id: 'f1', product_type: 'tv', amount: '30.00', effective_from: monthsOut(1), effective_to: null });
+  const current = () => ({ ...pending(), id: 'f2', effective_from: monthsOut(-1) });
+
+  it('update edits a pending flat rate', async () => {
+    const { service, prisma, tx } = make();
+    prisma.commissionFlatRate.findUnique.mockResolvedValue(pending());
+    tx.commissionFlatRate.update.mockResolvedValue({ ...pending(), amount: '33.00' });
+    await service.update('f1', { amount: '33.00' }, 'actor');
+    expect(tx.commissionFlatRate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'f1' }, data: expect.objectContaining({ amount: '33.00' }) }),
+    );
+  });
+
+  it('update rejects a current flat rate (422 — supersede instead)', async () => {
+    const { service, prisma } = make();
+    prisma.commissionFlatRate.findUnique.mockResolvedValue(current());
+    await expect(service.update('f2', { amount: '33.00' }, 'actor')).rejects.toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it('remove deletes a pending flat rate and re-opens a bounded predecessor', async () => {
+    const { service, prisma, tx } = make();
+    prisma.commissionFlatRate.findUnique.mockResolvedValue(pending());
+    await service.remove('f1', 'actor');
+    expect(tx.commissionFlatRate.delete).toHaveBeenCalledWith({ where: { id: 'f1' } });
+    expect(tx.commissionFlatRate.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { effective_to: null } }));
+  });
+
+  it('remove rejects a current flat rate (422)', async () => {
+    const { service, prisma } = make();
+    prisma.commissionFlatRate.findUnique.mockResolvedValue(current());
+    await expect(service.remove('f2', 'actor')).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 });

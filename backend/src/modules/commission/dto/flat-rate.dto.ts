@@ -28,6 +28,25 @@ export class CreateFlatRateDto {
   effective_to?: string;
 }
 
+/** Edit a PENDING flat rate (amount / effective window). product_type (the scope) is immutable. */
+export class UpdateFlatRateDto {
+  @ApiPropertyOptional({ example: '35.00', description: 'Exact decimal STRING (≤2 dp).' })
+  @IsOptional()
+  @IsString()
+  @Matches(MONEY, { message: 'amount must be a decimal string with up to 2 decimal places' })
+  amount?: string;
+
+  @ApiPropertyOptional({ example: '2026-07-01', description: 'YYYY-MM-DD; must be today or future.' })
+  @IsOptional()
+  @Matches(DATE, { message: 'effective_from must be a YYYY-MM-DD date' })
+  effective_from?: string;
+
+  @ApiPropertyOptional({ example: '2026-12-31', description: 'YYYY-MM-DD; null/omit = open-ended.' })
+  @IsOptional()
+  @Matches(DATE, { message: 'effective_to must be a YYYY-MM-DD date' })
+  effective_to?: string;
+}
+
 export class ListFlatRatesQuery {
   @ApiPropertyOptional({ enum: ['past', 'current', 'pending', 'all'], default: 'all' })
   @IsOptional()

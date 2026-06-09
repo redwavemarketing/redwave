@@ -42,6 +42,27 @@ export class TierBracketDto {
   rate_per_activation!: string;
 }
 
+/** Edit a PENDING tier schedule: dates and/or the full bracket set (re-validated when provided). */
+export class UpdateTierScheduleDto {
+  @ApiPropertyOptional({ example: '2026-07-01', description: 'YYYY-MM-DD; must be today or future.' })
+  @IsOptional()
+  @Matches(DATE, { message: 'effective_from must be a YYYY-MM-DD date' })
+  effective_from?: string;
+
+  @ApiPropertyOptional({ example: '2026-12-31' })
+  @IsOptional()
+  @Matches(DATE, { message: 'effective_to must be a YYYY-MM-DD date' })
+  effective_to?: string;
+
+  @ApiPropertyOptional({ type: [TierBracketDto], description: 'Full replacement bracket set when provided.' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => TierBracketDto)
+  tiers?: TierBracketDto[];
+}
+
 export class CreateTierScheduleDto {
   @ApiProperty({ example: '2026-07-01', description: 'YYYY-MM-DD; must be today or future.' })
   @Matches(DATE, { message: 'effective_from must be a YYYY-MM-DD date' })
