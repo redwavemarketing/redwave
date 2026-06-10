@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RepStatus } from '@prisma/client';
 import {
+  ArrayMinSize,
+  IsArray,
   IsEnum,
   IsIn,
   IsObject,
@@ -99,8 +101,21 @@ export class ListRepsQuery extends PaginationQuery {
   @IsIn(['active', 'terminated', 'all'])
   status?: 'active' | 'terminated' | 'all';
 
-  @ApiPropertyOptional({ description: 'Filter by field manager (user id).' })
+  @ApiPropertyOptional({ description: 'Filter by field manager (user id) — the manager-team view.' })
   @IsOptional()
   @IsUUID()
   fieldManagerId?: string;
+}
+
+/** Reassign one or more reps to a field manager (bulk). — HRM team management */
+export class BulkAssignManagerDto {
+  @ApiProperty({ type: [String], description: 'Rep ids to (re)assign.' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID('4', { each: true })
+  rep_ids!: string[];
+
+  @ApiProperty({ description: 'The field-manager user id (must be an active user holding the Manager role).' })
+  @IsUUID()
+  field_manager_id!: string;
 }

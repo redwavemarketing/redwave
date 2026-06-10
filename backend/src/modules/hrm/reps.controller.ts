@@ -37,7 +37,8 @@ import { FileUrlResponse } from '../documents/dto/document.response';
 import { RepsService } from './reps.service';
 import { RepDocumentsService } from './rep-documents.service';
 import { RepEquipmentService } from './rep-equipment.service';
-import { CreateRepDto, ListRepsQuery, UpdateRepDto } from './dto/rep.dto';
+import { BulkAssignManagerDto, CreateRepDto, ListRepsQuery, UpdateRepDto } from './dto/rep.dto';
+import { SuccessResponse } from '../../common/dto/success.response';
 import { CreateRepDocumentDto } from './dto/rep-document.dto';
 import { CreateRepEquipmentDto } from './dto/rep-equipment.dto';
 import { RepDocumentResponse, RepEquipmentResponse, RepPageResponse, RepResponse } from './dto/hrm.response';
@@ -76,6 +77,17 @@ export class RepsController {
   @ApiCreatedResponse({ type: RepResponse })
   create(@Body() dto: CreateRepDto, @CurrentUser('id') actorId: string) {
     return this.reps.create(dto, actorId);
+  }
+
+  @Post('bulk-assign-manager')
+  @RequirePermission('hrm', 'edit')
+  @ApiOperation({
+    summary: 'Assign / reassign reps to a field manager (bulk)',
+    description: 'Requires hrm:edit. Reassigns the roster the manager-scoped views read. Validates the manager.',
+  })
+  @ApiOkResponse({ type: SuccessResponse })
+  bulkAssignManager(@Body() dto: BulkAssignManagerDto, @CurrentUser('id') actorId: string) {
+    return this.reps.bulkAssignManager(dto, actorId);
   }
 
   @Get(':id')

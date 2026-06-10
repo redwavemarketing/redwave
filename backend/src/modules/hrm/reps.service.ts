@@ -20,7 +20,7 @@ import { AuthUser } from '../../common/rbac/auth-user.type';
 import { permissionKey } from '../../common/rbac/permissions.util';
 import { BUILTIN_ROLES } from '../../common/rbac/rbac.constants';
 import { buildPage, resolveOrderBy, toSkipTake } from '../../common/pagination/paginate';
-import { CreateRepDto, ListRepsQuery, UpdateRepDto } from './dto/rep.dto';
+import { BulkAssignManagerDto, CreateRepDto, ListRepsQuery, UpdateRepDto } from './dto/rep.dto';
 
 const dateOnly = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
 
@@ -185,6 +185,30 @@ export class RepsService {
       after: this.auditView(updated),
     });
     return updated;
+  }
+
+  /**
+   * (Re)assign one or more reps to a field manager in one transaction. The roster scope (ScopeService) +
+   * manager-scoped dashboards/queues read `field_manager_id`, so this drives team management. — HRM-002
+   */
+  async bulkAssignManager(dto: BulkAssignManagerDto, actorId: string) {
+    await this.assertValidFieldManager(dto.field_manager_id);
+    const repIds = [...new Set(dto.rep_ids)];
+    const found = await this.prisma.rep.findMany({ where: { id: { in: repIds } }, select: { id: true } });
+    if (found.length !== repIds.length) {
+      throw new NotFoundException('one or more reps were not found');
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.rep.updateMany({ where: { id: { in: repIds } }, data: { field_manager_id: dto.field_manager_id } });
+    });
+    await this.audit.log({
+      actorId,
+      entityType: 'reps',
+      entityId: dto.field_manager_id,
+      action: 'reassign_manager',
+      after: { field_manager_id: dto.field_manager_id, rep_ids: repIds, count: repIds.length },
+    });
+    return { success: true, count: repIds.length };
   }
 
   private async assertValidFieldManager(userId: string): Promise<void> {

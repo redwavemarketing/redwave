@@ -188,6 +188,60 @@ paths:
         "422": *a9
       summary: Exchange a refresh token for a new access token
       tags: *a10
+  /v1/auth/forgot-password:
+    post:
+      description: Public. Always returns success (no account enumeration); emails a
+        reset link for an active account.
+      operationId: AuthController_forgotPassword_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ForgotPasswordDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400": *a4
+        "401": *a5
+        "403": *a6
+        "404": *a7
+        "409": *a8
+        "422": *a9
+      summary: Request a password-reset email
+      tags: *a10
+  /v1/auth/reset-password:
+    post:
+      description: Public. Consumes the emailed token (single-use, expiring) and sets
+        the new password (strength-checked). Invalid/expired → 422.
+      operationId: AuthController_resetPassword_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPasswordDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400": *a4
+        "401": *a5
+        "403": *a6
+        "404": *a7
+        "409": *a8
+        "422": *a9
+      summary: Set a new password from a reset/invite token
+      tags: *a10
   /v1/auth/logout:
     post:
       description: Requires authentication. The client discards its tokens; recorded
@@ -403,6 +457,40 @@ paths:
         "422": *a16
       security: *a17
       summary: Set a user’s roles
+      tags: *a18
+  /v1/users/{id}/reset-password:
+    post:
+      description: Requires users:edit. mode=link emails a reset link; mode=temp
+        emails a forced-change temporary password. The admin cannot view the
+        password — only trigger a reset.
+      operationId: UsersController_resetPassword_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminResetPasswordDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400": *a11
+        "401": *a12
+        "403": *a13
+        "404": *a14
+        "409": *a15
+        "422": *a16
+      security: *a17
+      summary: Trigger a password reset for a user (admin never sees the password)
       tags: *a18
   /v1/roles:
     get:
@@ -1709,7 +1797,7 @@ paths:
         - name: fieldManagerId
           required: false
           in: query
-          description: Filter by field manager (user id).
+          description: Filter by field manager (user id) — the manager-team view.
           schema:
             type: string
       responses:
@@ -1785,6 +1873,34 @@ paths:
         "422": *a80
       security: *a81
       summary: Create a rep
+      tags: *a82
+  /v1/reps/bulk-assign-manager:
+    post:
+      description: Requires hrm:edit. Reassigns the roster the manager-scoped views
+        read. Validates the manager.
+      operationId: RepsController_bulkAssignManager_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkAssignManagerDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400": *a75
+        "401": *a76
+        "403": *a77
+        "404": *a78
+        "409": *a79
+        "422": *a80
+      security: *a81
+      summary: Assign / reassign reps to a field manager (bulk)
       tags: *a82
   /v1/reps/{id}:
     get:
@@ -2540,9 +2656,9 @@ paths:
       tags: &a98
         - Commission Config
     post:
-      description: Requires commission:edit. per_activation is applied by the engine;
-        target_based is MODELED but DEFERRED (not yet applied — pending Redwave
-        confirmation).
+      description: "Requires commission:edit. Both modes are applied by the engine
+        (threshold-relative): per_activation (bonus beyond target_count; null/0
+        = every activation) and one_time (a single bonus at target_count)."
       operationId: IncentivesController_create_v1
       parameters: []
       requestBody:
@@ -6111,9 +6227,13 @@ components:
         refresh_token:
           type: string
           description: Long-lived refresh JWT.
+        must_change_password:
+          type: boolean
+          description: When true, the user must change their password before continuing.
       required:
         - access_token
         - refresh_token
+        - must_change_password
     RefreshDto:
       type: object
       properties:
@@ -6129,6 +6249,14 @@ components:
           type: string
       required:
         - access_token
+    ForgotPasswordDto:
+      type: object
+      properties:
+        email:
+          type: string
+          example: jane@redwave.local
+      required:
+        - email
     SuccessResponse:
       type: object
       properties:
@@ -6137,6 +6265,20 @@ components:
           example: true
       required:
         - success
+    ResetPasswordDto:
+      type: object
+      properties:
+        token:
+          type: string
+          description: The token from the emailed link.
+        new_password:
+          type: string
+          writeOnly: true
+          minLength: 8
+          maxLength: 128
+      required:
+        - token
+        - new_password
     MeUserResponse:
       type: object
       properties:
@@ -6163,6 +6305,9 @@ components:
           enum:
             - active
             - inactive
+        must_change_password:
+          type: boolean
+          description: When true, the user must change their password before continuing.
         created_at:
           type: string
           format: date-time
@@ -6177,6 +6322,7 @@ components:
         - avatar_url
         - theme_preference
         - status
+        - must_change_password
         - created_at
         - updated_at
     MeResponse:
@@ -6280,6 +6426,9 @@ components:
           type: string
           writeOnly: true
           minLength: 8
+          maxLength: 128
+          description: Omit to INVITE the user — they receive an email link to set their
+            own password.
         full_name:
           type: string
           example: Jane Doe
@@ -6294,7 +6443,6 @@ components:
             type: string
       required:
         - email
-        - password
         - full_name
     UpdateUserDto:
       type: object
@@ -6321,6 +6469,18 @@ components:
             type: string
       required:
         - role_ids
+    AdminResetPasswordDto:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+            - link
+            - temp
+          description: "'link' = email a reset link; 'temp' = email a temporary password
+            that forces a change at next login."
+      required:
+        - mode
     RoleCountResponse:
       type: object
       properties:
@@ -7141,6 +7301,21 @@ components:
         - full_name
         - field_manager_id
         - hire_date
+    BulkAssignManagerDto:
+      type: object
+      properties:
+        rep_ids:
+          description: Rep ids to (re)assign.
+          type: array
+          items:
+            type: string
+        field_manager_id:
+          type: string
+          description: The field-manager user id (must be an active user holding the
+            Manager role).
+      required:
+        - rep_ids
+        - field_manager_id
     UpdateRepDto:
       type: object
       properties:
@@ -7545,9 +7720,9 @@ components:
       properties:
         release_rule:
           type: string
-          example: next_cycle_after_30_days
-          description: "PROPOSED (SRS §17): free-form release rule, stored only.
-            Interpretation deferred to Pay Run."
+          example: days:30
+          description: "Sticky release rule: `cycles:N` (Nth period after origin) or
+            `days:N` (first payday ≥ origin payday + N days)."
       required:
         - release_rule
     IncentiveResponse:
@@ -7569,11 +7744,12 @@ components:
           type: string
           enum:
             - per_activation
-            - target_based
+            - one_time
         target_count:
           type: number
           nullable: true
-          description: Required for target_based (DEFERRED).
+          description: "The threshold: per_activation pays beyond it; one_time reaches it
+            (required for one_time)."
         window_start:
           type: string
           format: date-time
@@ -7620,13 +7796,16 @@ components:
           type: string
           enum:
             - per_activation
-            - target_based
-          description: per_activation is computed by the engine. target_based is MODELED
-            but DEFERRED (not yet applied — CLAUDE §12); requires target_count.
+            - one_time
+          description: per_activation — bonus on each matching activation BEYOND
+            target_count (null/0 = every activation). one_time — a single bonus
+            once the rep reaches target_count matching activations (requires
+            target_count).
         target_count:
           type: number
           example: 5
-          description: Required for target_based (e.g. 5 sales in 1 day).
+          description: "The threshold. per_activation: pay beyond it (optional). one_time:
+            reach it (required)."
         window_start:
           type: string
           example: 2026-07-01
