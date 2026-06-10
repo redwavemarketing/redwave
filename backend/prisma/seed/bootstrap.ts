@@ -326,6 +326,16 @@ export async function seedBootstrap(prisma: PrismaClient): Promise<{ superAdminU
     });
   }
 
+  // 9b. Document sequences — the gapless statement/invoice counters. Idempotent: NEVER reset an existing
+  //     counter (that would repeat/gap numbers); only create it if missing. — BRD §8 (gapless numbering)
+  for (const key of ['statement', 'invoice']) {
+    await prisma.documentSequence.upsert({
+      where: { key },
+      update: {}, // preserve the current value on re-seed
+      create: { key, current_value: 0 },
+    });
+  }
+
   // 10. Chatbot config — Gemini provider row, inactive until a key is wired + manually activated. — RPT-011
   const existingChatbot = await prisma.chatbotConfig.findFirst();
   if (!existingChatbot) {

@@ -4584,12 +4584,12 @@ paths:
       summary: Holdback ledger
       tags:
         - Pay Run & Holdback
-  /v1/clients/{id}/statements:
+  /v1/clients/{id}/statements/preview:
     post:
-      description: Requires billing:create. Priced solely from client_billing_rates
-        effective on each sale_date; no GST. Regenerating replaces the existing
-        statement for the client+period (no duplicate).
-      operationId: BillingGenerationController_generateStatement_v1
+      description: Requires billing:create. Returns the one-line-per-customer rows +
+        total (CAD, no GST), priced from client_billing_rates. An unpriced
+        product → 422 with unpriced[]. Use before generating.
+      operationId: BillingGenerationController_previewStatement_v1
       parameters:
         - name: id
           required: true
@@ -4603,12 +4603,12 @@ paths:
             schema:
               $ref: "#/components/schemas/GenerateBillingDto"
       responses:
-        "201":
+        "200":
           description: ""
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClientStatementResponse"
+                $ref: "#/components/schemas/StatementPreviewResponse"
         "400": &a179
           description: Bad Request — validation failed
           content:
@@ -4647,9 +4647,43 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a185
         - bearer: []
-      summary: Generate a client statement (one line per customer)
+      summary: Preview a statement (NOT persisted; no number minted)
       tags: &a186
         - Billing & Statements
+  /v1/clients/{id}/statements:
+    post:
+      description: Requires billing:create. Priced solely from client_billing_rates
+        effective on each sale_date; no GST. ISSUES a NEW gapless-numbered
+        immutable version; any prior version is marked superseded.
+      operationId: BillingGenerationController_generateStatement_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateBillingDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientStatementResponse"
+        "400": *a179
+        "401": *a180
+        "403": *a181
+        "404": *a182
+        "409": *a183
+        "422": *a184
+      security: *a185
+      summary: Issue a client statement (one line per customer)
+      tags: *a186
   /v1/clients/{id}/invoices:
     post:
       description: Requires billing:create. total_commission = the client-billing
@@ -4748,7 +4782,7 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a193
         - bearer: []
-      summary: List generated statements
+      summary: List generated statements (every version; newest first)
       tags: &a194
         - Billing & Statements
   /v1/statements/{id}:
@@ -4777,10 +4811,33 @@ paths:
       security: *a193
       summary: Get a statement with its lines
       tags: *a194
+  /v1/statements/{id}/download:
+    get:
+      description: Requires billing:view. ?format=excel (default) | quickbooks.
+        Streams the file.
+      operationId: StatementsController_download_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+        "400": *a187
+        "401": *a188
+        "403": *a189
+        "404": *a190
+        "409": *a191
+        "422": *a192
+      security: *a193
+      summary: Download the statement file (re-render from the frozen record)
+      tags: *a194
   /v1/statements/{id}/export:
     post:
-      description: Requires billing:export. Updates the file_url reference; real
-        render deferred.
+      description: Requires billing:export. format=excel|quickbooks. Records the
+        export; streams the file.
       operationId: StatementsController_export_v1
       parameters:
         - name: id
@@ -4793,14 +4850,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/BillingExportDto"
+              $ref: "#/components/schemas/StatementExportDto"
       responses:
         "201":
           description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BillingExportResultResponse"
         "400": *a187
         "401": *a188
         "403": *a189
@@ -4808,7 +4861,8 @@ paths:
         "409": *a191
         "422": *a192
       security: *a193
-      summary: Export a statement (stub file)
+      summary: Export a statement (records a billing_exports artifact + streams the
+        file)
       tags: *a194
   /v1/invoices:
     get:
@@ -4874,7 +4928,7 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a201
         - bearer: []
-      summary: List generated invoices
+      summary: List generated invoices (every version; newest first)
       tags: &a202
         - Billing & Statements
   /v1/invoices/{id}:
@@ -4903,30 +4957,19 @@ paths:
       security: *a201
       summary: Get an invoice
       tags: *a202
-  /v1/invoices/{id}/export:
-    post:
-      description: Requires billing:export. Updates the file_url reference; real
-        render deferred.
-      operationId: InvoicesController_export_v1
+  /v1/invoices/{id}/download:
+    get:
+      description: Requires billing:view.
+      operationId: InvoicesController_download_v1
       parameters:
         - name: id
           required: true
           in: path
           schema:
             type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BillingExportDto"
       responses:
-        "201":
+        "200":
           description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BillingExportResultResponse"
         "400": *a195
         "401": *a196
         "403": *a197
@@ -4934,7 +4977,29 @@ paths:
         "409": *a199
         "422": *a200
       security: *a201
-      summary: Export an invoice (stub file)
+      summary: Download the invoice PDF (re-render from the frozen record)
+      tags: *a202
+  /v1/invoices/{id}/export:
+    post:
+      description: Requires billing:export.
+      operationId: InvoicesController_export_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+        "400": *a195
+        "401": *a196
+        "403": *a197
+        "404": *a198
+        "409": *a199
+        "422": *a200
+      security: *a201
+      summary: Export an invoice PDF (records a billing_exports artifact + streams it)
       tags: *a202
   /v1/documents:
     post:
@@ -6640,6 +6705,97 @@ paths:
       summary: List audit-log entries (filter by actor / entity / action / date)
       tags:
         - Audit
+  /v1/reconciliation/statements:
+    get:
+      description: Requires billing:view. statement total = Σ lines = Σ live sales ×
+        billing rates; flags drift.
+      operationId: ReconciliationController_statements_v1
+      parameters:
+        - name: client_id
+          required: true
+          in: query
+          schema:
+            type: string
+        - name: pay_period_id
+          required: true
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatementTieOutResponse"
+        "400": &a267
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a268
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a269
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a270
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a271
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a272
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a273
+        - bearer: []
+      summary: Tie a client statement to its lines and the live re-priced sales
+      tags: &a274
+        - Reconciliation
+  /v1/reconciliation/pay-runs/{id}:
+    get:
+      description: Requires payrun:view. Recomputes each line’s net from its
+        components and flags any mismatch.
+      operationId: ReconciliationController_payRun_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PayRunTieOutResponse"
+        "400": *a267
+        "401": *a268
+        "403": *a269
+        "404": *a270
+        "409": *a271
+        "422": *a272
+      security: *a273
+      summary: Tie a pay run to its lines (net = components; run total = Σ net)
+      tags: *a274
 info:
   title: Redwave ERP / HRM API
   description: Versioned REST contract for the Redwave platform. Each protected
@@ -8109,7 +8265,7 @@ components:
           type: string
         status:
           type: string
-          enum: &a267
+          enum: &a275
             - current
             - pending
             - past
@@ -8206,7 +8362,7 @@ components:
           type: string
         status:
           type: string
-          enum: *a267
+          enum: *a275
       required:
         - id
         - product_type
@@ -8275,7 +8431,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: *a267
+          enum: *a275
       required:
         - id
         - advance_pct
@@ -8982,7 +9138,7 @@ components:
       properties:
         category:
           type: string
-          enum: &a268
+          enum: &a276
             - km
             - meals
             - hotel
@@ -9242,7 +9398,7 @@ components:
       properties:
         category:
           type: string
-          enum: *a268
+          enum: *a276
           example: meals
         client_id:
           type: string
@@ -9441,7 +9597,7 @@ components:
           format: date-time
         status:
           type: string
-          enum: &a269
+          enum: &a277
             - draft
             - finalized
             - exported
@@ -9549,7 +9705,7 @@ components:
           format: date-time
         status:
           type: string
-          enum: *a269
+          enum: *a277
         executed_by:
           type: string
         created_at:
@@ -9665,6 +9821,46 @@ components:
           description: "The pay period to bill (governs which sales by sale_date, #7)."
       required:
         - pay_period_id
+    StatementPreviewLineResponse:
+      type: object
+      properties:
+        sale_id:
+          type: string
+        customer_name:
+          type: string
+        products_summary:
+          type: string
+          example: Internet, TV, Home Phone
+        line_total:
+          type: string
+          example: "90.00"
+          description: Decimal string (CAD).
+      required:
+        - sale_id
+        - customer_name
+        - products_summary
+        - line_total
+    StatementPreviewResponse:
+      type: object
+      properties:
+        client_id:
+          type: string
+        pay_period_id:
+          type: string
+        lines:
+          description: One line per customer (combined product total, no GST).
+          type: array
+          items:
+            $ref: "#/components/schemas/StatementPreviewLineResponse"
+        total_amount:
+          type: string
+          example: "140.00"
+          description: Decimal string. Draft total (CAD).
+      required:
+        - client_id
+        - pay_period_id
+        - lines
+        - total_amount
     ClientStatementLineResponse:
       type: object
       properties:
@@ -9682,7 +9878,7 @@ components:
         line_total:
           type: string
           example: "90.00"
-          description: Decimal string. Server-priced line total.
+          description: Decimal string. Server-priced line total (CAD).
       required:
         - id
         - statement_id
@@ -9695,6 +9891,17 @@ components:
       properties:
         id:
           type: string
+        statement_number:
+          type: number
+          nullable: true
+          example: 1
+          description: Gapless sequential number (STMT-00001), minted on issue.
+        status:
+          type: string
+          enum:
+            - issued
+            - superseded
+          description: issued = current; superseded = an earlier version (immutable).
         client_id:
           type: string
         pay_period_id:
@@ -9702,14 +9909,21 @@ components:
         total_amount:
           type: string
           example: "140.00"
-          description: Decimal string. Server-computed statement total (no GST).
+          description: Decimal string. Server-computed statement total (CAD, no GST).
         file_url:
           type: string
+          nullable: true
+          description: Storage object path of a rendered artifact (or null — rendered on
+            demand).
         generated_by:
           type: string
         generated_at:
           type: string
           format: date-time
+        superseded_by_id:
+          type: string
+          nullable: true
+          description: The newer version that superseded this one (null if current).
         lines:
           description: Present on generate/detail; absent on the list.
           type: array
@@ -9717,17 +9931,30 @@ components:
             $ref: "#/components/schemas/ClientStatementLineResponse"
       required:
         - id
+        - statement_number
+        - status
         - client_id
         - pay_period_id
         - total_amount
         - file_url
         - generated_by
         - generated_at
+        - superseded_by_id
     ClientInvoiceResponse:
       type: object
       properties:
         id:
           type: string
+        invoice_number:
+          type: number
+          nullable: true
+          example: 1
+          description: Gapless sequential number (INV-00001), minted on issue.
+        status:
+          type: string
+          enum:
+            - issued
+            - superseded
         client_id:
           type: string
         pay_period_id:
@@ -9735,53 +9962,41 @@ components:
         total_commission:
           type: string
           example: "140.00"
-          description: Decimal string = the billing-stream statement total (#3).
+          description: "Decimal string = the billing-stream statement total (CAD, #3)."
         file_url:
           type: string
+          nullable: true
+        generated_by:
+          type: string
+          nullable: true
         generated_at:
           type: string
           format: date-time
+        superseded_by_id:
+          type: string
+          nullable: true
       required:
         - id
+        - invoice_number
+        - status
         - client_id
         - pay_period_id
         - total_commission
         - file_url
+        - generated_by
         - generated_at
-    BillingExportDto:
+        - superseded_by_id
+    StatementExportDto:
       type: object
       properties:
         format:
           type: string
           enum:
-            - pdf
             - excel
+            - quickbooks
           example: excel
       required:
         - format
-    BillingExportResultResponse:
-      type: object
-      properties:
-        statement_id:
-          type: string
-          description: Set when exporting a statement.
-        invoice_id:
-          type: string
-          description: Set when exporting an invoice.
-        format:
-          type: string
-          enum:
-            - pdf
-            - excel
-        file_url:
-          type: string
-        content:
-          type: string
-          description: The serialized row payload (real render deferred).
-      required:
-        - format
-        - file_url
-        - content
     DocumentSignatureResponse:
       type: object
       properties:
@@ -10162,13 +10377,13 @@ components:
           type: string
         source_type:
           type: string
-          enum: &a270
+          enum: &a278
             - client_report
             - master_migration
             - balance_migration
         import_type:
           type: string
-          enum: &a271
+          enum: &a279
             - reps
             - clients
             - products
@@ -10185,7 +10400,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: &a272
+          enum: &a280
             - staged
             - committed
             - failed
@@ -10206,7 +10421,7 @@ components:
           description: Decimal string — operator-provided source total.
         error_summary:
           type: object
-          additionalProperties: &a273
+          additionalProperties: &a281
             type: number
           nullable: true
           description: Counts by classification (matched/unmatched/...).
@@ -10259,10 +10474,10 @@ components:
           type: string
         source_type:
           type: string
-          enum: *a270
+          enum: *a278
         import_type:
           type: string
-          enum: *a271
+          enum: *a279
         client_id:
           type: string
           nullable: true
@@ -10271,7 +10486,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: *a272
+          enum: *a280
         total_rows:
           type: number
           example: 3
@@ -10288,7 +10503,7 @@ components:
           description: Decimal string — operator-provided source total.
         error_summary:
           type: object
-          additionalProperties: *a273
+          additionalProperties: *a281
           nullable: true
           description: Counts by classification (matched/unmatched/...).
         run_by:
@@ -11549,3 +11764,112 @@ components:
       required:
         - data
         - meta
+    StatementTieOutRefResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        statement_number:
+          type: number
+          nullable: true
+        status:
+          type: string
+          enum:
+            - issued
+            - superseded
+      required:
+        - id
+        - statement_number
+        - status
+    StatementTieOutResponse:
+      type: object
+      properties:
+        client_id:
+          type: string
+        pay_period_id:
+          type: string
+        statement:
+          nullable: true
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/StatementTieOutRefResponse"
+        frozen_total:
+          type: string
+          description: The frozen statement total (CAD).
+        lines_sum:
+          type: string
+          description: Sum of the statement lines (CAD).
+        live_total:
+          type: string
+          nullable: true
+          description: The live re-priced sales total now (null if it could not be priced).
+        total_equals_lines:
+          type: boolean
+        statement_matches_live:
+          type: boolean
+        ok:
+          type: boolean
+          description: True when every check ties out.
+        discrepancies:
+          description: Human-readable discrepancy flags (empty when ok).
+          type: array
+          items:
+            type: string
+      required:
+        - client_id
+        - pay_period_id
+        - statement
+        - frozen_total
+        - lines_sum
+        - live_total
+        - total_equals_lines
+        - statement_matches_live
+        - ok
+        - discrepancies
+    PayRunLineTieOutResponse:
+      type: object
+      properties:
+        rep_id:
+          type: string
+        rep_code:
+          type: string
+          nullable: true
+        stored_net:
+          type: string
+        recomputed_net:
+          type: string
+          description: Net recomputed from the line components.
+        ok:
+          type: boolean
+      required:
+        - rep_id
+        - rep_code
+        - stored_net
+        - recomputed_net
+        - ok
+    PayRunTieOutResponse:
+      type: object
+      properties:
+        pay_run_id:
+          type: string
+        status:
+          type: string
+        line_count:
+          type: number
+        run_total:
+          type: string
+          description: Sum of the lines’ net_payout (CAD).
+        ok:
+          type: boolean
+        discrepancies:
+          description: Lines whose stored net ≠ the recomputed net (empty when ok).
+          type: array
+          items:
+            $ref: "#/components/schemas/PayRunLineTieOutResponse"
+      required:
+        - pay_run_id
+        - status
+        - line_count
+        - run_total
+        - ok
+        - discrepancies

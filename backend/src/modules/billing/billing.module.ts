@@ -27,5 +27,6 @@ import { QuickbooksCsvRenderer } from './renderers/quickbooks-csv.renderer';
     InvoicePdfRenderer,
     QuickbooksCsvRenderer,
   ],
+  exports: [StatementService], // Reconciliation reuses priceClientPeriod for the live re-price (billing stream only).
 })
 export class BillingModule {}
