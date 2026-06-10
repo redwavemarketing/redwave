@@ -42,6 +42,9 @@ export class CommissionEngineService {
     const items = activations.map((activation) =>
       this.computeItem(activation, config, tierBracket),
     );
+    // Incentives are applied in a PERIOD-LEVEL pass (a threshold is relative to the rep's matching
+    // activations for that incentive), then frozen onto the relevant items. — SRS COMM-005
+    this.applyIncentives(items, activations, config.incentives);
 
     const grossCommission = sum(items.map((i) => i.commissionBase)); // 70/30 base — tier+flat only
     const incentiveTotal = sum(items.map((i) => i.incentiveAmount)); // separate, paid in full
@@ -110,8 +113,6 @@ export class CommissionEngineService {
       tierAtPayment = null;
     }
 
-    const { incentiveId, incentiveAmount } = this.resolveIncentive(activation, config.incentives);
-
     return {
       id: activation.id,
       productType: activation.productType,
@@ -119,9 +120,9 @@ export class CommissionEngineService {
       tierAtPayment,
       rateApplied,
       commissionBase: rateApplied,
-      incentiveId,
-      incentiveAmount,
-      commissionPaid: rateApplied.plus(incentiveAmount), // snapshot value == clawback amount
+      incentiveId: null, // filled by the period-level incentive pass
+      incentiveAmount: ZERO,
+      commissionPaid: rateApplied, // snapshot value (base + incentive once the pass runs)
     };
   }
 
@@ -135,45 +136,65 @@ export class CommissionEngineService {
   }
 
   /**
-   * Sum every per_activation incentive that matches this activation (scope + sale_date window).
-   * `target_based` incentives are NOT computed this pass (deferred — see CLAUDE §12). — SRS COMM-005
+   * Apply every active incentive across the period (a threshold is relative to the rep's matching
+   * activations), freezing the bonus onto the relevant items. Both modes:
+   *   • per_activation — bonus on each matching activation BEYOND `targetCount` (null/0 = all).
+   *   • one_time      — one bonus once the rep reaches `targetCount` matching activations (the crossing one).
+   * Incentive money is SEPARATE from the 70/30 base (commissionBase is never touched). — SRS COMM-005
    */
-  private resolveIncentive(
-    activation: ActivationInput,
+  private applyIncentives(
+    items: ComputedItem[],
+    activations: ActivationInput[],
     incentives: IncentiveConfig[] | undefined,
-  ): { incentiveId: string | null; incentiveAmount: Decimal } {
+  ): void {
     if (!incentives?.length) {
-      return { incentiveId: null, incentiveAmount: ZERO };
+      return;
     }
-    let incentiveId: string | null = null;
-    let incentiveAmount = ZERO;
+    const byId = new Map(items.map((it) => [it.id, it]));
     for (const incentive of incentives) {
-      if (this.incentiveApplies(activation, incentive)) {
-        incentiveAmount = incentiveAmount.plus(incentive.amount);
-        if (incentiveId === null) {
-          incentiveId = incentive.id; // record the first matching incentive
+      // Matching activations, ordered deterministically (sale_date, then id) so "the Nth" is stable.
+      const matched = activations
+        .filter((a) => this.incentiveMatches(a, incentive))
+        .sort((x, y) => (x.saleDate === y.saleDate ? x.id.localeCompare(y.id) : x.saleDate.localeCompare(y.saleDate)));
+      if (matched.length === 0) {
+        continue;
+      }
+      if (incentive.targetType === 'per_activation') {
+        const threshold = incentive.targetCount ?? 0; // pay on activations BEYOND the threshold (0 = all)
+        for (let i = threshold; i < matched.length; i++) {
+          this.addIncentive(byId.get(matched[i].id), incentive);
+        }
+      } else {
+        // one_time: a single bonus once the rep reaches `targetCount` matching activations.
+        const n = incentive.targetCount ?? 1;
+        if (matched.length >= n) {
+          this.addIncentive(byId.get(matched[n - 1].id), incentive); // the threshold-crossing activation
         }
       }
     }
-    return { incentiveId, incentiveAmount };
   }
 
-  private incentiveApplies(activation: ActivationInput, incentive: IncentiveConfig): boolean {
-    if (incentive.targetType !== 'per_activation') {
-      return false; // target_based deferred
+  /** Add an incentive's amount to an item's snapshot (sum amounts; record the first incentive id). */
+  private addIncentive(item: ComputedItem | undefined, incentive: IncentiveConfig): void {
+    if (!item) {
+      return;
     }
+    item.incentiveAmount = item.incentiveAmount.plus(incentive.amount);
+    if (item.incentiveId === null) {
+      item.incentiveId = incentive.id;
+    }
+    item.commissionPaid = item.commissionBase.plus(item.incentiveAmount); // snapshot == clawback amount
+  }
+
+  /** Scope (client/product) + inclusive sale_date window match — independent of the target mode. */
+  private incentiveMatches(activation: ActivationInput, incentive: IncentiveConfig): boolean {
     if (incentive.scopeClientId !== null && incentive.scopeClientId !== activation.clientId) {
       return false;
     }
-    if (
-      incentive.scopeProductType !== null &&
-      incentive.scopeProductType !== activation.productType
-    ) {
+    if (incentive.scopeProductType !== null && incentive.scopeProductType !== activation.productType) {
       return false;
     }
     // ISO 'YYYY-MM-DD' strings compare lexicographically — inclusive window.
-    return (
-      activation.saleDate >= incentive.windowStart && activation.saleDate <= incentive.windowEnd
-    );
+    return activation.saleDate >= incentive.windowStart && activation.saleDate <= incentive.windowEnd;
   }
 }

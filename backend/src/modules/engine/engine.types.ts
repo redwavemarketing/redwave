@@ -21,7 +21,7 @@ export enum ProductType {
   home_phone = 'home_phone',
 }
 
-export type IncentiveTargetType = 'per_activation' | 'target_based';
+export type IncentiveTargetType = 'per_activation' | 'one_time';
 
 /** One bracket of the effective tier schedule (Schedule C v2). tierNumber: 1 highest .. 4 entry. */
 export interface TierBracket {
@@ -44,16 +44,22 @@ export interface HoldbackSplit {
   holdbackPct: Decimal;
 }
 
-/** An effective-dated incentive/spiff. Only `per_activation` is computed this pass. — SRS COMM-005 */
+/**
+ * An effective-dated incentive/spiff, applied in BOTH modes (threshold-relative). — SRS COMM-005
+ *  • `per_activation` — the bonus pays on each matching activation BEYOND `targetCount` (null/0 = every
+ *    matching activation).
+ *  • `one_time` — a single bonus once the rep reaches `targetCount` matching activations (frozen onto the
+ *    threshold-crossing activation).
+ */
 export interface IncentiveConfig {
   id: string;
   scopeClientId: string | null; // null = all clients
   scopeProductType: string | null; // product-type key; null = all product types
   targetType: IncentiveTargetType;
-  targetCount: number | null;
+  targetCount: number | null; // the threshold (per_activation: pay beyond it; one_time: reach it)
   windowStart: string; // 'YYYY-MM-DD' inclusive
   windowEnd: string; // 'YYYY-MM-DD' inclusive
-  amount: Decimal; // per-activation bonus
+  amount: Decimal; // the bonus
 }
 
 /** The effective configuration, passed IN (the engine never reads a database). */

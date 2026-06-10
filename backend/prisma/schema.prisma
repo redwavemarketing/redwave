@@ -101,7 +101,7 @@ enum RateKind {
 
 enum IncentiveTargetType {
   per_activation
-  target_based
+  one_time // a single bonus once the rep reaches target_count matching activations (was target_based)
 }
 
 enum IncentiveStatus {

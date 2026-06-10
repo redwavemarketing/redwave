@@ -127,7 +127,7 @@ export class IncentiveResponse {
   @ApiProperty({ enum: IncentiveTargetType })
   target_type!: IncentiveTargetType;
 
-  @ApiProperty({ type: Number, nullable: true, description: 'Required for target_based (DEFERRED).' })
+  @ApiProperty({ type: Number, nullable: true, description: 'The threshold: per_activation pays beyond it; one_time reaches it (required for one_time).' })
   target_count!: number | null;
 
   @ApiProperty({ type: String, format: 'date-time' })

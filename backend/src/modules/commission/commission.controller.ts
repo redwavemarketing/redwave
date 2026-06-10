@@ -269,8 +269,8 @@ export class IncentivesController {
   @ApiOperation({
     summary: 'Create an incentive/spiff',
     description:
-      'Requires commission:edit. per_activation is applied by the engine; target_based is MODELED but ' +
-      'DEFERRED (not yet applied — pending Redwave confirmation).',
+      'Requires commission:edit. Both modes are applied by the engine (threshold-relative): per_activation ' +
+      '(bonus beyond target_count; null/0 = every activation) and one_time (a single bonus at target_count).',
   })
   @ApiCreatedResponse({ type: IncentiveResponse })
   create(@Body() dto: CreateIncentiveDto, @CurrentUser('id') actorId: string) {

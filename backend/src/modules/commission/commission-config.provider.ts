@@ -75,7 +75,7 @@ export class CommissionConfigProvider {
       holdbackPct: toDecimal(holdbackRow.holdback_pct),
     };
 
-    // 4. Active incentives (the engine windows them per sale_date and ignores target_based).
+    // 4. Active incentives (the engine windows them per sale_date and applies both modes, threshold-relative).
     const incentiveRows = await this.prisma.incentive.findMany({ where: { status: 'active' } });
     const incentives: IncentiveConfig[] = incentiveRows.map((i) => ({
       id: i.id,

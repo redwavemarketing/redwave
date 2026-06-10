@@ -1,7 +1,8 @@
 /**
- * IncentiveService — incentive/spiff CRUD. `per_activation` is fully supported (the engine computes
- * it). `target_based` is MODELED but DEFERRED (CLAUDE §12): it can be created/stored, but the engine
- * does not yet apply it — pending Redwave confirmation of its exact rule. — SRS COMM-005
+ * IncentiveService — incentive/spiff CRUD. BOTH modes are applied by the engine (threshold-relative):
+ * `per_activation` (bonus beyond `target_count`; null/0 = every activation) and `one_time` (a single bonus
+ * once the rep reaches `target_count` matching activations). The SA activates/ends whichever they want per
+ * season. — SRS COMM-005
  */
 import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -22,12 +23,12 @@ export class IncentiveService {
   }
 
   async create(dto: CreateIncentiveDto, actorId: string) {
-    // target_based is deferred but still modeled; it requires a target_count to be meaningful.
+    // one_time needs a target_count (the threshold the rep must reach for the single bonus).
     if (
-      dto.target_type === 'target_based' &&
+      dto.target_type === 'one_time' &&
       (dto.target_count === undefined || dto.target_count === null)
     ) {
-      throw new UnprocessableEntityException('target_based incentives require target_count');
+      throw new UnprocessableEntityException('one_time incentives require target_count');
     }
     if (dateOnly(dto.window_end).getTime() < dateOnly(dto.window_start).getTime()) {
       throw new UnprocessableEntityException('window_end cannot be before window_start');
@@ -64,9 +65,8 @@ export class IncentiveService {
       after: {
         name: created.name,
         target_type: created.target_type,
+        target_count: created.target_count,
         amount: dto.amount,
-        // Flag so it's clear in the trail that a target_based incentive is not engine-applied yet.
-        engine_deferred: created.target_type === 'target_based',
       },
     });
     return created;
