@@ -10,15 +10,20 @@ import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser } from '../../common/rbac/auth-user.type';
 import { AuthService } from './auth.service';
+import { PasswordResetService } from './password-reset.service';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
+import { ForgotPasswordDto, ResetPasswordDto } from './dto/password-reset.dto';
 import { LoginResponse, MeResponse, RefreshResponse } from './dto/auth.response';
 
 @ApiTags('Auth')
 @ApiErrorResponses()
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly passwordReset: PasswordResetService,
+  ) {}
 
   @Public()
   @Post('login')
@@ -42,6 +47,32 @@ export class AuthController {
   @ApiOkResponse({ type: RefreshResponse })
   refresh(@Body() dto: RefreshDto) {
     return this.auth.refresh(dto.refresh_token);
+  }
+
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Request a password-reset email',
+    description: 'Public. Always returns success (no account enumeration); emails a reset link for an active account.',
+  })
+  @ApiOkResponse({ type: SuccessResponse })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    await this.passwordReset.forgot(dto.email);
+    return { success: true };
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Set a new password from a reset/invite token',
+    description: 'Public. Consumes the emailed token (single-use, expiring) and sets the new password (strength-checked). Invalid/expired → 422.',
+  })
+  @ApiOkResponse({ type: SuccessResponse })
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    await this.passwordReset.reset(dto.token, dto.new_password);
+    return { success: true };
   }
 
   @Post('logout')

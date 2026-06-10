@@ -13,6 +13,7 @@ import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { TokenService } from './token.service';
+import { PasswordResetService } from './password-reset.service';
 
 @Module({
   imports: [JwtModule.register({})],
@@ -20,10 +21,11 @@ import { TokenService } from './token.service';
   providers: [
     AuthService,
     TokenService,
+    PasswordResetService,
     // Order matters: authenticate before authorizing.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
-  exports: [TokenService],
+  exports: [TokenService, PasswordResetService],
 })
 export class AuthModule {}

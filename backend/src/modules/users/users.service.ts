@@ -5,10 +5,14 @@
  */
 import { Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { USER_PUBLIC_SELECT } from '../../common/util/user-public';
-import { CreateUserDto, SetUserRolesDto, UpdateUserDto } from './dto/user.dto';
+import { MailerService } from '../../common/email/mailer.service';
+import { PasswordResetService } from '../auth/password-reset.service';
+import { assertPasswordPolicy } from '../auth/password-policy';
+import { AdminResetPasswordDto, CreateUserDto, SetUserRolesDto, UpdateUserDto } from './dto/user.dto';
 
 const USER_WITH_ROLES_SELECT = {
   ...USER_PUBLIC_SELECT,
@@ -17,11 +21,29 @@ const USER_WITH_ROLES_SELECT = {
 
 const BCRYPT_ROUNDS = 12;
 
+/** A strong random password that satisfies the policy (upper + lower + digit), for invite/temp use. */
+function randomPassword(): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digit = '23456789';
+  const all = upper + lower + digit;
+  const pick = (set: string) => set[randomBytes(1)[0] % set.length];
+  const chars = [pick(upper), pick(lower), pick(digit)];
+  for (let i = 0; i < 9; i++) chars.push(pick(all));
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomBytes(1)[0] % (i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
 @Injectable()
 export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly mailer: MailerService,
+    private readonly passwordReset: PasswordResetService,
   ) {}
 
   findAll() {
@@ -43,7 +65,13 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto, actorId: string) {
-    const password_hash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+    // INVITE when no password is given: create with a random hash + must_change, then email a set-password
+    // link. Otherwise set the provided (policy-checked) password. — AUTH-002
+    const invite = !dto.password;
+    if (dto.password) {
+      assertPasswordPolicy(dto.password);
+    }
+    const password_hash = await bcrypt.hash(dto.password ?? randomPassword(), BCRYPT_ROUNDS);
     const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -54,6 +82,7 @@ export class UsersService {
           avatar_url: dto.avatar_url,
           theme_preference: 'system',
           status: 'active',
+          must_change_password: invite,
         },
       });
       if (dto.role_ids?.length) {
@@ -70,9 +99,41 @@ export class UsersService {
       entityId: created.id,
       action: 'create',
       // never log the password / hash
-      after: { email: created.email, full_name: created.full_name, role_ids: dto.role_ids ?? [] },
+      after: { email: created.email, full_name: created.full_name, role_ids: dto.role_ids ?? [], invited: invite },
     });
+    if (invite) {
+      const token = await this.passwordReset.issueToken(created.id, 'invite');
+      await this.mailer.sendInvite(created.email, created.full_name, token);
+    }
     return this.findOne(created.id);
+  }
+
+  /**
+   * Admin-assisted reset — the admin NEVER sees the password. Either email a reset link, or email a
+   * forced-change temporary password. — AUTH-002 (security)
+   */
+  async resetPassword(id: string, dto: AdminResetPasswordDto, actorId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, full_name: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    if (dto.mode === 'temp') {
+      const temp = randomPassword();
+      const password_hash = await bcrypt.hash(temp, BCRYPT_ROUNDS);
+      await this.prisma.user.update({
+        where: { id },
+        data: { password_hash, must_change_password: true, failed_login_attempts: 0, locked_until: null },
+      });
+      await this.mailer.sendTempPassword(user.email, user.full_name, temp); // emailed to the USER only
+    } else {
+      const token = await this.passwordReset.issueToken(id, 'reset');
+      await this.mailer.sendPasswordReset(user.email, user.full_name, token);
+    }
+    await this.audit.log({ actorId, entityType: 'users', entityId: id, action: `password_reset_${dto.mode}` });
+    return { success: true };
   }
 
   async update(id: string, dto: UpdateUserDto, actorId: string) {

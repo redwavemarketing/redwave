@@ -1,20 +1,22 @@
 import { Global, Module } from '@nestjs/common';
 import { NOTIFICATION_EMITTER } from '../../common/notifications/notification-emitter';
+import { ResendEmailDispatcher } from '../../common/email/resend-email.dispatcher';
 import { NotificationsService } from './notifications.service';
 import { NotificationEmitterAdapter } from './notification-emitter.adapter';
-import { EMAIL_DISPATCHER, NoopEmailDispatcher } from './seams/email-dispatcher.provider';
+import { EMAIL_DISPATCHER } from './seams/email-dispatcher.provider';
 
 /**
- * NotificationsModule — owns notification generation + settings + the email-dispatch stub, and SUPPLIES the
+ * NotificationsModule — owns notification generation + settings + the email dispatcher, and SUPPLIES the
  * app-wide `NOTIFICATION_EMITTER` binding. Marked @Global so ANY domain module can inject the emitter (and
  * use NotificationsService) WITHOUT importing this module and WITHOUT a cycle — it imports nothing
- * domain-specific (Prisma/Audit are global; EMAIL_DISPATCHER is local). — RPT-009/010, arch §9
+ * domain-specific (Prisma/Audit are global; the MailerService is supplied by the @Global EmailModule).
+ * EMAIL_DISPATCHER is now the real ResendEmailDispatcher (Resend; env-gated graceful). — RPT-009/010, arch §9
  */
 @Global()
 @Module({
   providers: [
     NotificationsService,
-    { provide: EMAIL_DISPATCHER, useClass: NoopEmailDispatcher },
+    { provide: EMAIL_DISPATCHER, useClass: ResendEmailDispatcher },
     { provide: NOTIFICATION_EMITTER, useClass: NotificationEmitterAdapter },
   ],
   exports: [NotificationsService, NOTIFICATION_EMITTER],

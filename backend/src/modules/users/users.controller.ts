@@ -10,10 +10,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { ApiErrorResponses } from '../../common/errors/api-error-responses.decorator';
+import { SuccessResponse } from '../../common/dto/success.response';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UsersService } from './users.service';
-import { CreateUserDto, SetUserRolesDto, UpdateUserDto } from './dto/user.dto';
+import { AdminResetPasswordDto, CreateUserDto, SetUserRolesDto, UpdateUserDto } from './dto/user.dto';
 import { AdminUserResponse } from './dto/user.response';
 
 @ApiTags('Users')
@@ -75,5 +76,22 @@ export class UsersController {
     @CurrentUser('id') actorId: string,
   ) {
     return this.users.setRoles(id, dto, actorId);
+  }
+
+  @Post(':id/reset-password')
+  @RequirePermission('users', 'edit')
+  @ApiOperation({
+    summary: 'Trigger a password reset for a user (admin never sees the password)',
+    description:
+      'Requires users:edit. mode=link emails a reset link; mode=temp emails a forced-change temporary ' +
+      'password. The admin cannot view the password — only trigger a reset.',
+  })
+  @ApiOkResponse({ type: SuccessResponse })
+  resetPassword(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminResetPasswordDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.users.resetPassword(id, dto, actorId);
   }
 }

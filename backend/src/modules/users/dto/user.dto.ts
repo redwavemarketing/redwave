@@ -4,6 +4,7 @@ import {
   IsArray,
   IsEmail,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -16,11 +17,17 @@ export class CreateUserDto {
   @IsEmail()
   email!: string;
 
-  @ApiProperty({ writeOnly: true, minLength: 8 })
+  @ApiPropertyOptional({
+    writeOnly: true,
+    minLength: 8,
+    maxLength: 128,
+    description: 'Omit to INVITE the user — they receive an email link to set their own password.',
+  })
+  @IsOptional()
   @IsString()
   @MinLength(8)
   @MaxLength(128)
-  password!: string;
+  password?: string;
 
   @ApiProperty({ example: 'Jane Doe' })
   @IsString()
@@ -82,4 +89,17 @@ export class SetUserRolesDto {
   @IsArray()
   @IsUUID('all', { each: true })
   role_ids!: string[];
+}
+
+/**
+ * Admin-assisted password reset. The admin NEVER sees the password — they either email the user a reset
+ * link or email them a forced-change temporary password. — AUTH-002 (security)
+ */
+export class AdminResetPasswordDto {
+  @ApiProperty({
+    enum: ['link', 'temp'],
+    description: "'link' = email a reset link; 'temp' = email a temporary password that forces a change at next login.",
+  })
+  @IsIn(['link', 'temp'])
+  mode!: 'link' | 'temp';
 }
