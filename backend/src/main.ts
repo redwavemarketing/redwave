@@ -8,12 +8,19 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { SwaggerModule } from '@nestjs/swagger';
+import cookieParser = require('cookie-parser');
 import { AppModule } from './app.module';
 import { buildOpenApiConfig } from './openapi';
 import { ErrorEnvelopeDto } from './common/errors/error-envelope.dto';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
+
+  // Behind Render/Vercel proxies — trust the first hop so req.ip / secure cookies resolve correctly.
+  (app.getHttpAdapter().getInstance() as { set: (k: string, v: unknown) => void }).set('trust proxy', 1);
+
+  // Parse cookies (the httpOnly refresh cookie + the readable CSRF cookie). — arch §security
+  app.use(cookieParser());
 
   // All API routes are served under /v1 (arch §5.1). Health stays version-neutral.
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });

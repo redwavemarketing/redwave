@@ -17,8 +17,17 @@ function make() {
     sendTempPassword: jest.fn().mockResolvedValue(undefined),
   };
   const passwordReset = { issueToken: jest.fn().mockResolvedValue('token-123') };
-  const service = new UsersService(prisma as never, audit as never, mailer as never, passwordReset as never);
-  return { service, prisma, tx, mailer, passwordReset };
+  const sessions = { revokeAllForUser: jest.fn().mockResolvedValue(0) };
+  const mfa = { adminDisable: jest.fn().mockResolvedValue(undefined) };
+  const service = new UsersService(
+    prisma as never,
+    audit as never,
+    mailer as never,
+    passwordReset as never,
+    sessions as never,
+    mfa as never,
+  );
+  return { service, prisma, tx, mailer, passwordReset, sessions, mfa };
 }
 
 describe('UsersService.create — invite vs password', () => {

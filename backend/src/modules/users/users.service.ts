@@ -11,6 +11,8 @@ import { AuditService } from '../../common/audit/audit.service';
 import { USER_PUBLIC_SELECT } from '../../common/util/user-public';
 import { MailerService } from '../../common/email/mailer.service';
 import { PasswordResetService } from '../auth/password-reset.service';
+import { RefreshSessionService } from '../auth/refresh-session.service';
+import { MfaService } from '../auth/mfa.service';
 import { assertPasswordPolicy } from '../auth/password-policy';
 import { AdminResetPasswordDto, CreateUserDto, SetUserRolesDto, UpdateUserDto } from './dto/user.dto';
 
@@ -44,6 +46,8 @@ export class UsersService {
     private readonly audit: AuditService,
     private readonly mailer: MailerService,
     private readonly passwordReset: PasswordResetService,
+    private readonly sessions: RefreshSessionService,
+    private readonly mfa: MfaService,
   ) {}
 
   findAll() {
@@ -154,15 +158,41 @@ export class UsersService {
       },
       select: { full_name: true, phone: true, avatar_url: true, status: true },
     });
+    const deactivated = dto.status === 'inactive' && before.status !== 'inactive';
     await this.audit.log({
       actorId,
       entityType: 'users',
       entityId: id,
-      action: dto.status && dto.status !== before.status ? 'deactivate' : 'update',
+      action: deactivated ? 'deactivate' : 'update',
       before,
       after: updated,
     });
+    // Deactivation = immediate force-logout: revoke every live refresh session so no token can refresh. — AUTH-008
+    if (deactivated) {
+      await this.sessions.revokeAllForUser(id);
+    }
     return this.findOne(id);
+  }
+
+  /** SA force-logout: revoke ALL of a user's sessions (every device). — arch §security */
+  async forceLogout(id: string, actorId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    const revoked = await this.sessions.revokeAllForUser(id);
+    await this.audit.log({ actorId, entityType: 'users', entityId: id, action: 'force_logout', after: { revoked } });
+    return { success: true };
+  }
+
+  /** SA disables a user's MFA (e.g. lost authenticator) — they re-enrol next login if policy requires it. */
+  async disableMfa(id: string, actorId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id }, select: { id: true } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    await this.mfa.adminDisable(id, actorId);
+    return { success: true };
   }
 
   async setRoles(id: string, dto: SetUserRolesDto, actorId: string) {

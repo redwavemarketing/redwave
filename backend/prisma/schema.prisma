@@ -323,8 +323,71 @@ model User {
   import_mappings_created       ImportFieldMapping[]       @relation("ImportMappingCreatedBy")
   import_rows_resolved          ImportRow[]                @relation("ImportRowResolvedBy")
   password_reset_tokens         PasswordResetToken[]
+  refresh_sessions              RefreshSession[]           @relation("RefreshSessionUser")
+  user_mfa                      UserMfa?                   @relation("UserMfaOwner")
+  mfa_recovery_codes            MfaRecoveryCode[]          @relation("MfaRecoveryOwner")
+  security_settings_updated     SecuritySetting[]          @relation("SecuritySettingUpdatedBy")
 
   @@map("users")
+}
+
+// A persisted refresh-token session (one per device/login). The current refresh token is stored only as a
+// HASH; each /auth/refresh ROTATES it (new hash on the SAME row). A presented token that ≠ the stored hash
+// is a REUSE → the session is revoked (breach detection). Access + refresh tokens carry this row's id as
+// `sid`; the JwtAuthGuard rejects any token whose session is revoked → immediate force-logout. — arch §security
+model RefreshSession {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  user         User      @relation("RefreshSessionUser", fields: [user_id], references: [id])
+  token_hash   String    @unique
+  user_agent   String?
+  ip_address   String?
+  created_at   DateTime  @default(now())
+  last_used_at DateTime  @default(now())
+  expires_at   DateTime
+  revoked_at   DateTime?
+
+  @@index([user_id])
+  @@map("refresh_sessions")
+}
+
+// Per-user TOTP MFA. `secret` is the base32 TOTP secret; `enabled` flips true only after a successful verify
+// during enrollment (an unconfirmed row exists between setup and enable). — AUTH MFA
+model UserMfa {
+  user_id      String    @id @db.Uuid
+  user         User      @relation("UserMfaOwner", fields: [user_id], references: [id])
+  secret       String
+  enabled      Boolean   @default(false)
+  confirmed_at DateTime?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  @@map("user_mfa")
+}
+
+// One-time MFA recovery code (hashed). Used to sign in if the authenticator app is lost. — AUTH MFA
+model MfaRecoveryCode {
+  id         String    @id @default(uuid()) @db.Uuid
+  user_id    String    @db.Uuid
+  user       User      @relation("MfaRecoveryOwner", fields: [user_id], references: [id])
+  code_hash  String
+  used_at    DateTime?
+  created_at DateTime  @default(now())
+
+  @@index([user_id])
+  @@map("mfa_recovery_codes")
+}
+
+// Singleton security-policy row. `mfa_enforced` gates whether `roles.mfa_required` actually BLOCKS login —
+// default false so per-user MFA can be enabled without locking testers out mid-cycle. — AUTH MFA
+model SecuritySetting {
+  id           String   @id @default(uuid()) @db.Uuid
+  mfa_enforced Boolean  @default(false)
+  updated_by   String?  @db.Uuid
+  updater      User?    @relation("SecuritySettingUpdatedBy", fields: [updated_by], references: [id])
+  updated_at   DateTime @default(now()) @updatedAt
+
+  @@map("security_settings")
 }
 
 enum PasswordTokenPurpose {
@@ -349,13 +412,14 @@ model PasswordResetToken {
 }
 
 model Role {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String   @unique
-  description String?
-  is_system   Boolean
-  created_by  String   @db.Uuid
-  creator     User     @relation("RoleCreatedBy", fields: [created_by], references: [id])
-  created_at  DateTime @default(now())
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @unique
+  description  String?
+  is_system    Boolean
+  mfa_required Boolean  @default(false) // policy: members must use MFA when enforcement is on (SA seeded true). — AUTH MFA
+  created_by   String   @db.Uuid
+  creator      User     @relation("RoleCreatedBy", fields: [created_by], references: [id])
+  created_at   DateTime @default(now())
 
   role_permissions RolePermission[]
   user_roles       UserRole[]
@@ -418,6 +482,7 @@ model AuditLog {
   action      String
   before_json Json?
   after_json  Json?
+  ip_address  String? // actor's request IP, captured from the request context. — arch §security (audit)
   created_at  DateTime @default(now())
 
   @@index([entity_type, entity_id])
