@@ -1,7 +1,7 @@
 /**
- * UsersPage — user management (SRS §4; design-system §10.6). List users with roles + status; create
- * (with a generated temp password), edit, assign roles, soft-deactivate. `users:view` to see; create/edit
- * gated by `useCan` (convenience — the server enforces). A 403 renders AccessDenied. Reuses the playbook.
+ * UsersPage — user management (SRS §4; design-system §10.6). List users with roles + status; INVITE (emails
+ * a set-password link), edit, assign roles, reset password (link/temp), soft-deactivate. `users:view` to see;
+ * create/edit gated by `useCan` (convenience — the server enforces). A 403 renders AccessDenied.
  */
 import { useState } from 'react';
 import { Button, PageHeader } from '../../../components/ui';
@@ -34,7 +34,7 @@ export default function UsersPage() {
         actions={
           canCreate ? (
             <Button variant="primary" onClick={() => setModal({ mode: 'create' })}>
-              Create user
+              Invite user
             </Button>
           ) : undefined
         }

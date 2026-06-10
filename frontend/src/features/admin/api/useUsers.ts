@@ -50,3 +50,13 @@ export function useSetUserRoles() {
     onSuccess: () => qc.invalidateQueries({ queryKey: usersKeys.all }),
   });
 }
+
+/** Admin-assisted reset — emails the user a reset LINK or a forced-change TEMP password (never shown to the admin). */
+export function useResetUserPassword() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, mode }: { id: string; mode: 'link' | 'temp' }) =>
+      unwrap<{ success: true }>(api.POST('/v1/users/{id}/reset-password', { params: { path: { id } }, body: { mode } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: usersKeys.all }),
+  });
+}

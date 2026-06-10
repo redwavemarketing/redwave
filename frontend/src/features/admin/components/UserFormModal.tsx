@@ -1,19 +1,16 @@
 /**
- * UserFormModal — create or edit a user (RHF+zod, the playbook). CREATE generates a strong temp password
- * (shown once, copy/regenerate) since the backend has no invite/reset flow (AUTH-002 follow-up); the user
- * changes it under My Account → Security. EDIT changes name/phone/status + roles (no password field — the
- * backend has no admin password endpoint). Self-guardrails: you can't change your OWN status or roles here
- * (the server has no self-protection, so we don't offer it). Tokens only.
+ * UserFormModal — create (INVITE) or edit a user (RHF+zod, the playbook). CREATE emails the user a
+ * set-password link (the admin never sees/sets a password — the backend invites, AUTH-002). EDIT changes
+ * name/phone/status + roles. Self-guardrails: you can't change your OWN status or roles here (the server has
+ * no self-protection, so we don't offer it). A password RESET is a row action (link / temp), not here.
  */
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Copy, RefreshCw } from 'lucide-react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import {
   Banner,
   Button,
   FormField,
-  IconButton,
   Input,
   Modal,
   MultiSelect,
@@ -24,7 +21,6 @@ import { useAuth } from '../../../auth/useAuth';
 import { useApiErrorToast } from '../../../lib/api/apiError';
 import { useRoles } from '../api/useRoles';
 import { useCreateUser, useSetUserRoles, useUpdateUser } from '../api/useUsers';
-import { generateTempPassword } from '../lib/password';
 import type { AdminUser } from '../users.types';
 import styles from './users.module.css';
 
@@ -34,7 +30,6 @@ const createSchema = z.object({
   email: z.string().email('Enter a valid email'),
   full_name: z.string().min(1, 'Required').max(150),
   phone: z.string().max(50).optional(),
-  password: z.string().min(8, 'At least 8 characters').max(128),
   role_ids: z.array(z.string().uuid()),
 });
 type CreateValues = z.infer<typeof createSchema>;
@@ -57,37 +52,24 @@ function CreateUserForm({
   const { toast } = useToast();
   const onError = useApiErrorToast();
   const create = useCreateUser();
-  const { control, register, handleSubmit, setValue, getValues, formState } = useForm<CreateValues>({
+  const { control, register, handleSubmit, formState } = useForm<CreateValues>({
     resolver: zodResolver(createSchema),
-    defaultValues: { email: '', full_name: '', phone: '', password: generateTempPassword(), role_ids: [] },
+    defaultValues: { email: '', full_name: '', phone: '', role_ids: [] },
   });
   const errors = formState.errors;
-
-  const copyPassword = async () => {
-    try {
-      await navigator.clipboard.writeText(getValues('password'));
-      toast({ title: 'Password copied', tone: 'success' });
-    } catch {
-      toast({ title: 'Copy failed — select and copy manually', tone: 'danger' });
-    }
-  };
 
   const onSubmit = (values: CreateValues) =>
     create.mutate(
       {
         email: values.email,
-        password: values.password,
         full_name: values.full_name,
         phone: values.phone || undefined,
         role_ids: values.role_ids,
+        // No password → the backend INVITES: it emails the user a set-password link (the admin never sets one).
       },
       {
         onSuccess: () => {
-          toast({
-            title: 'User created',
-            description: 'Share the temporary password securely — the user changes it in My Account → Security.',
-            tone: 'success',
-          });
+          toast({ title: 'Invitation sent', description: 'The user will receive an email to set their password.', tone: 'success' });
           onDone();
         },
         onError,
@@ -96,6 +78,9 @@ function CreateUserForm({
 
   return (
     <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
+      <Banner tone="info" title="The user sets their own password">
+        We email them a secure link to set a password — you never see or choose it. (You can also trigger a reset later from the user’s row.)
+      </Banner>
       <FormField label="Email" required error={errors.email?.message}>
         <Input type="email" {...register('email')} placeholder="jane@redwave.local" />
       </FormField>
@@ -104,13 +89,6 @@ function CreateUserForm({
       </FormField>
       <FormField label="Phone" error={errors.phone?.message}>
         <Input {...register('phone')} placeholder="(204) 555-0123" />
-      </FormField>
-      <FormField label="Temporary password" required error={errors.password?.message} help="Shown once. Share securely; the user changes it under My Account → Security.">
-        <div className={styles.passwordRow}>
-          <Input className={styles.passwordField} readOnly {...register('password')} />
-          <IconButton label="Regenerate password" icon={<RefreshCw size={16} />} variant="outline" onClick={() => setValue('password', generateTempPassword())} />
-          <IconButton label="Copy password" icon={<Copy size={16} />} variant="outline" onClick={copyPassword} />
-        </div>
       </FormField>
       <Controller
         control={control}
@@ -126,7 +104,7 @@ function CreateUserForm({
           Cancel
         </Button>
         <Button variant="primary" type="submit" loading={create.isPending}>
-          Create user
+          Send invitation
         </Button>
       </div>
     </form>
