@@ -11,6 +11,9 @@ export class LoginResponse {
 
   @ApiProperty({ description: 'Long-lived refresh JWT.' })
   refresh_token!: string;
+
+  @ApiProperty({ description: 'When true, the user must change their password before continuing.' })
+  must_change_password!: boolean;
 }
 
 export class RefreshResponse {
@@ -40,6 +43,9 @@ export class MeUserResponse {
 
   @ApiProperty({ enum: UserStatus })
   status!: UserStatus;
+
+  @ApiProperty({ description: 'When true, the user must change their password before continuing.' })
+  must_change_password!: boolean;
 
   @ApiProperty({ type: String, format: 'date-time' })
   created_at!: string;

@@ -271,16 +271,19 @@ enum MatchStatus {
 // ════════════════════════════════════════════════════════════════════════════════
 
 model User {
-  id               String          @id @default(uuid()) @db.Uuid
-  email            String          @unique
-  password_hash    String
-  full_name        String
-  phone            String?
-  avatar_url       String?
-  theme_preference ThemePreference
-  status           UserStatus
-  created_at       DateTime        @default(now())
-  updated_at       DateTime        @updatedAt
+  id                    String          @id @default(uuid()) @db.Uuid
+  email                 String          @unique
+  password_hash         String
+  full_name             String
+  phone                 String?
+  avatar_url            String?
+  theme_preference      ThemePreference
+  status                UserStatus
+  must_change_password  Boolean         @default(false) // set on invite / admin reset — forces a change at next login
+  failed_login_attempts Int             @default(0) // brute-force counter; reset on success
+  locked_until          DateTime? // lockout expiry; null = not locked
+  created_at            DateTime        @default(now())
+  updated_at            DateTime        @updatedAt
 
   // back-relations (all FKs that reference users.id)
   roles_created                 Role[]                     @relation("RoleCreatedBy")
@@ -319,8 +322,30 @@ model User {
   import_batches_run            ImportBatch[]              @relation("ImportBatchRunBy")
   import_mappings_created       ImportFieldMapping[]       @relation("ImportMappingCreatedBy")
   import_rows_resolved          ImportRow[]                @relation("ImportRowResolvedBy")
+  password_reset_tokens         PasswordResetToken[]
 
   @@map("users")
+}
+
+enum PasswordTokenPurpose {
+  invite
+  reset
+}
+
+// A single-use, expiring token for an invite (first set-password) or a forgotten-password reset. Only the
+// token HASH is stored (the plaintext lives only in the emailed link). — AUTH-002
+model PasswordResetToken {
+  id         String               @id @default(uuid()) @db.Uuid
+  user_id    String               @db.Uuid
+  user       User                 @relation(fields: [user_id], references: [id])
+  token_hash String               @unique
+  purpose    PasswordTokenPurpose
+  expires_at DateTime
+  used_at    DateTime?
+  created_at DateTime             @default(now())
+
+  @@index([user_id])
+  @@map("password_reset_tokens")
 }
 
 model Role {
