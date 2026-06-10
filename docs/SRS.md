@@ -115,9 +115,9 @@ Identity, authentication, and modular role-based access. A role is a set of (mod
 | **ID**       | **Requirement**                                                                                                                                                                                                                                                                                          | **Pri** |
 |--------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **AUTH-001** | Users authenticate with email and password over an encrypted connection; sessions expire after inactivity.                                                                                                                                                                                               | **M**   |
-| **AUTH-002** | Users can reset a forgotten password via a secure flow.                                                                                                                                                                                                                                                  | **S**   |
+| **AUTH-002** | **User provisioning + password recovery (BUILT).** Admin INVITE (emailed set-password link), self-service forgot-password (emailed expiring link, non-enumerating), and admin-assisted reset (email a link or a forced-change temp password — the admin never sees the password). Passwords meet a strength policy (≥8 + upper+lower+digit); brute-force lockout after N failed logins. Email via Resend. | **M**   |
 | **AUTH-003** | The Super Admin can create, rename, and deactivate custom roles; built-in roles cannot be deleted.                                                                                                                                                                                                       | **M**   |
-| **AUTH-004** | The Super Admin can grant a role any combination of (module, action) permissions, where action is view / create / edit / approve / delete / export.                                                                                                                                                      | **M**   |
+| **AUTH-004** | The Super Admin can grant a role any combination of (module, action) permissions, where action is view / create / edit / approve / delete / export. One additional dedicated action exists outside the grid: **`notifications:broadcast`** (the right to send a manual broadcast), granted to the **Super Admin only** (see RPT-013).                                                                                                                                                      | **M**   |
 | **AUTH-005** | The Super Admin can assign one or more roles to a user; effective permissions are the union of the user's roles.                                                                                                                                                                                         | **M**   |
 | **AUTH-006** | Every server request is authorized against the caller's permissions; unauthorized requests are rejected and written to the audit log.                                                                                                                                                                    | **M**   |
 | **AUTH-007** | Admin/Manager/Rep default roles are seeded; CM (Administration & Operations Coordinator) is granted Admin access.                                                                                                                                                                                        | **M**   |
@@ -128,6 +128,17 @@ Identity, authentication, and modular role-based access. A role is a set of (mod
 | **AUTH-012** | **Review routing.** A rep's profile-change request is reviewed by their Field Manager or an Admin; any other user's request is reviewed by a Super Admin. Routing is expressed via an approve permission on the profile area.                                                                            | **M**   |
 | **AUTH-013** | **Personal notifications are not individually overridable.** Users see which notifications they receive, but channel configuration is controlled by the Super Admin per event (no per-user opt-out in this version).                                                                                     | **S**   |
 | **AUTH-014** | **System Settings / Administration grouping.** Existing org-wide configuration (roles & permissions, users, tiers/rates, holdback release, incentives, clients/products, expense categories, notification routing, chatbot) is presented under one role-gated Administration area rather than scattered. | **S**   |
+
+> **Built-in role grants (reference).** The RBAC catalogue is **17 modules** (auth/users, hrm, clients, **billing_rates**, commission, sales, payrun, clawback, expenses, billing, documents, import, reporting, settings, profile, account, **notifications**) × **6 actions** (view/create/edit/approve/delete/export), seeded as the standard permission grid, **plus one off-grid permission `notifications:broadcast`**. Default role coverage:
+>
+> | Permission | Super Admin | Admin | Manager | Sales Rep |
+> |---|:---:|:---:|:---:|:---:|
+> | All (module, action) grid permissions | ✅ all | operational subset | roster subset | self subset |
+> | **`billing_rates:*`** (view/create/edit/delete client rate cards) | ✅ | — | — | — |
+> | **`reports:business`** (business/executive dashboard + cross-period trends) | ✅ | — | — | — |
+> | **`notifications:broadcast`** | ✅ | — | — | — |
+>
+> `billing_rates:*` gates the client billing rate cards (sensitive partner financials) and is **Super Admin only** by default — Admin/Manager/Rep do NOT see rate cards; a custom "Business Partner" role can be granted `billing_rates:view`. Managing the **product-type catalogue** is gated `commission:edit`. **`reports:business`** is an off-grid action gating the business/executive dashboard + the cross-period trends endpoint — **Super Admin only** (a custom finance role can be granted it, RPT-006). On the **manager dashboard**, roster AGGREGATE money is shown to any manager, but **per-rep payout / money-ranking requires `hrm:edit`** (the same permission that unredacts a rep's payment details) — enforced server-side. `notifications:broadcast` is **Super Admin only** and is the only path that targets notification recipients freely; all other (automatic) events have intrinsic, non-re-targetable recipients (RPT-012/RPT-013).
 
 ### 4.2 UI / Screen Requirements
 
@@ -217,11 +228,14 @@ Program partners and their admin-created product catalogues, plus client billing
 | **ID**       | **Requirement**                                                                                                                                             | **Pri** |
 |--------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **CLNT-001** | An Admin/Super Admin can create and edit clients (code, name, market CA/US, whether the partner supplies MPU IDs, active flag).                             | **M**   |
-| **CLNT-002** | Products are created per client with a product type (internet / greenfield_internet / tv / home_phone); there is no fixed global catalogue.                 | **M**   |
+| **CLNT-002** | Products are created per client, choosing a product type from the **configurable product-type catalogue** (no fixed enum). Creating a product may optionally set its **initial client-billing rate** inline (requires `billing_rates:create`). product_type is immutable after creation. | **M**   |
 | **CLNT-003** | Client billing rates are configured per client/product with a rate kind (product / tv_addon / hp_addon / bundle_bonus / spiff) and an effective date range. | **M**   |
-| **CLNT-004** | A new billing rate with a future effective date supersedes a pending one for the same scope; closed periods are never altered.                              | **M**   |
+| **CLNT-004** | A new billing rate with a future effective date supersedes a pending one for the same scope; closed periods are never altered. A **PENDING** rate may be edited or deleted; a current/past rate is immutable (supersede instead). | **M**   |
 | **CLNT-005** | Client billing rates are stored and computed entirely separately from rep commission rates and are never combined.                                          | **M**   |
 | **CLNT-006** | Clients and products can be deactivated without deleting historical references.                                                                             | **S**   |
+| **CLNT-007** | **Product-type catalogue (configurable).** The SA can add product types at runtime (gated `commission:edit`). Each type carries a LOCKED behaviour: `tiered` (internet — counts toward the tally), `greenfield` (flat, excluded), or `standard_addon`. **New types are always `standard_addon`** (billable, flat-rated, NOT tiered, NOT greenfield — never changes tally/greenfield logic); the 4 core types are system types (behaviour immutable, non-deletable). A type may optionally be created with an inline COMMISSION flat rate. | **M**   |
+| **CLNT-008** | **Modular rate-card visibility.** Client billing rate cards are gated by a discrete `billing_rates` permission set (view/create/edit/delete), granted by default to **Super Admin only**. Roles without `billing_rates:view` cannot see rate cards (server-enforced). | **M**   |
+| **CLNT-009** | **Client custom fields.** The SA can add/edit/remove repeatable name/value custom fields on a client; they persist and show on the client detail. | **S**   |
 
 ### 6.2 UI / Screen Requirements
 
@@ -229,11 +243,11 @@ Program partners and their admin-created product catalogues, plus client billing
 |--------------------------|-------------------------------------------------------------------------------------------------------------|
 | **Client List**          | All clients with status and market; add-client button.                                                      |
 | **Client Detail**        | Client info; Products tab (create/edit per-client products); Billing Rates tab (effective-dated rate rows). |
-| **Product / Rate Forms** | Product creation with type; billing-rate entry with rate kind and effective-from/to date pickers.           |
+| **Product / Rate Forms** | Product creation with type; billing-rate entry with rate kind and an effective-from/to **pay-period selector** (`Period N · start–end`, mapped to the period boundary date; back-dating rejected — BRD §9.4). |
 
 ### 6.3 Data Touchpoints
 
-clients, products, client_billing_rates.
+clients, client_custom_fields, products, product_type_catalogue, client_billing_rates.
 
 ## 7. Commission Configuration
 
@@ -244,12 +258,13 @@ Rep-side commission rules (Schedule C v2): the tier schedule, flat rates, holdba
 | **ID**       | **Requirement**                                                                                                                                                                                                       | **Pri** |
 |--------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **COMM-001** | The Super Admin can configure the tier schedule: four tiers with count thresholds and a per-activation rate each, effective-dated.                                                                                    | **M**   |
-| **COMM-002** | The Super Admin can configure flat rates for greenfield internet, TV, and home phone, effective-dated.                                                                                                                | **M**   |
+| **COMM-002** | The Super Admin can configure flat rates per **non-tiered product type** (greenfield internet, TV, home phone, and any SA-added standard add-on), effective-dated. A tiered type (internet) is rejected (it's priced by the tier schedule). | **M**   |
 | **COMM-003** | The Super Admin can configure the advance/holdback split (default 70% / 30%), effective-dated.                                                                                                                        | **M**   |
-| **COMM-004** | **Holdback release setting (bulk, sticky).** The Super Admin sets which pay cycle a period's 30% holdback releases into; the setting applies in bulk and persists until changed. *[PROPOSED — confirm rule in §17]* | **M**   |
-| **COMM-005** | The Super Admin can create incentives/spiffs: scope (client/product/all), target type (per-activation or target-based), target count, date window, and amount.                                                        | **M**   |
+| **COMM-004** | **Holdback release setting (bulk, sticky).** The Super Admin sets the release rule (`cycles:N` or `days:N`); it applies in bulk and persists until changed (future holds only). Read by Pay Run at finalize (§17.1). | **M**   |
+| **COMM-005** | The Super Admin can create incentives/spiffs: scope (client/product/all), **mode (`per_activation` or `one_time`)**, threshold (`target_count`), date window, and amount. BOTH modes are applied by the engine (per_activation pays beyond the threshold; one_time pays a single bonus at it). | **M**   |
 | **COMM-006** | A later configuration change with a future effective date supersedes a pending change; changes apply prospectively only and never recompute a closed period.                                                          | **M**   |
 | **COMM-007** | Rate changes generate a system notification; email is sent only if enabled for the rate_change event (default off).                                                                                                   | **S**   |
+| **COMM-008** | **Consistent effective-dated CRUD.** Tier schedules, flat rates, and the holdback split support edit/delete of a **PENDING** (not-yet-effective) row; a current/past row is immutable (supersede instead). An incentive may be deleted only if never applied to a paid item (else it is ended). | **S**   |
 
 ### 7.2 Tier Schedule (Schedule C v2)
 
@@ -331,7 +346,7 @@ Bi-weekly payroll: tier determination at close, the 70/30 split, holdback ledger
 | **PAY-001** | Pay periods (Sunday–Saturday with paydays) are pre-loaded from the schedule; admins select a cycle to run, not create cycles.                                                                        | **M**   |
 | **PAY-002** | **Tier determination.** At period close the system computes each rep's gross internet tally and assigns the highest tier reached; that tier rate applies to every internet activation in the period. | **M**   |
 | **PAY-003** | The 70% advance of total commission is computed per rep for the period; the 30% holdback is recorded in the holdback ledger.                                                                         | **M**   |
-| **PAY-004** | **Holdback release.** The 30% from an origin period is released in the pay cycle set by the Super-Admin bulk/sticky setting. *[PROPOSED — see §17]*                                                | **M**   |
+| **PAY-004** | **Holdback release.** The 30% from an origin period is released at finalize in the cycle set by the sticky rule (§17.1), with a clawback set-off reducing a due release first. | **M**   |
 | **PAY-005** | Approved expenses for the period are included in the same pay run as that period's commission.                                                                                                       | **M**   |
 | **PAY-006** | The Super Admin can add an ad-hoc bonus to a rep's pay-run line with a note.                                                                                                                         | **M**   |
 | **PAY-007** | **Clawback application.** Clawbacks are applied as a flat deduction from the rep's pay-run total (no 70/30 sequencing).                                                                              | **M**   |
@@ -400,41 +415,41 @@ clawbacks, sale_items (snapshot read), sales, reps, pay_runs.
 
 ## 11. Expenses
 
-Weekly expense submission by any user, configurable categories, multi-stop kilometre logs, an approval workflow, list/export, and same-cycle payout.
+**Item-first** expense capture by any user — the expense ITEM is the atomic unit (no mandatory weekly report wrapper). Configurable categories, map-automated multi-stop kilometre logs, real receipt storage, a **per-item** approval workflow, a grouped filterable list/export, and same-cycle payout derived from each item's own date.
 
 ### 11.1 Functional Requirements
 
 | **ID**      | **Requirement**                                                                                                                                                                                                                                   | **Pri** |
 |-------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
-| **EXP-001** | Any user (rep, manager, admin, partner) can submit expenses; a submission groups items for a week.                                                                                                                                                | **M**   |
-| **EXP-002** | Supported categories: kilometres, meals, hotel, flight, rental, gas, other; the Super Admin can add new categories/fields that appear in the selector.                                                                                            | **M**   |
-| **EXP-003** | A receipt upload is mandatory for every category except the kilometre log.                                                                                                                                                                        | **M**   |
-| **EXP-004** | **Kilometre log.** One km log per day, with multiple stops (Google-Maps-style add-stop); the user selects single trip (−30 km) or round trip (−60 km); billable km × rate (default $0.45) is the amount. Origin is an open input, not hardcoded. | **M**   |
+| **EXP-001** | Any user (rep, manager, admin, partner) can add **expense items** — one or several at once. Each item is independent (its own submitter, status, approver); there is **no required weekly report**. (The legacy `expense_reports` table is retained only as optional grouping/history.)                                                                          | **M**   |
+| **EXP-002** | Supported categories: kilometres, meals, hotel, flight, rental, gas, other; the Super Admin can add new categories/fields (with a per-category receipt rule) that appear in the selector. Config-driven, not hardcoded.                            | **M**   |
+| **EXP-003** | A receipt upload is mandatory for every category except the kilometre log; enforced client- **and** server-side. Receipts upload to object storage (Supabase) and return an access-controlled URL.                                                | **M**   |
+| **EXP-004** | **Kilometre log.** One km log per day **per rep**, with multiple stops; the user selects single trip (−30 km) or round trip (−60 km); billable km × rate (default $0.45) is the amount, **computed server-side**. When a Maps key is configured, each stop is a Places autocomplete and the route distance is **re-derived server-side** from the coordinates (the client value is ignored); otherwise the user enters the total distance manually and the server falls back to it. | **M**   |
 | **EXP-005** | The “other” category provides a free description, date, amount, and receipt for ad-hoc costs (e.g. events).                                                                                                                                       | **M**   |
-| **EXP-006** | Submitted expenses enter a Pending Approval queue; a Manager/Admin can edit before approval and send back for correction.                                                                                                                         | **M**   |
-| **EXP-007** | **Edit rights.** Before approval: Manager/Admin can edit. After approval: only the Super Admin can change an expense.                                                                                                                             | **M**   |
+| **EXP-006** | Submitted items enter a Pending Approval queue; a Manager/Admin can edit before approval and **approve/reject/send-back per item, with bulk select** for many at once.                                                                            | **M**   |
+| **EXP-007** | **Edit rights.** Before approval: Manager/Admin can edit. After approval: only the Super Admin can change an item. Not-yet-approved items can be deleted (`expenses:delete`); approved items are preserved.                                        | **M**   |
 | **EXP-008** | Meal eligibility is a manual approver judgement; the system does not auto-enforce it.                                                                                                                                                             | **M**   |
-| **EXP-009** | **Same-cycle payout.** Approved expenses are paid in the same pay cycle as that period's commission.                                                                                                                                              | **M**   |
-| **EXP-010** | Expenses display as a filterable list (default: current pay cycle), filterable by date, rep, client, and type; each item can be tagged to a client/program.                                                                                       | **M**   |
-| **EXP-011** | Expenses can be exported to PDF/Excel (e.g. per-rep KM logs for clients, select-all for accounting); each export is stored as a record.                                                                                                           | **M**   |
+| **EXP-009** | **Same-cycle payout (by item date).** Each item's pay period is derived from its **own `expense_date`**; an approved item is paid in the cycle of its date. Pay Run aggregates approved ITEMS by `{rep, pay_period, status}`.                       | **M**   |
+| **EXP-010** | Expenses display as a filterable, **paginated** item list (default: current pay cycle), filterable by date range, rep, client, category, status, and free-text; **groupable daily/weekly/monthly/custom**; each item can be tagged to a client/program.                                                                                                        | **M**   |
+| **EXP-011** | Expenses can be exported to PDF/Excel/CSV (per-item rows or grouped period·count·total; e.g. per-rep KM logs for clients, select-all for accounting); the server-recorded export is stored as a record, RBAC-scoped (manager = roster, rep = own). | **M**   |
 
 ### 11.2 Worked Example — kilometre deduction (acceptance criterion)
 
 > **Single vs round trip**
-> A rep logs a day with stops totalling 130 km and selects **round trip**. Deduction = 60 km. Billable = 70 km × $0.45 = $31.50. Had they selected single trip, deduction = 30 km, billable = 100 km × $0.45 = $45.00.
+> A rep logs a day with stops totalling 130 km and selects **round trip**. Deduction = 60 km. Billable = 70 km × $0.45 = $31.50. Had they selected single trip, deduction = 30 km, billable = 100 km × $0.45 = $45.00. (With Maps configured the 130 km is the server-derived route distance; without it, the rep types it and the server uses that value.)
 
 ### 11.3 UI / Screen Requirements
 
-| **Screen / View**      | **Purpose & key UI elements**                                                                                                                                                |
-|------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Expense Submission** | Choose category; per-category form (km log with map stops + trip type; meals/hotel/flight/rental/gas/other with amount + receipt); optional client tag; submit for the week. |
-| **Expense List**       | Filterable list (date default current cycle, rep, client, type); status badges; row → detail.                                                                                |
-| **Approval Queue**     | Pending submissions; approve / edit / send back; Super-Admin edit after approval.                                                                                            |
-| **Expense Export**     | Custom date/rep/client/type selection; export to PDF/Excel; stored export history.                                                                                           |
+| **Screen / View**   | **Purpose & key UI elements**                                                                                                                                                                          |
+|---------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Add Expense**     | Pick a category → per-category fields (km log: trip type + Places-autocomplete stops on a map with auto distance, or manual entry; standard: date + amount + receipt + description + optional client). “Add another item” to capture several at once. |
+| **Expense List**    | Paginated DataTable of items (date default current cycle); filters (status/category/rep/client/date/search); grouping (daily/weekly/monthly); approvers get row-select → bulk approve/reject/send-back; row → detail/edit/delete. |
+| **Approval Queue**  | Pending items (server-scoped); per-item + bulk approve/reject/send-back; Super-Admin edit after approval.                                                                                              |
+| **Expense Export**  | Grouping + PDF/Excel/CSV (per-item or grouped buckets); a server-recorded export with date/rep/client scope.                                                                                          |
 
 ### 11.4 Data Touchpoints
 
-expense_reports, expense_items, expense_km_logs, expense_km_stops, expense_field_configs, expense_exports, clients, pay_periods.
+expense_items (item-first: submitter/status/approver/pay_period on the item), expense_km_logs, expense_km_stops, expense_field_configs, expense_exports, expense_reports (optional grouping/history), clients, pay_periods. External: Google Maps Directions (server) + Places (browser); Supabase Storage (receipts).
 
 ## 12. Billing & Statements
 
@@ -449,6 +464,12 @@ Per-client, per-period output: the statement Excel (one line per customer) and a
 | **BILL-003** | An optional commission invoice (PDF) shows only the total commission amount for the client.                                                                                | **M**   |
 | **BILL-004** | **No GST.** Statements and invoices exclude any GST/PST line; tax is handled in QuickBooks.                                                                                | **M**   |
 | **BILL-005** | Generated statements/invoices are retained as records (client, period, total, file, generator).                                                                            | **S**   |
+| **BILL-006** | **Gapless sequential numbering.** Statements and invoices receive gapless, sequential numbers (one sequence per type), minted atomically on issue — no gaps under concurrency. | **M**   |
+| **BILL-007** | **Immutable once issued.** An issued document is never mutated; a correction issues a NEW numbered document and marks the prior one superseded (retained).                   | **M**   |
+| **BILL-008** | **Preview before issue.** The one-line-per-customer rows + total are previewable (not persisted, no number) before generating.                                              | **S**   |
+| **BILL-009** | **Reconciliation tie-out.** statement total = Σ lines = Σ underlying sales’ billing; pay-run total = Σ lines. Discrepancies are flagged.                                     | **M**   |
+| **BILL-010** | **QuickBooks CSV export** of statements/invoices/summary (no tax column), recorded like other exports.                                                                      | **S**   |
+| **BILL-011** | **Single-currency CAD** across all clients (incl. US/CTI); no multi-currency/FX. One central rounding rule (2 dp, half-up) → identical CAD figures on screen + every export. | **M**   |
 
 ### 12.2 Worked Example
 
@@ -469,32 +490,40 @@ client_statements, client_statement_lines, client_invoices, sales, clients, pay_
 
 ## 13. Documents & E-Signature
 
-A two-way document-sharing and signature-request system. Either management or a rep can share a document and request one or many signatures; the original and a distinct signed copy per signer are stored with audit metadata.
+A two-way document-sharing and in-system e-signature system. Either management or a rep can share a document and request one or many signatures; the requester places signature fields on the PDF, recipients sign **in the browser** (a saved, drawn, or typed signature) or upload an externally-signed file, and the original plus a distinct stamped copy per signer (and a final all-signatures copy) are stored with immutable audit metadata. Files are stored in object storage (Supabase) and served only through **access-controlled, short-TTL signed URLs** — never public.
 
 ### 13.1 Functional Requirements
 
 | **ID**      | **Requirement**                                                                                                                     | **Pri** |
 |-------------|-------------------------------------------------------------------------------------------------------------------------------------|---------|
-| **DOC-001** | A user can upload a document (compensation agreement, rate notice, equipment agreement, or other) and retain the unsigned original. | **M**   |
-| **DOC-002** | **Share & request.** Either management or a rep can share a document and request a signature from one or many recipients.           | **M**   |
-| **DOC-003** | Each recipient can sign or decline; the system records signer, status, method, IP, and timestamp.                                   | **M**   |
-| **DOC-004** | **Distinct signed copies.** On signing, a distinct signed copy is stored per signer in addition to the retained original.           | **M**   |
-| **DOC-005** | A request tracks overall status (pending / partially signed / completed / declined / cancelled) across its recipients.              | **M**   |
+| **DOC-001** | A user can upload a **PDF** document (compensation agreement, rate notice, equipment agreement, or other) and retain the unsigned original **unchanged**. Non-PDF (e.g. Word) is rejected with guidance to save as PDF first. | **M**   |
+| **DOC-002** | **Share & request.** Either management or a rep can share a document and request a signature from one or many recipients; recipients become the shared-with set. | **M**   |
+| **DOC-003** | **Field placement + signing.** The requester places fields (signature / initial / date / text) per recipient on the PDF. Each recipient can sign (applying a signature into their fields) or decline; the system records signer, status, method (drawn / typed / saved / uploaded), IP, and timestamp. | **M**   |
+| **DOC-004** | **Distinct signed copies; original immutable.** On signing, the server stamps the signer's fields into a distinct per-signer copy (pdf-lib) stored alongside the retained original, which is **never** modified. | **M**   |
+| **DOC-005** | A request tracks overall status (pending / partially signed / completed / declined / cancelled) across its recipients; on completion a **final copy carrying all signatures** is produced. | **M**   |
 | **DOC-006** | Signature requests and completions raise notifications per the configured channels.                                                 | **S**   |
 | **DOC-007** | Signed-document audit metadata is queryable and immutable.                                                                          | **M**   |
+| **DOC-008** | **In-browser preview + download.** Any user with access can preview the original and the signed copies in-app (pdf.js) and download them; signing needs no download/upload round-trip, but uploading an externally-signed file is also offered (method = uploaded). | **M**   |
+| **DOC-009** | **Saved reusable signatures.** Each user can create and save a reusable signature (draw / type / upload an image), set a default, and reuse it on every future signing. Saved signatures are private and own-scoped. | **S**   |
 
 ### 13.2 UI / Screen Requirements
 
 | **Screen / View**             | **Purpose & key UI elements**                                                         |
 |-------------------------------|---------------------------------------------------------------------------------------|
-| **Documents**                 | List of documents with status; upload; open detail.                                   |
-| **Share / Request Signature** | Pick recipient(s) (one or many), add a message and due date, send request.            |
-| **Sign Document**             | Recipient views the document and signs or declines; signed copy generated and stored. |
+| **Documents**                 | List of documents with status; upload a PDF; open detail.                             |
+| **Document detail**           | In-browser PDF preview of the original + download; per-signer signed-copy + final-copy download; activity timeline. |
+| **Share / Request Signature** | Pick recipient(s) (one or many), add a message and due date, optionally **place fields** on the PDF per recipient, send request. |
+| **Sign Document**             | Recipient previews the document with their fields highlighted and signs (saved / drawn / typed) or declines; or uploads an externally-signed PDF. |
 | **Signature Status**          | Per-document view of each recipient's status, signed copy, and audit metadata.        |
+| **My Account → Signatures**   | Manage saved reusable signatures (create by draw/type/upload, set default, delete).   |
 
 ### 13.3 Data Touchpoints
 
-documents, signature_requests, document_signatures, users, notifications.
+documents, signature_requests, signature_fields, document_signatures, user_signatures, users, notifications.
+
+### 13.4 Storage & access control
+
+Document files (originals, per-signer signed copies, the final copy, saved-signature images, rep documents) are uploaded to object storage; the row stores the object **path**, and bytes are served only via an RBAC/visibility-gated `…/file-url` endpoint that mints a short-TTL signed URL on each access. Word→PDF conversion is a later enhancement (PDF-only today). When storage is unconfigured the upload returns a `local://` reference and file-url endpoints respond 404 — the workflow, status rollup, audit, and notifications still function.
 
 ## 14. Reporting, Dashboards & Platform
 
@@ -516,7 +545,7 @@ The platform provides four role-scoped landing experiences. Each is built from t
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **RPT-001** | **Rep dashboard.** Shows the rep's own sales counts by product, current tier and progress to the next tier, estimated commission for the period, holdback pending release, recent clawbacks against them, and personal statement link. Scoped to the rep's own data only.                                                                                                                                                               | **M**   |
 | **RPT-002** | **Manager dashboard.** Scoped to the field manager's assigned roster: combined team sales for the period, sales pending validation, expenses awaiting the manager's approval, and team performance against targets.                                                                                                                                                                                                                     | **S**   |
-| **RPT-003** | **Business / Executive dashboard (Super Admin only).** Company-wide financials: total revenue (client billings), total rep payout, net margin estimate, breakdowns by client / product / rep / period, period-over-period trend, outstanding holdback liability, clawback totals, active rep count, and top performers. Gated to Super Admin and enforced server-side; partner-level financials are never exposed to Admin/Manager/Rep. | **M**   |
+| **RPT-003** | **Business / Executive dashboard (Super Admin only, `reports:business`).** A period-aware KPI set READ from the frozen ledger (no money recomputed, #1/#5): revenue, rep payout, net margin $/%, holdback held/scheduled/released, clawback total + **clawback rate** (clawback ÷ paid commission), expense total split KM/other, total activations by product type and by client, internet volume, greenfield count + $, the validation funnel (entered→validated→in_pay_run→paid), active reps + **rep tier distribution**, client mix (revenue + volume share), and **period-over-period growth**. A dedicated **`GET /v1/dashboards/business/trends`** endpoint returns multi-period series (revenue/payout/margin, activations by product, revenue by client, tier distribution over the last N periods) for the trend charts. Gated to Super Admin and enforced server-side; partner-level financials are never exposed to Admin/Manager/Rep. | **M**   |
 | **RPT-004** | **Admin operational home.** A “what needs my action today” landing view for Admin: pending validations, expenses awaiting approval, current cycle status, and statements due. This is a task/queue view, not an analytics dashboard.                                                                                                                                                                                                    | **S**   |
 | **RPT-005** | The Business dashboard supports filters by date range / pay period, client, product, and rep.                                                                                                                                                                                                                                                                                                                                           | **S**   |
 | **RPT-006** | A custom view-only finance/executive role can later be granted Business-dashboard access without full Super-Admin powers, via the existing role system; no separate role is built now.                                                                                                                                                                                                                                                  | **C**   |
@@ -526,9 +555,12 @@ The platform provides four role-scoped landing experiences. Each is built from t
 | **ID**      | **Requirement**                                                                                                                                                                                    | **Pri** |
 |-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **RPT-007** | **Leaderboard.** Ranks reps by internet activation volume for the period and shows progress against targets; reps see counts only, never others' earnings.                                         | **S**   |
-| **RPT-008** | The Super Admin/Admin can set sales targets (daily/weekly/monthly, per rep or global) used by the leaderboard and manager dashboard.                                                               | **S**   |
+| **RPT-008** | **Sales targets (count goals).** A target is an internet-activation goal per rep per pay period (`sales_targets` entity). `GET /v1/sales-targets` is scoped (rep=own, manager=roster, admin=all); `PUT /v1/sales-targets` upserts and requires **`hrm:edit`** (a manager may only set targets for reps they manage — enforced server-side). Drives the **rep "target progress"** widget and the **manager "target-vs-actual"** list.                                                               | **S**   |
 | **RPT-009** | **Notifications.** In-app notifications are produced for actionable events; the Super Admin configures, per event type, whether email is also sent. The rate_change event defaults to in-app only. | **M**   |
 | **RPT-010** | No automated email is sent for rate changes unless the Super Admin explicitly enables it; rate-change comms are otherwise manual.                                                                  | **M**   |
+| **RPT-012** | **Event catalogue management.** The Super Admin manages a catalogue of every automatic event. Per event they may enable/disable it, set the channel (in-app and/or email), and edit the **title/body templates** (documented `{variable}` placeholders; blank → built-in wording). **Recipients are intrinsic to each event** and shown read-only — automatic events are never re-targeted. A genuinely **new** automatic trigger needs a code change (a new emit call); the catalogue manages wording/channel, not trigger logic. | **M**   |
+| **RPT-013** | **Manual broadcast.** The Super Admin can compose a one-off broadcast (title + body) to a chosen audience — everyone, a role, or specific users — delivered in-app (and by email where the broadcast channel is on). Gated by the dedicated `notifications:broadcast` permission (Super Admin only). | **S**   |
+| **RPT-014** | **Notification Center + unread badge.** Every user has a Notification Center (own-scoped: read/unread, mark-all, bulk read/unread, unread/all filter, search) and a live unread-count badge on the bell that refreshes on a poll interval and on window focus. Clicking a notification deep-links to the related record and marks it read. | **M**   |
 | **RPT-011** | **Chatbot.** An integrated, Gemini-powered chatbot grounded on Redwave data answers in-context questions; access is role-gated and the provider is configurable.                                   | **S**   |
 
 > **Worked example — dashboard scope & privacy**
@@ -543,8 +575,9 @@ The platform provides four role-scoped landing experiences. Each is built from t
 | **Business / Executive Dashboard** | Revenue, payout, net margin, holdback liability, clawback totals; breakdowns and trends by client/product/rep/period; filters; export. Super Admin only. |
 | **Admin Operational Home**         | Action queues: pending validations, pending approvals, cycle status, statements due.                                                                     |
 | **Leaderboard**                    | Ranked reps by internet volume with target progress; counts only.                                                                                        |
-| **Notification Center**            | In-app notifications; read/unread.                                                                                                                       |
-| **Notification Settings**          | Super-Admin matrix of event type × channel (in-app/email); rate_change email default off.                                                                |
+| **Notification Center**            | Own notifications on the shared DataTable: unread/all filter + search, read/unread, mark-all, bulk read/unread, row click → deep-link to the record. Live unread-count badge on the bell (polled + refetch-on-focus). |
+| **Notification Settings**          | Super-Admin per-event management: enable/disable, channel (in-app/email), editable title/body templates (`{variable}` hints), read-only intrinsic recipients per event. rate_change email default off.               |
+| **Broadcast composer**             | Super-Admin one-off announcement (title + body) to an audience (everyone / a role / specific users). Gated `notifications:broadcast`.                     |
 | **Chatbot**                        | Role-gated assistant widget answering from Redwave data.                                                                                                 |
 
 ### 14.5 Data Touchpoints
@@ -569,7 +602,8 @@ Redwave can bring its own files and client data into the system seamlessly. Ever
 | **IMP-008** | **Traceability.** Every imported row carries its import_batch_id, so any record can be traced to its source file and distinguished from manually entered data.                                                                                                                                                                                   | **M**   |
 | **IMP-009** | **Import history & audit.** Each batch is stored with source, type, scope, row counts, errors, who ran it, and when; committed and failed batches are both retained.                                                                                                                                                                             | **M**   |
 | **IMP-010** | **Unified with bulk validation.** The recurring client-report ingestion used for sales validation (SALE-007) is a consumer of this same pipeline — one ingestion mechanism, not two.                                                                                                                                                             | **M**   |
-| **IMP-011** | Supported source formats are Excel and CSV.                                                                                                                                                                                                                                                                                                      | **S**   |
+| **IMP-011** | Supported source formats are Excel (.xlsx/.xls) and CSV/TSV — uploaded as a real file, parsed server-side (exceljs / papaparse), with cleansing (whitespace trimmed, **dates → 'YYYY-MM-DD'**, **money → exact decimal CAD**, **client codes normalised** — kills the VF/Vf inconsistency). On upload the mapping is **auto-suggested** from the column headers; the operator adjusts + **saves** it for reuse (IMP-002). **Downloadable templates** (Excel + CSV) for every target — incl. the VF / RF Now / CTI client-report formats — are provided so Redwave has the exact columns. | **M**   |
+| **IMP-012** | **Historical sales (CONFIRMED, reference-only).** Imported historical / already-paid sales get a `historical` status: they are **REFERENCE-ONLY** — never paid, never enter a pay run, and are **excluded** from rep commission, the tier tally, the leaderboard, holdback, and clawbacks. They appear **only** in the owner's business-side aggregations (Business dashboard revenue + activations), capturing client / product / rep / sale_date / activation_date / billed amount (`sale_items.historical_billed_amount`, a billing-stream reference — never commission, #3). Historical data must never pollute current rep-facing commission or the live pay pipeline. | **M**   |
 
 ### 15.2 Worked Examples (acceptance criteria)
 
@@ -592,7 +626,7 @@ Redwave can bring its own files and client data into the system seamlessly. Ever
 
 ### 15.4 Data Touchpoints
 
-import_batches, import_field_mappings, import_rows; writes (on commit) to reps, clients, products, sales, sale_items, holdback_ledger, clawbacks — each tagged with import_batch_id.
+import_batches, import_field_mappings, import_rows; writes (on commit) to reps, clients, products, client_billing_rates, sales (incl. `historical`), sale_items, holdback_ledger. Provenance is one-directional via `import_rows.matched_entity_id`; imported **sales** additionally carry `import_batch_id` (so migrated/historical sales are distinguishable from manual entry, IMP-008). Supported targets: client_report→sales (bulk validation, SALE-007); master_migration→clients / products(+rate) / billing_rates / reps / sales(historical); balance_migration→holdback.
 
 ## 16. Sale Lifecycle State Machine
 
@@ -606,6 +640,7 @@ The authoritative state model for a sale. Transitions not listed are invalid and
 | Paid        | Commission paid; snapshots frozen on items.             | → Clawed Back (post-close cancellation entered).                        |
 | Clawed Back | A flat clawback was applied for a cancelled item.       | Terminal (further items may be clawed back independently).              |
 | Deleted     | Removed before payout; never counts toward any tally.   | Terminal.                                                               |
+| Historical  | Migrated/already-paid sale (set only at import). Reference-only — excluded from the pay pipeline (commission/tier/leaderboard/holdback/clawback); shown only in business aggregations. | Terminal (no transitions in or out). |
 
 > **Key invariants**
 > • A sale never changes pay period after entry — sale_date is fixed.
@@ -617,12 +652,20 @@ The authoritative state model for a sale. Transitions not listed are invalid and
 
 The following behaviors are specified as the most logical interpretation consistent with all decisions to date, and are flagged for Redwave's explicit confirmation. Each is build-ready as written; confirmation only removes risk of a late change.
 
-### 17.1 Holdback Release Timing (COMM-004, PAY-004)
+### 17.1 Holdback Release Timing (COMM-004, PAY-004) — CONFIRMED & BUILT
 
-Proposed rule: the Super Admin sets, in bulk and stickily, the release cycle for the 30% holdback (e.g. “release each period's 30% in the cycle N periods later”, or a chosen target cycle). The setting persists until changed and applies to all holds going forward. The holdback ledger records, per hold, its scheduled release cycle and status.
+The Super Admin sets, once and stickily, the release rule for the 30% holdback in one of two modes:
+**`cycles:N`** (release each period's 30% in the **Nth pay cycle after** the origin) or **`days:N`** (release
+in the **first pay cycle whose payday is ≥ origin payday + N days**). The rule persists until changed; a later
+change affects only **future** holds (already-scheduled/released rows are never re-resolved). The Pay Run reads
+the rule at finalize and records each hold's scheduled release cycle + status on the holdback ledger.
 
-> **Worked example (proposed)**
-> Super Admin sets release to “the next regular cycle after 30 days.” A 30% hold of $993 created from Period A becomes Scheduled for the first cycle ≥ 30 days after Period A's payday, and is paid in that cycle's run unless reduced by a clawback set-off. Changing the setting later affects future holds, not those already released.
+> **Worked example**
+> Super Admin sets `days:30`. A 30% hold of $993 from Period A is Scheduled for the first cycle ≥ 30 days
+> after Period A's payday, and is released in that cycle's run. A pending **clawback sets off** against the
+> due release first (recorded as `clawback_applied`, lowering `amount_released`); only the uncovered remainder
+> deducts from net — so the clawback is recovered exactly once. Release happens inside finalize (atomic/
+> idempotent).
 
 ### 17.2 Greenfield Tally at Period Close (SALE-006)
 
@@ -651,7 +694,7 @@ Each module's requirements trace to the BRD and data model. Summary mapping:
 | 8 Sales & Validation         | BRD §5, §3.2      | sales, sale_items                                                              |
 | 9 Pay Run & Holdback         | BRD §6            | pay_periods, pay_runs, pay_run_lines, holdback_ledger                          |
 | 10 Clawback                  | BRD §6.3          | clawbacks, sale_items                                                          |
-| 11 Expenses                  | BRD §7            | expense_reports, expense_items, expense_km_\*, expense_exports                |
+| 11 Expenses                  | BRD §7            | expense_items (item-first), expense_km_\*, expense_field_configs, expense_exports |
 | 12 Billing                   | BRD §8            | client_statements, client_statement_lines, client_invoices                     |
 | 13 Documents                 | BRD §9.5 (new)    | documents, signature_requests, document_signatures                             |
 | 14 Reporting & Platform      | BRD §9            | sales_targets, notifications, notification_event_settings, chatbot_\*         |

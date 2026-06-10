@@ -3,9 +3,26 @@
  * Every route declares its (hrm, action) permission; the global guard enforces it server-side.
  * Read endpoints pass the AuthUser so the service can redact sensitive PII (hrm:edit gate).
  */
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpStatus,
+  Param,
+  ParseFilePipeBuilder,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  UnprocessableEntityException,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
   ApiCreatedResponse,
   ApiOkResponse,
   ApiOperation,
@@ -15,13 +32,18 @@ import { ApiErrorResponses } from '../../common/errors/api-error-responses.decor
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthUser } from '../../common/rbac/auth-user.type';
+import { UploadedFile as UploadedFileShape } from '../../common/storage/storage.service';
+import { FileUrlResponse } from '../documents/dto/document.response';
 import { RepsService } from './reps.service';
 import { RepDocumentsService } from './rep-documents.service';
 import { RepEquipmentService } from './rep-equipment.service';
-import { CreateRepDto, ListRepsQuery, UpdateRepDto } from './dto/rep.dto';
+import { BulkAssignManagerDto, CreateRepDto, ListRepsQuery, UpdateRepDto } from './dto/rep.dto';
+import { SuccessResponse } from '../../common/dto/success.response';
 import { CreateRepDocumentDto } from './dto/rep-document.dto';
 import { CreateRepEquipmentDto } from './dto/rep-equipment.dto';
-import { RepDocumentResponse, RepEquipmentResponse, RepResponse } from './dto/hrm.response';
+import { RepDocumentResponse, RepEquipmentResponse, RepPageResponse, RepResponse } from './dto/hrm.response';
+
+const MAX_REP_DOC_BYTES = 25 * 1024 * 1024; // 25 MB
 
 @ApiTags('HRM / Reps')
 @ApiBearerAuth()
@@ -39,9 +61,9 @@ export class RepsController {
   @ApiOperation({
     summary: 'List reps',
     description:
-      'Requires hrm:view. Filters: status, fieldManagerId, search. payment_details redacted unless hrm:edit.',
+      'Requires hrm:view. Paginated (page/limit/sort/search) + status/fieldManagerId filters. payment_details redacted unless hrm:edit.',
   })
-  @ApiOkResponse({ type: RepResponse, isArray: true })
+  @ApiOkResponse({ type: RepPageResponse })
   list(@Query() query: ListRepsQuery, @CurrentUser() user: AuthUser) {
     return this.reps.findAll(query, user);
   }
@@ -55,6 +77,17 @@ export class RepsController {
   @ApiCreatedResponse({ type: RepResponse })
   create(@Body() dto: CreateRepDto, @CurrentUser('id') actorId: string) {
     return this.reps.create(dto, actorId);
+  }
+
+  @Post('bulk-assign-manager')
+  @RequirePermission('hrm', 'edit')
+  @ApiOperation({
+    summary: 'Assign / reassign reps to a field manager (bulk)',
+    description: 'Requires hrm:edit. Reassigns the roster the manager-scoped views read. Validates the manager.',
+  })
+  @ApiOkResponse({ type: SuccessResponse })
+  bulkAssignManager(@Body() dto: BulkAssignManagerDto, @CurrentUser('id') actorId: string) {
+    return this.reps.bulkAssignManager(dto, actorId);
   }
 
   @Get(':id')
@@ -99,17 +132,49 @@ export class RepsController {
 
   @Post(':id/documents')
   @RequirePermission('hrm', 'edit')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_REP_DOC_BYTES } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' }, doc_type: { type: 'string' } },
+    },
+  })
   @ApiOperation({
-    summary: 'Attach a document to a rep',
-    description: 'Requires hrm:edit. Stores a storage reference.',
+    summary: 'Attach a document to a rep (upload)',
+    description: 'Requires hrm:edit. Multipart: a PDF/image file + doc_type. Stored to object storage.',
   })
   @ApiCreatedResponse({ type: RepDocumentResponse })
   createDocument(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateRepDocumentDto,
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({ fileType: /^(application\/pdf|image\/(png|jpe?g|webp))$/ })
+        .build({
+          fileIsRequired: true,
+          errorHttpStatusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+          exceptionFactory: () => new UnprocessableEntityException('a PDF or image file is required'),
+        }),
+    )
+    file: UploadedFileShape,
     @CurrentUser('id') actorId: string,
   ) {
-    return this.documents.create(id, dto, actorId);
+    return this.documents.create(id, dto, file, actorId);
+  }
+
+  @Get(':id/documents/:docId/file-url')
+  @RequirePermission('hrm', 'edit')
+  @ApiOperation({
+    summary: 'Get an access-controlled URL for a rep document',
+    description: 'Requires hrm:edit (identity docs are sensitive). Returns a short-TTL signed URL.',
+  })
+  @ApiOkResponse({ type: FileUrlResponse })
+  documentFileUrl(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('docId', ParseUUIDPipe) docId: string,
+  ) {
+    return this.documents.fileUrl(id, docId);
   }
 
   // ── Nested: equipment ───────────────────────────────────────────────────────────────────────

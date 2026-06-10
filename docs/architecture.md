@@ -118,11 +118,14 @@ Representative endpoints per module (not exhaustive; the OpenAPI spec is authori
 
 | **Verb**  | **Path**                   | **Purpose**                      | **Permission** |
 |-----------|----------------------------|----------------------------------|----------------|
-| **POST**  | /v1/auth/login             | Authenticate, return JWT.        | public         |
+| **POST**  | /v1/auth/login             | Authenticate, return JWT (+ must_change_password). | public |
+| **POST**  | /v1/auth/forgot-password   | Request a reset email (non-enumerating). | public  |
+| **POST**  | /v1/auth/reset-password    | Set a new password from a token. | public         |
 | **POST**  | /v1/auth/logout            | Invalidate session.              | any            |
 | **GET**   | /v1/users                  | List users.                      | users:view     |
-| **POST**  | /v1/users                  | Create user, assign roles.       | users:create   |
+| **POST**  | /v1/users                  | Create user / INVITE (omit password → emailed link). | users:create |
 | **PATCH** | /v1/users/{id}             | Edit / deactivate user.          | users:edit     |
+| **POST**  | /v1/users/{id}/reset-password | Trigger reset: link or temp password (admin never sees it). | users:edit |
 | **GET**   | /v1/roles                  | List roles.                      | roles:view     |
 | **POST**  | /v1/roles                  | Create custom role.              | roles:create   |
 | **PATCH** | /v1/roles/{id}/permissions | Set role's module×action grants. | roles:edit     |
@@ -133,6 +136,7 @@ Representative endpoints per module (not exhaustive; the OpenAPI spec is authori
 |-----------|-------------------------|-------------------------------------------|----------------|
 | **GET**   | /v1/reps                | List/filter reps.                         | hrm:view       |
 | **POST**  | /v1/reps                | Create rep (code validated unused).       | hrm:create     |
+| **POST**  | /v1/reps/bulk-assign-manager | Reassign reps to a field manager (bulk). | hrm:edit   |
 | **PATCH** | /v1/reps/{id}           | Edit rep / set field manager / terminate. | hrm:edit       |
 | **POST**  | /v1/reps/{id}/documents | Upload rep document.                      | hrm:edit       |
 | **POST**  | /v1/reps/{id}/equipment | Assign equipment + deposit.               | hrm:edit       |
@@ -200,30 +204,50 @@ Representative endpoints per module (not exhaustive; the OpenAPI spec is authori
 
 ### 6.9 Billing & Statements
 
-| **Verb** | **Path**                    | **Purpose**                             | **Permission** |
-|----------|-----------------------------|-----------------------------------------|----------------|
-| **POST** | /v1/clients/{id}/statements | Generate statement (one line/customer). | billing:create |
-| **GET**  | /v1/statements              | List generated statements.              | billing:view   |
-| **POST** | /v1/clients/{id}/invoices   | Generate one-line commission invoice.   | billing:create |
+Statements/invoices are **gapless-numbered** (`document_sequences`, incremented inside the issue transaction → row-locked, no gaps; global per type, `STMT-00001`/`INV-00001`) and **immutable**: a re-generation CREATES a new numbered `issued` version and marks the prior one `superseded` (metadata only — financial fields frozen). Priced SOLELY from `client_billing_rates` (#3); **CAD, no GST**. Files (Excel/PDF/QuickBooks-CSV) render ON DEMAND from the frozen record (`download` streams; `export` also records a `billing_exports` artifact). One **central rounding policy** (`common/money`, 2dp HALF_UP at presentation).
+
+| **Verb** | **Path**                            | **Purpose**                                            | **Permission** |
+|----------|-------------------------------------|--------------------------------------------------------|----------------|
+| **POST** | /v1/clients/{id}/statements/preview | Preview the one-line-per-customer draft (not persisted, no number). | billing:create |
+| **POST** | /v1/clients/{id}/statements         | Issue a statement (new gapless-numbered immutable version). | billing:create |
+| **POST** | /v1/clients/{id}/invoices           | Issue a one-line commission invoice.                   | billing:create |
+| **GET**  | /v1/statements, /v1/invoices        | List every version (newest number first).              | billing:view   |
+| **GET**  | /v1/{statements,invoices}/{id}/download | Stream the rendered file (statement `?format=excel\|quickbooks`). | billing:view |
+| **POST** | /v1/{statements,invoices}/{id}/export   | Record a billing_exports artifact (+ upload) and stream it. | billing:export |
+| **GET**  | /v1/reconciliation/statements       | Tie-out: statement total = Σ lines = Σ live re-priced sales. | billing:view   |
+| **GET**  | /v1/reconciliation/pay-runs/{id}    | Tie-out: each line net = components; run total = Σ net. | payrun:view    |
 
 ### 6.10 Documents & E-Signature
 
-| **Verb** | **Path**                              | **Purpose**                             | **Permission**   |
-|----------|---------------------------------------|-----------------------------------------|------------------|
-| **POST** | /v1/documents                         | Upload a document.                      | documents:create |
-| **POST** | /v1/documents/{id}/signature-requests | Request signature (1..many recipients). | documents:create |
-| **POST** | /v1/signature-requests/{id}/sign      | Sign or decline; stores signed copy.    | any (recipient)  |
-| **GET**  | /v1/documents/{id}                    | Status + per-signer audit.              | documents:view   |
+| **Verb**   | **Path**                                       | **Purpose**                                           | **Permission**   |
+|------------|------------------------------------------------|-------------------------------------------------------|------------------|
+| **POST**   | /v1/documents                                  | Upload a PDF (multipart). Stores the original (never mutated). | documents:create |
+| **GET**    | /v1/documents/{id}                             | Status + per-signer audit + placed fields.            | documents:view   |
+| **GET**    | /v1/documents/{id}/file-url                    | Access-controlled short-TTL signed URL for the original. | documents:view   |
+| **GET**    | /v1/documents/{id}/completed-file-url          | Signed URL for the final all-signatures copy (404 until complete). | documents:view   |
+| **POST**   | /v1/documents/{id}/signature-requests          | Request signature (1..many recipients) + place fields. | documents:create |
+| **POST**   | /v1/signature-requests/{id}/sign               | Sign (server stamps a per-signer copy) or decline.    | any (recipient)  |
+| **POST**   | /v1/signature-requests/{id}/sign-upload        | Complete by uploading an externally-signed PDF (method=uploaded). | any (recipient)  |
+| **POST**   | /v1/signature-requests/{id}/cancel             | Cancel a pending request.                             | requester/owner/admin |
+| **GET**    | /v1/signatures/{id}/file-url                   | Signed URL for a per-signer signed copy.              | any (visible)    |
+| **GET/POST/PATCH/DELETE** | /v1/account/signatures[...]    | Manage own saved reusable signatures (+ /{id}/file-url). | authenticated (own-scoped) |
+
+**Signing is row-level, not a module permission** ("any (recipient)"): the service gates on the caller being the asked pending recipient (else 403 / 409). File-url endpoints re-check visibility and mint a short-TTL signed URL on each access — the object path is never exposed and bytes are never public. Saved-signature endpoints carry no module permission; they are own-scoped server-side. PDF-only at upload (Word→PDF conversion is deferred).
 
 ### 6.11 Data Import & Integration
 
-| **Verb** | **Path**                   | **Purpose**                                 | **Permission** |
-|----------|----------------------------|---------------------------------------------|----------------|
-| **POST** | /v1/imports                | Upload file + mapping; create staged batch. | import:create  |
-| **GET**  | /v1/imports/{id}           | Preview staged rows + match status.         | import:view    |
-| **POST** | /v1/imports/{id}/reconcile | Resolve unmatched rows.                     | import:edit    |
-| **POST** | /v1/imports/{id}/commit    | Commit (idempotent; reconcile-gated).       | import:approve |
-| **GET**  | /v1/imports                | Import/migration history.                   | import:view    |
+| **Verb**   | **Path**                          | **Purpose**                                            | **Permission** |
+|------------|-----------------------------------|--------------------------------------------------------|----------------|
+| **POST**   | /v1/imports                       | **Multipart**: upload an Excel/CSV file (+ metadata); parse + clean + auto-map + classify + stage. | import:create  |
+| **GET**    | /v1/imports                       | Import/migration history.                              | import:view    |
+| **GET**    | /v1/imports/{id}                  | Preview staged rows + match status.                   | import:view    |
+| **GET**    | /v1/imports/{id}/error-report     | CSV of the unmatched/duplicate/error rows.            | import:view    |
+| **POST**   | /v1/imports/{id}/remap            | Re-apply an adjusted mapping to the stored rows.      | import:edit    |
+| **POST**   | /v1/imports/{id}/reconcile        | Resolve unmatched rows (match/edit/ignore).          | import:edit    |
+| **POST**   | /v1/imports/{id}/commit           | Commit (atomic + idempotent; reconcile-gated).       | import:approve |
+| **GET/POST/PATCH/DELETE** | /v1/import-mappings[...] | Reusable saved column→field mappings (IMP-002).      | import:view/create/edit |
+
+Supported targets: client_report→sales (bulk validation), master_migration→clients / products / billing_rates / reps / sales (historical), balance_migration→holdback. No new permission — mapping CRUD + remap + error-report ride the existing import:{view,create,edit}.
 
 ### 6.12 Reporting & Platform
 
@@ -231,10 +255,17 @@ Representative endpoints per module (not exhaustive; the OpenAPI spec is authori
 |-----------|---------------------------|------------------------------|-----------------------|
 | **GET**   | /v1/dashboards/rep        | Rep's own dashboard data.    | self                  |
 | **GET**   | /v1/dashboards/manager    | Roster-scoped manager data.  | reports:view (roster) |
-| **GET**   | /v1/dashboards/business   | Company financials.          | reports:business (SA) |
+| **GET**   | /v1/dashboards/business   | Company financials (period). | reports:business (SA) |
+| **GET**   | /v1/dashboards/business/trends | Cross-period trend series. | reports:business (SA) |
+| **GET**   | /v1/dashboards/admin      | Operational queue counts.    | reports:view (Admin/SA) |
 | **GET**   | /v1/leaderboard           | Ranked counts (no earnings). | reports:view          |
+| **GET/PUT** | /v1/sales-targets       | Rep activation targets (read scoped; set requires hrm:edit). | self/roster · hrm:edit (set) |
 | **GET**   | /v1/notifications         | User's notifications.        | self                  |
 | **PATCH** | /v1/notification-settings | Event×channel config.        | settings:edit (SA)    |
+
+`reports:business` is an off-grid `PermissionAction` (Super Admin only) — the business/executive dashboard and
+the trends endpoint. The trends endpoint is a **bounded in-app aggregation** (≤24 periods) over the Batch-1
+`sales` indexes; materialized views remain a deferred performance option (§12), not a source of truth.
 
 ## 7. RBAC Enforcement Model
 
@@ -300,9 +331,9 @@ A pay run is the most sensitive transaction in the system and is built to be ato
 
 | **Concern**        | **Rule**                                                                                                                            |
 |--------------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| **Authentication** | JWT bearer tokens; short-lived access token with refresh; password hashing (bcrypt/argon2).                                         |
-| **Authorization**  | Central RBAC guard (§7) on every endpoint; scope applied in queries.                                                                |
-| **Audit logging**  | An interceptor writes create/update/delete/approve on financial & config entities to audit_log with actor, timestamp, before/after. |
+| **Authentication** | JWT bearer **access** token (in-memory, carries `sid`); the **refresh** token is an opaque, rotating, DB-backed session in an **httpOnly cookie** (`refresh_sessions`, reuse-detected); **double-submit CSRF**; optional **TOTP MFA** (policy-driven). bcrypt hashing. Full posture: **`docs/security.md`**. |
+| **Authorization**  | Central RBAC guard (§7) on every endpoint; scope applied in queries. New module **`audit`** (`audit:view`/`export`, Super Admin only).                                                                |
+| **Audit logging**  | Service-layer `AuditService.log` writes create/update/delete/approve on financial & config entities + access denials to audit_log with actor, timestamp, before/after, **and IP** (request-context). **Append-only** — no update/delete path. Read via `GET /v1/audit-logs` (`audit:view`); same endpoint by entity powers the per-record History tab. |
 | **File storage**   | Object storage for receipts, signed documents, exports, and import files; only references in Postgres; access-controlled URLs.      |
 | **Notifications**  | In-app always; email dispatched via a background job only when the event's channel setting enables it (rate_change off by default). |
 | **Validation**     | Request bodies validated against the contract schema at the boundary; business-rule validation in the service layer.                |

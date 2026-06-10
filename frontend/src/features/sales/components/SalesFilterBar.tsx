@@ -4,12 +4,35 @@
  * gated on the relevant read permission (clients:view / hrm:view) and degrade gracefully when absent.
  * Active filters show as removable chips. Tokens only.
  */
+import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { Input, Select } from '../../../components/ui';
+import { DatePicker, Input, Select } from '../../../components/ui';
 import { useCan } from '../../../auth/useCan';
 import { useClients, useReps } from '../api/useSales';
 import type { SaleStatus, SalesFilters } from '../sales.types';
 import styles from './SalesFilterBar.module.css';
+
+/** Debounced free-text search — commits after the user pauses typing (server-side search). */
+function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => setLocal(value), [value]); // keep in sync when the chip clears it
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (local !== value) onChange(local);
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [local]);
+  return (
+    <Input
+      type="search"
+      placeholder="Search Sale ID or customer…"
+      aria-label="Search sales"
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+    />
+  );
+}
 
 const ALL = '__all__';
 const STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -41,6 +64,7 @@ export function SalesFilterBar({ filters, onChange }: SalesFilterBarProps) {
   };
 
   const chips: { label: string; clear: () => void }[] = [];
+  if (filters.search) chips.push({ label: `Search: ${filters.search}`, clear: () => onChange({ search: undefined }) });
   if (filters.status) chips.push({ label: `Status: ${filters.status}`, clear: () => onChange({ status: undefined }) });
   if (filters.client_id) chips.push({ label: `Client: ${clientName(filters.client_id)}`, clear: () => onChange({ client_id: undefined }) });
   if (filters.rep_id) chips.push({ label: `Rep: ${repName(filters.rep_id)}`, clear: () => onChange({ rep_id: undefined }) });
@@ -50,6 +74,9 @@ export function SalesFilterBar({ filters, onChange }: SalesFilterBarProps) {
   return (
     <div className={styles.bar}>
       <div className={styles.controls}>
+        <div className={styles.control}>
+          <SearchBox value={filters.search ?? ''} onChange={(v) => onChange({ search: v || undefined })} />
+        </div>
         <div className={styles.control}>
           <Select
             aria-label="Status"
@@ -89,20 +116,22 @@ export function SalesFilterBar({ filters, onChange }: SalesFilterBarProps) {
           </div>
         )}
 
-        <Input
-          type="date"
-          aria-label="Sale date from"
-          value={filters.date_from ?? ''}
-          onChange={(e) => onChange({ date_from: e.target.value || undefined })}
-          className={styles.date}
-        />
-        <Input
-          type="date"
-          aria-label="Sale date to"
-          value={filters.date_to ?? ''}
-          onChange={(e) => onChange({ date_to: e.target.value || undefined })}
-          className={styles.date}
-        />
+        <div className={styles.date}>
+          <DatePicker
+            aria-label="Sale date from"
+            placeholder="From date"
+            value={filters.date_from ?? ''}
+            onChange={(v) => onChange({ date_from: v || undefined })}
+          />
+        </div>
+        <div className={styles.date}>
+          <DatePicker
+            aria-label="Sale date to"
+            placeholder="To date"
+            value={filters.date_to ?? ''}
+            onChange={(v) => onChange({ date_to: v || undefined })}
+          />
+        </div>
       </div>
 
       {chips.length > 0 && (

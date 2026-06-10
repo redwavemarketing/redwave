@@ -20,13 +20,15 @@ describe('ExpensePayrunProvider.getApprovedExpenseTotal (Pay Run seam)', () => {
     expect(total.toFixed(2)).toBe('74.01');
   });
 
-  it('queries only APPROVED reports for that rep + period (scope is in the query)', async () => {
+  // ITEM-FIRST + EXP-009: the sum is scoped on the ITEM's own pay_period_id (derived from its
+  // expense_date), NOT through the report — so an approved item pays in the cycle of its date.
+  it('queries only APPROVED items for that rep + period at the ITEM level (no report join)', async () => {
     const { provider, prisma } = make();
     prisma.expenseItem.findMany.mockResolvedValue([]);
     await provider.getApprovedExpenseTotal('rep-9', 'P7');
-    const where = (prisma.expenseItem.findMany.mock.calls[0][0] as { where: { expense_report: object } })
-      .where;
-    expect(where.expense_report).toEqual({ rep_id: 'rep-9', pay_period_id: 'P7', status: 'approved' });
+    const where = (prisma.expenseItem.findMany.mock.calls[0][0] as { where: Record<string, unknown> }).where;
+    expect(where).toEqual({ rep_id: 'rep-9', pay_period_id: 'P7', status: 'approved' });
+    expect(where).not.toHaveProperty('expense_report');
   });
 
   it('no approved items → 0', async () => {

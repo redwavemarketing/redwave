@@ -1,15 +1,18 @@
 /**
- * ExpensesService — weekly expense reports: submit, list, detail, edit (gated), and the
- * approval workflow. Owns expense_reports / expense_items / expense_km_logs / expense_km_stops.
+ * ExpensesService — ITEM-FIRST expenses: create one/several items, list (paginated + scoped), detail,
+ * edit (gated), and the per-item approval workflow (single + bulk). Owns expense_items / expense_km_logs
+ * / expense_km_stops. The legacy expense_reports table is retained only as optional grouping/history.
  *
- * Money/distance are exact decimals, never float (#1). `week_start` governs the pay period the
- * report's APPROVED total is paid in — derived once at submit and stored (read by the Pay Run seam).
- * Approval is at the REPORT level; edit-rights are gated (pre-approval → expenses:edit; after
- * approval → Super Admin only). Meal eligibility is the approver's judgement, not auto-enforced.
- * — SRS §11 (EXP-001..008)
+ * The expense ITEM is the atomic unit (item-first): each carries its own submitter, status, approver,
+ * and a pay_period DERIVED from its expense_date — so an approved item is paid in the cycle of its date
+ * (same-cycle payout, EXP-009), read by the Pay Run seam. Money/distance are exact decimals, never float
+ * (#1); the km amount is COMPUTED server-side (never trusted from the client). Approval is per ITEM;
+ * edit-rights are gated (pre-approval → expenses:edit; after approval → Super Admin only, EXP-007). Meal
+ * eligibility is the approver's judgement, not auto-enforced. — SRS §11 (EXP-001..011)
  */
 import {
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -19,18 +22,41 @@ import { Decimal } from 'decimal.js';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { ScopeService } from '../../common/scope/scope.service';
+import { NOTIFICATION_EMITTER, NotificationEmitter } from '../../common/notifications/notification-emitter';
 import { AuthUser } from '../../common/rbac/auth-user.type';
-import { CreateReportDto, ExpenseItemInput } from './dto/create-report.dto';
-import { UpdateReportDto } from './dto/update-report.dto';
+import { buildPage, resolveOrderBy, toSkipTake } from '../../common/pagination/paginate';
+import { MapsService } from './maps.service';
+import { CreateExpenseItemsDto } from './dto/create-items.dto';
+import { ExpenseItemInput } from './dto/expense-item.input';
+import { UpdateExpenseItemDto } from './dto/update-item.dto';
 import { ReviewDto, ReviewDecision } from './dto/review.dto';
-import { ListReportsQuery } from './dto/list-reports.query';
+import { BulkReviewDto } from './dto/bulk-review.dto';
+import { ListExpenseItemsQuery } from './dto/list-items.query';
 import { computeKm, DEFAULT_RATE_PER_KM, TripType } from './km.logic';
 
 const dateOnly = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
+const isoDate = (d: Date): string => d.toISOString().slice(0, 10);
 
-const REPORT_INCLUDE = {
-  expense_items: { include: { km_log: { include: { stops: { orderBy: { stop_order: 'asc' } } } } } },
-} as const satisfies Prisma.ExpenseReportInclude;
+const ITEM_INCLUDE = {
+  km_log: { include: { stops: { orderBy: { stop_order: 'asc' } } } },
+} as const satisfies Prisma.ExpenseItemInclude;
+
+/** Sortable columns for the item list (the orderBy-injection allowlist). */
+const SORTABLE = ['expense_date', 'amount', 'status', 'category', 'created_at'] as const;
+
+/** The content (non-lifecycle) of one item, ready to write. km_log is nested-created for km items. */
+interface ItemContent {
+  category: ExpenseCategory;
+  client_id: string | null;
+  expense_date: Date;
+  amount: string;
+  description: string;
+  receipt_url: string | null;
+  pay_period_id: string | null;
+  km_log?: { create: Prisma.ExpenseKmLogUncheckedCreateWithoutExpense_itemInput };
+}
+
+type ConfigMap = Map<string, { requires_receipt: boolean; is_active: boolean }>;
 
 @Injectable()
 export class ExpensesService {
@@ -38,185 +64,276 @@ export class ExpensesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: ScopeService,
+    private readonly maps: MapsService,
+    @Inject(NOTIFICATION_EMITTER) private readonly emitter: NotificationEmitter,
   ) {}
 
-  // ── Submit ──────────────────────────────────────────────────────────────────────
-  async submit(dto: CreateReportDto, user: AuthUser) {
+  // ── Create (one or several items) ─────────────────────────────────────────────────
+  async createItems(dto: CreateExpenseItemsDto, user: AuthUser) {
     const repId = dto.rep_id ?? user.repId ?? null;
-    const weekStart = dateOnly(dto.week_start);
-
-    // `week_start` governs the pay period (#7). Derived once and stored; null if no period covers it.
-    const period = await this.prisma.payPeriod.findFirst({
-      where: { start_date: { lte: weekStart }, end_date: { gte: weekStart } },
-      select: { id: true },
-    });
-
-    this.assertOneKmLogPerDay(dto.items);
     const configs = await this.loadConfigs();
-    const itemCreates = dto.items.map((item) => this.buildItemCreate(item, configs));
 
-    const report = await this.prisma.expenseReport.create({
-      data: {
-        submitted_by: user.id,
-        rep_id: repId,
-        week_start: weekStart,
-        week_end: dateOnly(dto.week_end),
-        status: 'submitted',
-        pay_period_id: period?.id ?? null,
-        expense_items: { create: itemCreates },
-      },
-      include: REPORT_INCLUDE,
-    });
+    // KM dedup: one km item per (rep, expense_date) — within the batch and against existing items.
+    this.assertNoDupKmWithinBatch(dto.items);
+    await this.assertNoExistingKmForDays(repId, dto.items);
+
+    // Resolve each item's pay period from ITS OWN expense_date (EXP-009), cached per distinct date.
+    const periodCache = new Map<string, string | null>();
+    const contents: ItemContent[] = [];
+    for (const item of dto.items) {
+      const payPeriodId = await this.resolvePayPeriodId(item.expense_date, periodCache);
+      contents.push(await this.buildItemContent(item, configs, payPeriodId));
+    }
+
+    const created = await this.prisma.$transaction((tx) =>
+      Promise.all(
+        contents.map((content) =>
+          tx.expenseItem.create({
+            data: { ...content, submitted_by: user.id, rep_id: repId, status: 'submitted' },
+            include: ITEM_INCLUDE,
+          }),
+        ),
+      ),
+    );
 
     await this.audit.log({
       actorId: user.id,
-      entityType: 'expense_reports',
-      entityId: report.id,
+      entityType: 'expense_items',
+      entityId: created[0].id,
       action: 'create',
       after: {
         rep_id: repId,
-        week_start: dto.week_start,
         status: 'submitted',
-        pay_period_id: report.pay_period_id,
-        item_count: report.expense_items.length,
+        item_ids: created.map((i) => i.id),
+        count: created.length,
       },
     });
-    return report;
+
+    // Best-effort: notify the approver — the rep's field manager, else Admins/Super Admins. — expense_submitted
+    const base = {
+      eventType: 'expense_submitted' as const,
+      title: `New expense items from ${user.full_name}`,
+      body: `${created.length} expense item(s) need your review.`,
+      relatedEntityType: 'expense_items',
+      relatedEntityId: created[0].id,
+      variables: { submitter_name: user.full_name, count: String(created.length) },
+    };
+    const manager = repId
+      ? await this.prisma.rep.findUnique({ where: { id: repId }, select: { field_manager_id: true } })
+      : null;
+    if (manager?.field_manager_id) {
+      await this.emitter.emitMany([manager.field_manager_id], base);
+    } else {
+      await this.emitter.emitRole('Admin', base);
+      await this.emitter.emitRole('Super Admin', base);
+    }
+    return created;
   }
 
   // ── List / detail ───────────────────────────────────────────────────────────────
-  async list(query: ListReportsQuery, user: AuthUser) {
-    const and: Prisma.ExpenseReportWhereInput[] = [await this.scopeWhere(user)];
+  async list(query: ListExpenseItemsQuery, user: AuthUser) {
+    const and: Prisma.ExpenseItemWhereInput[] = [await this.scopeWhere(user)];
     if (query.status) and.push({ status: query.status });
+    if (query.category) and.push({ category: query.category });
     if (query.rep_id) and.push({ rep_id: query.rep_id });
+    if (query.client_id) and.push({ client_id: query.client_id });
     if (query.pay_period_id) and.push({ pay_period_id: query.pay_period_id });
-    if (query.client_id) and.push({ expense_items: { some: { client_id: query.client_id } } });
-    if (query.from) and.push({ week_start: { gte: dateOnly(query.from) } });
-    if (query.to) and.push({ week_start: { lte: dateOnly(query.to) } });
+    if (query.from) and.push({ expense_date: { gte: dateOnly(query.from) } });
+    if (query.to) and.push({ expense_date: { lte: dateOnly(query.to) } });
+    if (query.search) and.push({ description: { contains: query.search, mode: 'insensitive' } });
 
-    return this.prisma.expenseReport.findMany({
-      where: { AND: and },
-      include: REPORT_INCLUDE,
-      orderBy: { created_at: 'desc' },
-    });
+    const where: Prisma.ExpenseItemWhereInput = { AND: and };
+    const { skip, take, page, limit } = toSkipTake(query);
+    const orderBy = resolveOrderBy(query.sort, SORTABLE, { expense_date: 'desc' });
+    const [data, total] = await Promise.all([
+      this.prisma.expenseItem.findMany({ where, include: ITEM_INCLUDE, orderBy, skip, take }),
+      this.prisma.expenseItem.count({ where }),
+    ]);
+    return buildPage(data, total, page, limit);
   }
 
   async findOne(id: string, user: AuthUser) {
-    const report = await this.prisma.expenseReport.findFirst({
+    const item = await this.prisma.expenseItem.findFirst({
       where: { AND: [{ id }, await this.scopeWhere(user)] },
-      include: REPORT_INCLUDE,
+      include: ITEM_INCLUDE,
     });
-    if (!report) {
-      throw new NotFoundException('Expense report not found');
+    if (!item) {
+      throw new NotFoundException('Expense item not found');
     }
-    return report;
+    return item;
   }
 
-  // ── Edit (gated) ──────────────────────────────────────────────────────────────────
-  async edit(id: string, dto: UpdateReportDto, user: AuthUser) {
-    const report = await this.findOne(id, user); // also enforces scope
+  // ── Edit (gated, EXP-007) ──────────────────────────────────────────────────────────
+  async editItem(id: string, dto: UpdateExpenseItemDto, user: AuthUser) {
+    const item = await this.findOne(id, user); // also enforces scope
 
-    // Edit-rights gating (EXP-007): once approved, only a Super Admin may edit; otherwise the
-    // controller's expenses:edit permission suffices.
-    if (report.status === 'approved' && !user.isSuperAdmin) {
+    // Once approved, only a Super Admin may edit; otherwise the controller's expenses:edit suffices.
+    if (item.status === 'approved' && !user.isSuperAdmin) {
       await this.audit.log({
         actorId: user.id,
-        entityType: 'expense_reports',
+        entityType: 'expense_items',
         entityId: id,
         action: 'access_denied',
-        after: { reason: 'edit of an approved report requires Super Admin', status: report.status },
+        after: { reason: 'edit of an approved item requires Super Admin', status: item.status },
       });
-      throw new ForbiddenException('an approved report can only be edited by a Super Admin');
+      throw new ForbiddenException('an approved expense item can only be edited by a Super Admin');
     }
 
-    if (dto.items) this.assertOneKmLogPerDay(dto.items);
-    const configs = dto.items ? await this.loadConfigs() : null;
-    const itemCreates = dto.items ? dto.items.map((i) => this.buildItemCreate(i, configs!)) : null;
+    const configs = await this.loadConfigs();
+    if (dto.category === ExpenseCategory.km) {
+      await this.assertNoExistingKmForDays(item.rep_id, [dto], id);
+    }
+    const periodCache = new Map<string, string | null>();
+    const payPeriodId = await this.resolvePayPeriodId(dto.expense_date, periodCache);
+    const content = await this.buildItemContent(dto, configs, payPeriodId);
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      if (itemCreates) {
-        // Items replace the report's lines wholesale (km logs/stops re-derived).
-        const existing = await tx.expenseItem.findMany({
-          where: { expense_report_id: id },
-          select: { id: true },
-        });
-        const itemIds = existing.map((i) => i.id);
-        const logs = await tx.expenseKmLog.findMany({
-          where: { expense_item_id: { in: itemIds } },
-          select: { id: true },
-        });
-        const logIds = logs.map((l) => l.id);
-        await tx.expenseKmStop.deleteMany({ where: { km_log_id: { in: logIds } } });
-        await tx.expenseKmLog.deleteMany({ where: { id: { in: logIds } } });
-        await tx.expenseItem.deleteMany({ where: { expense_report_id: id } });
-        for (const itemData of itemCreates) {
-          await tx.expenseItem.create({
-            data: { ...itemData, expense_report: { connect: { id } } },
-          });
-        }
+      // Re-derive the km log/stops wholesale (delete old, create new) so an edit can switch category.
+      const oldLog = await tx.expenseKmLog.findUnique({
+        where: { expense_item_id: id },
+        select: { id: true },
+      });
+      if (oldLog) {
+        await tx.expenseKmStop.deleteMany({ where: { km_log_id: oldLog.id } });
+        await tx.expenseKmLog.delete({ where: { id: oldLog.id } });
       }
-      return tx.expenseReport.update({
+      return tx.expenseItem.update({
         where: { id },
         data: {
-          ...(dto.week_start ? { week_start: dateOnly(dto.week_start) } : {}),
-          ...(dto.week_end ? { week_end: dateOnly(dto.week_end) } : {}),
+          category: content.category,
+          client_id: content.client_id,
+          expense_date: content.expense_date,
+          amount: content.amount,
+          description: content.description,
+          receipt_url: content.receipt_url,
+          pay_period_id: content.pay_period_id,
+          ...(content.km_log ? { km_log: content.km_log } : {}),
         },
-        include: REPORT_INCLUDE,
+        include: ITEM_INCLUDE,
       });
     });
 
     await this.audit.log({
       actorId: user.id,
-      entityType: 'expense_reports',
+      entityType: 'expense_items',
       entityId: id,
       action: 'edit',
-      before: { status: report.status, item_count: report.expense_items.length },
-      after: { item_count: updated.expense_items.length },
+      before: { status: item.status, category: item.category, amount: item.amount.toString() },
+      after: { category: updated.category, amount: updated.amount.toString() },
     });
     return updated;
   }
 
-  // ── Approval workflow ──────────────────────────────────────────────────────────────
-  async review(id: string, dto: ReviewDto, user: AuthUser) {
-    const report = await this.findOne(id, user);
-    // Only a pending report (submitted or sent_back) can be acted on. — SRS §11 state machine
-    if (report.status !== 'submitted' && report.status !== 'sent_back') {
-      throw new UnprocessableEntityException(
-        `cannot review a report in status '${report.status}'`,
-      );
+  // ── Delete (draft/sent_back, own) ─────────────────────────────────────────────────
+  async deleteItem(id: string, user: AuthUser) {
+    const item = await this.findOne(id, user);
+    // Only a not-yet-approved item may be removed; approved items are preserved (ledger). — EXP-007
+    if (item.status === 'approved') {
+      throw new UnprocessableEntityException('an approved expense item cannot be deleted');
     }
+    await this.prisma.$transaction(async (tx) => {
+      const log = await tx.expenseKmLog.findUnique({ where: { expense_item_id: id }, select: { id: true } });
+      if (log) {
+        await tx.expenseKmStop.deleteMany({ where: { km_log_id: log.id } });
+        await tx.expenseKmLog.delete({ where: { id: log.id } });
+      }
+      await tx.expenseItem.delete({ where: { id } });
+    });
+    await this.audit.log({
+      actorId: user.id,
+      entityType: 'expense_items',
+      entityId: id,
+      action: 'delete',
+      before: { status: item.status, category: item.category },
+    });
+    return { id, deleted: true };
+  }
 
+  // ── Approval workflow (single) ─────────────────────────────────────────────────────
+  async review(id: string, dto: ReviewDto, user: AuthUser) {
+    const item = await this.findOne(id, user);
+    const updated = await this.transitionOne(item, dto.decision, dto.note ?? null, user);
+    if (!updated) {
+      throw new UnprocessableEntityException(`cannot review an item in status '${item.status}'`);
+    }
+    return updated;
+  }
+
+  // ── Approval workflow (bulk) ───────────────────────────────────────────────────────
+  async bulkReview(dto: BulkReviewDto, user: AuthUser) {
+    const scopeWhere = await this.scopeWhere(user);
+    const items = await this.prisma.expenseItem.findMany({
+      where: { AND: [{ id: { in: dto.ids } }, scopeWhere] },
+      include: ITEM_INCLUDE,
+    });
+    let reviewed = 0;
+    for (const item of items) {
+      const updated = await this.transitionOne(item, dto.decision, dto.note ?? null, user);
+      if (updated) reviewed += 1;
+    }
+    return { reviewed, skipped: dto.ids.length - reviewed };
+  }
+
+  /**
+   * Transition one item per the decision. Returns the updated row, or null when the item is not in a
+   * reviewable status (submitted | sent_back) so the caller can skip/raise. Sets approved_by/at on
+   * approve; clears them on reject/send_back. — SRS §11 state machine
+   */
+  private async transitionOne(
+    item: { id: string; status: string; submitted_by: string; expense_date: Date; pay_period_id: string | null },
+    decision: ReviewDecision,
+    note: string | null,
+    user: AuthUser,
+  ) {
+    if (item.status !== 'submitted' && item.status !== 'sent_back') {
+      return null;
+    }
     const nextStatus =
-      dto.decision === ReviewDecision.approve
+      decision === ReviewDecision.approve
         ? 'approved'
-        : dto.decision === ReviewDecision.reject
+        : decision === ReviewDecision.reject
           ? 'rejected'
           : 'sent_back';
 
-    const updated = await this.prisma.expenseReport.update({
-      where: { id },
+    const updated = await this.prisma.expenseItem.update({
+      where: { id: item.id },
       data: {
         status: nextStatus,
-        approved_by: dto.decision === ReviewDecision.approve ? user.id : null,
-        approved_at: dto.decision === ReviewDecision.approve ? new Date() : null,
+        approved_by: decision === ReviewDecision.approve ? user.id : null,
+        approved_at: decision === ReviewDecision.approve ? new Date() : null,
       },
-      include: REPORT_INCLUDE,
+      include: ITEM_INCLUDE,
     });
 
     await this.audit.log({
       actorId: user.id,
-      entityType: 'expense_reports',
-      entityId: id,
+      entityType: 'expense_items',
+      entityId: item.id,
       action: 'approve',
-      before: { status: report.status },
-      after: { status: nextStatus, decision: dto.decision, note: dto.note ?? null },
+      before: { status: item.status },
+      after: { status: nextStatus, decision, note },
+    });
+
+    // Best-effort: notify the submitter of the decision. — expense_approved / _rejected / _sent_back
+    const when = isoDate(item.expense_date);
+    const event =
+      nextStatus === 'approved'
+        ? { eventType: 'expense_approved', title: 'Expense item approved', body: `Your expense item for ${when} was approved.` }
+        : nextStatus === 'rejected'
+          ? { eventType: 'expense_rejected', title: 'Expense item rejected', body: `Your expense item for ${when} was rejected. ${note ?? ''}` }
+          : { eventType: 'expense_sent_back', title: 'Expense item needs changes', body: `Your expense item for ${when} was sent back. ${note ?? ''}` };
+    await this.emitter.emitMany([item.submitted_by], {
+      ...event,
+      relatedEntityType: 'expense_items',
+      relatedEntityId: item.id,
+      variables: { expense_date: when, note: note ?? '', reviewer_name: user.full_name },
     });
     return updated;
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────────
-  /** One mileage claim per day per report (EXP-004). Duplicate km dates → 422. */
-  private assertOneKmLogPerDay(items: ExpenseItemInput[]): void {
+  /** Within one batch: one mileage claim per day (duplicate km dates → 422). — EXP-004 */
+  private assertNoDupKmWithinBatch(items: ExpenseItemInput[]): void {
     const seen = new Set<string>();
     for (const item of items) {
       if (item.category !== ExpenseCategory.km) continue;
@@ -229,32 +346,60 @@ export class ExpensesService {
     }
   }
 
-  /** Build one ExpenseItem create payload, validating receipt/km rules. Throws 422 on violation. */
-  private buildItemCreate(
+  /** Against existing items: one km item per (rep, expense_date), ignoring rejected items. — EXP-004 */
+  private async assertNoExistingKmForDays(
+    repId: string | null,
+    items: ExpenseItemInput[],
+    excludeItemId?: string,
+  ): Promise<void> {
+    const kmDates = items.filter((i) => i.category === ExpenseCategory.km).map((i) => dateOnly(i.expense_date));
+    if (kmDates.length === 0) return;
+    const clash = await this.prisma.expenseItem.findFirst({
+      where: {
+        category: ExpenseCategory.km,
+        rep_id: repId,
+        expense_date: { in: kmDates },
+        status: { not: 'rejected' },
+        ...(excludeItemId ? { id: { not: excludeItemId } } : {}),
+      },
+      select: { expense_date: true },
+    });
+    if (clash) {
+      throw new UnprocessableEntityException(
+        `a km log already exists for ${isoDate(clash.expense_date)} (one per day per rep)`,
+      );
+    }
+  }
+
+  /** Build one item's CONTENT (validates receipt/km rules); throws 422 on violation. — EXP-002..004 */
+  private async buildItemContent(
     item: ExpenseItemInput,
-    configs: Map<string, { requires_receipt: boolean; is_active: boolean }>,
-  ): Prisma.ExpenseItemCreateWithoutExpense_reportInput {
+    configs: ConfigMap,
+    payPeriodId: string | null,
+  ): Promise<ItemContent> {
     if (item.category === ExpenseCategory.km) {
       // km item: a km log is required; amount is COMPUTED (never trusted from the client). — EXP-004
       if (!item.km) {
         throw new UnprocessableEntityException('a km item requires a km log');
       }
       const tripType = item.km.trip_type as TripType;
-      const { deductionKm, billableKm, computedAmount } = computeKm(
-        new Decimal(item.km.total_km),
-        tripType,
-      );
+      // Distance is AUTHORITATIVE server-side: re-derive from the stops via Maps when configured,
+      // else fall back to the client total_km (no-geocoder mode). The amount is always computed here.
+      const routeKm = await this.maps.routeDistanceKm(item.km.stops);
+      const totalKm = routeKm ?? new Decimal(item.km.total_km);
+      const { deductionKm, billableKm, computedAmount } = computeKm(totalKm, tripType);
       return {
         category: ExpenseCategory.km,
-        ...(item.client_id ? { client: { connect: { id: item.client_id } } } : {}),
+        client_id: item.client_id ?? null,
         expense_date: dateOnly(item.expense_date),
         amount: computedAmount.toFixed(2),
         description: item.description,
         receipt_url: null, // km never requires a receipt
+        pay_period_id: payPeriodId,
         km_log: {
           create: {
             trip_type: item.km.trip_type,
-            total_km: item.km.total_km,
+            total_km: totalKm.toFixed(2), // the server-derived (or fallback) authoritative distance
             deduction_km: deductionKm.toString(),
             billable_km: billableKm.toString(),
             rate_per_km: DEFAULT_RATE_PER_KM.toString(),
@@ -288,25 +433,36 @@ export class ExpensesService {
     }
     return {
       category: item.category,
-      ...(item.client_id ? { client: { connect: { id: item.client_id } } } : {}),
+      client_id: item.client_id ?? null,
       expense_date: dateOnly(item.expense_date),
       amount: item.amount,
       description: item.description,
       receipt_url: item.receipt_url ?? null,
+      pay_period_id: payPeriodId,
     };
   }
 
-  private async loadConfigs(): Promise<
-    Map<string, { requires_receipt: boolean; is_active: boolean }>
-  > {
+  /** Resolve the pay period whose [start,end] contains the item's expense_date (#7/EXP-009). */
+  private async resolvePayPeriodId(date: string, cache: Map<string, string | null>): Promise<string | null> {
+    if (cache.has(date)) return cache.get(date) ?? null;
+    const period = await this.prisma.payPeriod.findFirst({
+      where: { start_date: { lte: dateOnly(date) }, end_date: { gte: dateOnly(date) } },
+      select: { id: true },
+    });
+    const id = period?.id ?? null;
+    cache.set(date, id);
+    return id;
+  }
+
+  private async loadConfigs(): Promise<ConfigMap> {
     const rows = await this.prisma.expenseFieldConfig.findMany({
       select: { category_key: true, requires_receipt: true, is_active: true },
     });
     return new Map(rows.map((r) => [r.category_key, r]));
   }
 
-  /** Scope fragment: own (submitted_by) or roster (rep_id) reports; Super Admin/Admin → all. — §5 */
-  private async scopeWhere(user: AuthUser): Promise<Prisma.ExpenseReportWhereInput> {
+  /** Scope fragment: own (submitted_by) or roster (rep_id) items; Super Admin/Admin → all. — §5 */
+  private async scopeWhere(user: AuthUser): Promise<Prisma.ExpenseItemWhereInput> {
     const scope = await this.scope.getRepScope(user);
     if (scope.level === 'all') {
       return {};

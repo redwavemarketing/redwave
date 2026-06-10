@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { NotificationsModule } from './notifications.module';
 import { DashboardsController, LeaderboardController } from './dashboards.controller';
+import { TargetsController } from './targets.controller';
 import { NotificationsController, NotificationSettingsController } from './notifications.controller';
 import { ChatbotController } from './chatbot.controller';
 import { DashboardsService } from './dashboards.service';
+import { TargetsService } from './targets.service';
 import { LeaderboardService } from './leaderboard.service';
 import { ChatbotService } from './chatbot.service';
 import { LLM_PROVIDER, StubLlmProvider } from './chatbot/llm.provider';
@@ -22,12 +24,14 @@ import { ChatbotConfigCache } from './chatbot/chatbot-config.cache';
   controllers: [
     DashboardsController,
     LeaderboardController,
+    TargetsController,
     NotificationsController,
     NotificationSettingsController,
     ChatbotController,
   ],
   providers: [
     DashboardsService,
+    TargetsService,
     LeaderboardService,
     ChatbotService,
     ChatbotConfigCache,

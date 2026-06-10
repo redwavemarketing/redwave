@@ -6,11 +6,23 @@ import { ApiProperty } from '@nestjs/swagger';
 import { ThemePreference, UserStatus } from '@prisma/client';
 
 export class LoginResponse {
-  @ApiProperty({ description: 'Short-lived access JWT (Bearer).' })
-  access_token!: string;
+  @ApiProperty({ type: String, nullable: true, required: false, description: 'Short-lived access JWT (Bearer). Absent when mfa_required is true.' })
+  access_token?: string | null;
 
-  @ApiProperty({ description: 'Long-lived refresh JWT.' })
-  refresh_token!: string;
+  @ApiProperty({ type: String, nullable: true, required: false, description: 'The CSRF token (also set as the readable rw_csrf cookie). Echo it in the X-CSRF-Token header.' })
+  csrf_token?: string | null;
+
+  @ApiProperty({ type: Boolean, nullable: true, required: false, description: 'When true, the user must change their password before continuing.' })
+  must_change_password?: boolean | null;
+
+  @ApiProperty({ type: Boolean, nullable: true, required: false, description: 'When true, policy requires this user to enrol in MFA before continuing.' })
+  mfa_enrollment_required?: boolean | null;
+
+  @ApiProperty({ type: Boolean, nullable: true, required: false, description: 'When true, the user has MFA enabled — redeem mfa_token at /auth/mfa/verify.' })
+  mfa_required?: boolean | null;
+
+  @ApiProperty({ type: String, nullable: true, required: false, description: 'Short-lived MFA challenge token (when mfa_required).' })
+  mfa_token?: string | null;
 }
 
 export class RefreshResponse {
@@ -41,6 +53,9 @@ export class MeUserResponse {
   @ApiProperty({ enum: UserStatus })
   status!: UserStatus;
 
+  @ApiProperty({ description: 'When true, the user must change their password before continuing.' })
+  must_change_password!: boolean;
+
   @ApiProperty({ type: String, format: 'date-time' })
   created_at!: string;
 
@@ -63,4 +78,7 @@ export class MeResponse {
 
   @ApiProperty({ type: [String], description: 'Union of the user roles’ permission keys (moduleKey:action).' })
   effective_permissions!: string[];
+
+  @ApiProperty({ description: 'When true, policy requires this user to enrol in MFA before continuing.' })
+  mfa_enrollment_required!: boolean;
 }

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IncentiveStatus, IncentiveTargetType, ProductType } from '@prisma/client';
+import { IncentiveStatus, IncentiveTargetType } from '@prisma/client';
 import {
   IsEnum,
   IsIn,
@@ -29,24 +29,26 @@ export class CreateIncentiveDto {
   scope_client_id?: string;
 
   @ApiPropertyOptional({
-    enum: ProductType,
-    description: 'Scope to a product type; omit/null = all.',
+    type: String,
+    example: 'tv',
+    description: 'Scope to a product-type catalogue key; omit/null = all.',
   })
   @IsOptional()
-  @IsEnum(ProductType)
-  scope_product_type?: ProductType;
+  @IsString()
+  scope_product_type?: string;
 
   @ApiProperty({
     enum: IncentiveTargetType,
     description:
-      'per_activation is computed by the engine. target_based is MODELED but DEFERRED (not yet applied — CLAUDE §12); requires target_count.',
+      'per_activation — bonus on each matching activation BEYOND target_count (null/0 = every activation). ' +
+      'one_time — a single bonus once the rep reaches target_count matching activations (requires target_count).',
   })
   @IsEnum(IncentiveTargetType)
   target_type!: IncentiveTargetType;
 
   @ApiPropertyOptional({
     example: 5,
-    description: 'Required for target_based (e.g. 5 sales in 1 day).',
+    description: 'The threshold. per_activation: pay beyond it (optional). one_time: reach it (required).',
   })
   @IsOptional()
   @IsInt()

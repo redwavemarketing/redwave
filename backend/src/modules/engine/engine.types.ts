@@ -8,7 +8,12 @@
  */
 import { Decimal } from 'decimal.js';
 
-/** Mirrors prisma `ProductType` string values exactly (kept local to avoid a Prisma import). */
+/**
+ * The core product-type keys the engine BRANCHES on. `internet` is the only tiered type (#5) and
+ * `greenfield_internet` is the only excluded-flat type (#9) — those two are locked. Other product types
+ * (tv / home_phone / any SA-added standard add-on) are just keys into `flatRates`; the engine never
+ * branches on them, so product types are now open strings everywhere except these two reserved names.
+ */
 export enum ProductType {
   internet = 'internet',
   greenfield_internet = 'greenfield_internet',
@@ -16,7 +21,7 @@ export enum ProductType {
   home_phone = 'home_phone',
 }
 
-export type IncentiveTargetType = 'per_activation' | 'target_based';
+export type IncentiveTargetType = 'per_activation' | 'one_time';
 
 /** One bracket of the effective tier schedule (Schedule C v2). tierNumber: 1 highest .. 4 entry. */
 export interface TierBracket {
@@ -26,12 +31,12 @@ export interface TierBracket {
   ratePerActivation: Decimal;
 }
 
-/** Flat (non-tiered) product rates. Greenfield internet is flat AND excluded from the tally. */
-export interface FlatRates {
-  greenfield_internet: Decimal;
-  tv: Decimal;
-  home_phone: Decimal;
-}
+/**
+ * Flat (non-tiered) product rates, keyed by product-type key. Greenfield internet is flat AND excluded
+ * from the tally. A map (not a fixed trio) so SA-added types are looked up by key — an activation whose
+ * type has no entry throws (the caller surfaces it as a 422 "no flat rate for <type>").
+ */
+export type FlatRates = Record<string, Decimal>;
 
 /** The advance/holdback split (default 0.70 / 0.30). — SRS COMM-003 */
 export interface HoldbackSplit {
@@ -39,16 +44,22 @@ export interface HoldbackSplit {
   holdbackPct: Decimal;
 }
 
-/** An effective-dated incentive/spiff. Only `per_activation` is computed this pass. — SRS COMM-005 */
+/**
+ * An effective-dated incentive/spiff, applied in BOTH modes (threshold-relative). — SRS COMM-005
+ *  • `per_activation` — the bonus pays on each matching activation BEYOND `targetCount` (null/0 = every
+ *    matching activation).
+ *  • `one_time` — a single bonus once the rep reaches `targetCount` matching activations (frozen onto the
+ *    threshold-crossing activation).
+ */
 export interface IncentiveConfig {
   id: string;
   scopeClientId: string | null; // null = all clients
-  scopeProductType: ProductType | null; // null = all product types
+  scopeProductType: string | null; // product-type key; null = all product types
   targetType: IncentiveTargetType;
-  targetCount: number | null;
+  targetCount: number | null; // the threshold (per_activation: pay beyond it; one_time: reach it)
   windowStart: string; // 'YYYY-MM-DD' inclusive
   windowEnd: string; // 'YYYY-MM-DD' inclusive
-  amount: Decimal; // per-activation bonus
+  amount: Decimal; // the bonus
 }
 
 /** The effective configuration, passed IN (the engine never reads a database). */
@@ -62,7 +73,7 @@ export interface EngineConfig {
 /** One activation (sale_item), already filtered to the period by the caller (sale_date governs). */
 export interface ActivationInput {
   id: string; // sale_item id — echoed onto the output for mapping
-  productType: ProductType;
+  productType: string; // product-type key (only 'internet'/'greenfield_internet' are special)
   clientId: string; // used for incentive scope only — NOT for the tally (tally is cross-client)
   saleDate: string; // 'YYYY-MM-DD' — used for the incentive window only
 }
@@ -75,7 +86,7 @@ export interface PeriodInput {
 /** A computed per-item result. The snapshot fields are what Pay Run later freezes onto sale_items. */
 export interface ComputedItem {
   id: string;
-  productType: ProductType;
+  productType: string;
   countsTowardTally: boolean; // true only for non-greenfield internet
   tierAtPayment: number | null; // internet only; null for flat-rated items
   rateApplied: Decimal; // tier rate (internet) or flat rate (others)

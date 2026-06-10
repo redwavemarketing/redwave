@@ -64,8 +64,51 @@ Identity, roles, and granular module/action permissions. A Role is a bag of (mod
 | **avatar_url**       | varchar   | —       | Profile photo (editable via review workflow).                    |
 | **theme_preference** | enum      | —       | light / dark / system. Personal; applies immediately, no review. |
 | **status**           | enum      | —       | active / inactive.                                               |
+| **must_change_password** | bool  | —       | Set on invite / admin reset — forces a change at next login (AUTH-002). |
+| **failed_login_attempts** | int  | —       | Brute-force counter; reset on success.                          |
+| **locked_until**     | timestamp | —       | Lockout expiry; null = not locked.                              |
 | **created_at**       | timestamp | —       |                                                                  |
 | **updated_at**       | timestamp | —       |                                                                  |
+
+#### `password_reset_tokens`
+
+*Single-use, expiring tokens for the invite (first set-password) + forgot-password flows. Only the token HASH is stored. — AUTH-002*
+
+| **Field**     | **Type**  | **Key** | **Notes**                                  |
+|---------------|-----------|---------|--------------------------------------------|
+| **id**        | uuid      | **PK**  |                                            |
+| **user_id**   | uuid      | **FK**  | -> users.id                                |
+| **token_hash**| varchar   | **UQ**  | SHA-256 of the secret (plaintext only in the emailed link). |
+| **purpose**   | enum      | —       | invite / reset.                            |
+| **expires_at**| timestamp | —       | Reset ~1h, invite ~7d (env-tunable).       |
+| **used_at**   | timestamp | —       | Null until consumed (single-use).          |
+| **created_at**| timestamp | —       |                                            |
+
+#### `refresh_sessions`  *(Security batch)*
+
+*A persisted, rotating, revocable refresh-token session — one row per device/login. The cookie carries `<id>.<secret>`; only `sha256(secret)` is stored and ROTATED each refresh. A replayed old secret = reuse → the session is revoked. Access tokens carry this row's id as `sid`; the guard rejects revoked sessions (immediate force-logout). — arch §security*
+
+| **Field**       | **Type**  | **Key** | **Notes**                                          |
+|-----------------|-----------|---------|----------------------------------------------------|
+| **id**          | uuid      | **PK**  | = the access/refresh token `sid` claim.            |
+| **user_id**     | uuid      | **FK**  | -> users.id (RESTRICT; never hard-deleted).        |
+| **token_hash**  | varchar   | **UQ**  | sha256 of the CURRENT refresh secret (rotated).    |
+| **user_agent**  | varchar   | —       | Device label for the sessions list.                |
+| **ip_address**  | varchar   | —       | Last-seen IP.                                       |
+| **created_at**  | timestamp | —       |                                                    |
+| **last_used_at**| timestamp | —       | Updated on each rotation.                          |
+| **expires_at**  | timestamp | —       | Mirrors JWT_REFRESH_TTL.                            |
+| **revoked_at**  | timestamp | —       | Null = live; set on logout / reuse / force-logout. |
+
+#### `user_mfa` · `mfa_recovery_codes`  *(Security batch)*
+
+*Per-user TOTP MFA. `user_mfa` (PK = user_id): `secret` (base32), `enabled` (flips true only after a verified first code), `confirmed_at`. `mfa_recovery_codes`: 10 one-time codes, **hashed** (`code_hash`), `used_at` (single-use). — AUTH MFA*
+
+#### `security_settings`  *(Security batch, singleton)*
+
+*One row: `mfa_enforced` (bool, default false — the master switch that makes `roles.mfa_required` actually block login), `updated_by` (-> users.id, SET NULL), `updated_at`.*
+
+**Column additions:** `roles.mfa_required` (bool, default false — SA seeded true) · `audit_log.ip_address` (varchar, nullable — the actor's request IP).
 
 #### `roles`
 
@@ -216,6 +259,32 @@ Program partners and their admin-created product catalogues. CLIENT BILLING RATE
 | **is_active**       | bool      | —       |                                                     |
 | **created_at**      | timestamp | —       |                                                     |
 
+#### `client_custom_fields`
+
+*SA-defined name/value pairs carrying extra info about a client. Replace-in-place on client create/edit.*
+
+| **Field**         | **Type**  | **Key** | **Notes**                  |
+|-------------------|-----------|---------|----------------------------|
+| **id**            | uuid      | **PK**  |                            |
+| **client_id**     | uuid      | **FK**  | -> clients.id              |
+| **field_name**    | varchar   | —       |                            |
+| **field_value**   | varchar   | —       |                            |
+| **display_order** | int       | —       | Order as supplied.         |
+| **created_at**    | timestamp | —       |                            |
+
+#### `product_type_catalogue`
+
+*The configurable set of product types + their LOCKED commission behaviour (replaces the old fixed enum). The SA adds types at runtime (always `standard_addon`); the 4 core types are system types (behaviour immutable, non-deletable). Read by the engine seam (the engine itself stays string-keyed).*
+
+| **Field**      | **Type**  | **Key** | **Notes**                                                              |
+|----------------|-----------|---------|------------------------------------------------------------------------|
+| **key**        | varchar   | **PK**  | Natural key (e.g. internet). Referenced by product_type columns.       |
+| **label**      | varchar   | —       | Display label.                                                         |
+| **behaviour**  | enum      | —       | tiered (internet, #5) / greenfield (#9) / standard_addon (default).    |
+| **is_system**  | bool      | —       | True for the 4 core types — behaviour locked, non-deletable.           |
+| **is_active**  | bool      | —       |                                                                        |
+| **created_at** | timestamp | —       |                                                                        |
+
 #### `products`
 
 *An admin-created, per-client sellable item.*
@@ -225,7 +294,7 @@ Program partners and their admin-created product catalogues. CLIENT BILLING RATE
 | **id**           | uuid      | **PK**  |                                                   |
 | **client_id**    | uuid      | **FK**  | -> clients.id                                    |
 | **name**         | varchar   | —       | e.g. Fibre 1gig/2.5gig.                           |
-| **product_type** | enum      | —       | internet / greenfield_internet / tv / home_phone. |
+| **product_type** | varchar   | **FK**  | -> product_type_catalogue.key (was an enum).      |
 | **is_active**    | bool      | —       |                                                   |
 | **created_at**   | timestamp | —       |                                                   |
 
@@ -279,7 +348,7 @@ REP commission rules (Schedule C v2): the tier table, flat rates, holdback split
 | **Field**          | **Type** | **Key** | **Notes**                              |
 |--------------------|----------|---------|----------------------------------------|
 | **id**             | uuid     | **PK**  |                                        |
-| **product_type**   | enum     | —       | greenfield_internet / tv / home_phone. |
+| **product_type**   | varchar  | **FK**  | -> product_type_catalogue.key (non-tiered types). |
 | **amount**         | decimal  | —       | $100 / $30 / $30.                   |
 | **effective_from** | date     | —       |                                        |
 | **effective_to**   | date     | —       | Nullable.                              |
@@ -304,7 +373,7 @@ REP commission rules (Schedule C v2): the tier table, flat rates, holdback split
 | **Field**          | **Type**  | **Key** | **Notes**                                 |
 |--------------------|-----------|---------|-------------------------------------------|
 | **id**             | uuid      | **PK**  |                                           |
-| **release_rule**   | varchar   | —       | Which cycle a period's 30% releases into. |
+| **release_rule**   | varchar   | —       | Structured sticky rule: `cycles:N` or `days:N` (read by Pay Run at finalize, §17.1). |
 | **set_by**         | uuid      | **FK**  | -> users.id                              |
 | **effective_from** | timestamp | —       | Sticky until changed.                     |
 
@@ -317,8 +386,8 @@ REP commission rules (Schedule C v2): the tier table, flat rates, holdback split
 | **id**                 | uuid     | **PK**  |                                   |
 | **name**               | varchar  | —       |                                   |
 | **scope_client_id**    | uuid     | **FK**  | -> clients.id (nullable = all).  |
-| **scope_product_type** | enum     | —       | Nullable = all.                   |
-| **target_type**        | enum     | —       | per_activation / target_based.    |
+| **scope_product_type** | varchar  | **FK**  | -> product_type_catalogue.key. Nullable = all. |
+| **target_type**        | enum     | —       | per_activation / one_time (both applied by the engine, threshold-relative). |
 | **target_count**       | int      | —       | Nullable (e.g. 5 sales in 1 day). |
 | **window_start**       | date     | —       |                                   |
 | **window_end**         | date     | —       |                                   |
@@ -349,10 +418,11 @@ The atomic financial unit. A Sale is one customer/household activation with a co
 | **postal_code**     | varchar   | —       |                                                                  |
 | **mpu_id**          | varchar   | —       | Client house ID where supplied (nullable).                       |
 | **is_greenfield**   | bool      | —       | Confirmed state at close; admin-settable either way.             |
-| **status**          | enum      | —       | entered / validated / in_pay_run / paid / clawed_back / deleted. |
+| **status**          | enum      | —       | entered / validated / in_pay_run / paid / clawed_back / deleted / **historical** (migrated, reference-only — never in the pay pipeline; set only at import). |
 | **validated_by**    | uuid      | **FK**  | -> users.id (nullable).                                         |
 | **validated_at**    | timestamp | —       | Nullable.                                                        |
 | **pay_run_id**      | uuid      | **FK**  | -> pay_runs.id (nullable until paid).                           |
+| **import_batch_id** | uuid      | —       | Provenance for imported (bulk-validated / historical) sales; no FK (polymorphic, IMP-008). Nullable. |
 | **created_at**      | timestamp | —       |                                                                  |
 
 #### `sale_items`
@@ -364,13 +434,14 @@ The atomic financial unit. A Sale is one customer/household activation with a co
 | **id**                  | uuid     | **PK**  |                                                   |
 | **sale_id**             | uuid     | **FK**  | -> sales.id                                      |
 | **product_id**          | uuid     | **FK**  | -> products.id                                   |
-| **product_type**        | enum     | —       | internet / greenfield_internet / tv / home_phone. |
+| **product_type**        | varchar  | —       | Catalogue key, frozen snapshot (no FK — #2 immutable). |
 | **counts_toward_tally** | bool     | —       | True only for non-greenfield internet.            |
 | **tier_at_payment**     | int      | —       | **SNAPSHOT (internet only); frozen at payment.**  |
 | **rate_applied**        | decimal  | —       | **SNAPSHOT of the rate used.**                    |
 | **commission_paid**     | decimal  | —       | **SNAPSHOT of exact $ paid for this item.**      |
 | **incentive_id**        | uuid     | **FK**  | -> incentives.id (nullable).                     |
 | **incentive_amount**    | decimal  | —       | **SNAPSHOT (nullable).**                          |
+| **historical_billed_amount** | decimal | —    | Historical sales only — the source-file BILLED amount (a billing-stream reference for business aggregations; NOT commission, never joined to commission_*, #3). Nullable. |
 | **item_status**         | enum     | —       | active / cancelled / clawed_back.                 |
 
 ## 8. Pay Run & Holdback
@@ -461,11 +532,35 @@ A cancellation recovery. No in-system date math: Redwave inputs a clawback when 
 
 ## 10. Expenses
 
-Weekly expense submissions by any user. Categories are configurable. Receipts are mandatory for all except the kilometre log. KM logs hold multi-stop trips with a single/round-trip deduction. Approved expenses pay in the same cycle as the period's commission.
+**Item-first** expense capture by any user — the expense ITEM is the atomic unit (its own submitter, status, approver, and pay period derived from its `expense_date`). Categories are configurable; receipts are mandatory for all except the kilometre log and upload to object storage (access-controlled URL). KM logs hold multi-stop trips with a single/round-trip deduction; with a Maps key the route distance is re-derived server-side from the stops' coordinates. An approved item pays in the same cycle its `expense_date` falls in.
+
+#### `expense_items`
+
+*One expense (item-first). Carries its own lifecycle; the report wrapper is optional.*
+
+| **Field**             | **Type**  | **Key** | **Notes**                                                                |
+|-----------------------|-----------|---------|--------------------------------------------------------------------------|
+| **id**                | uuid      | **PK**  |                                                                          |
+| **expense_report_id** | uuid      | **FK**  | -> expense_reports.id (**nullable** — optional grouping/history).        |
+| **rep_id**            | uuid      | **FK**  | -> reps.id (nullable; the rep this item is for).                         |
+| **submitted_by**      | uuid      | **FK**  | -> users.id (the submitter).                                             |
+| **category**          | enum      | —       | km / meals / hotel / flight / rental / gas / other.                      |
+| **client_id**         | uuid      | **FK**  | -> clients.id (nullable; which program).                                 |
+| **expense_date**      | date      | —       | Governs the payout pay period (EXP-009).                                 |
+| **amount**            | decimal   | —       | For km, computed server-side.                                            |
+| **description**       | varchar   | —       |                                                                          |
+| **receipt_url**       | varchar   | —       | Mandatory except km (nullable); access-controlled storage URL.          |
+| **status**            | enum      | —       | draft / submitted / approved / rejected / sent_back.                     |
+| **approved_by**       | uuid      | **FK**  | -> users.id (nullable).                                                  |
+| **approved_at**       | timestamp | —       | Nullable.                                                                |
+| **pay_period_id**     | uuid      | **FK**  | -> pay_periods.id (nullable; **derived from `expense_date`** at create). |
+| **created_at**        | timestamp | —       |                                                                          |
+
+Indexes: `(rep_id, pay_period_id, status)` (the Pay Run aggregation), `(submitted_by)`, `(status)`, `(expense_date)`.
 
 #### `expense_reports`
 
-*A user's weekly expense submission.*
+*Legacy weekly submission wrapper — RETAINED for history/optional grouping; new items are created report-less.*
 
 | **Field**         | **Type**  | **Key** | **Notes**                                            |
 |-------------------|-----------|---------|------------------------------------------------------|
@@ -479,21 +574,6 @@ Weekly expense submissions by any user. Categories are configurable. Receipts ar
 | **approved_at**   | timestamp | —       | Nullable.                                            |
 | **pay_period_id** | uuid      | **FK**  | -> pay_periods.id (cycle it pays in).               |
 | **created_at**    | timestamp | —       |                                                      |
-
-#### `expense_items`
-
-*One line within a report.*
-
-| **Field**             | **Type** | **Key** | **Notes**                                           |
-|-----------------------|----------|---------|-----------------------------------------------------|
-| **id**                | uuid     | **PK**  |                                                     |
-| **expense_report_id** | uuid     | **FK**  | -> expense_reports.id                              |
-| **category**          | enum     | —       | km / meals / hotel / flight / rental / gas / other. |
-| **client_id**         | uuid     | **FK**  | -> clients.id (nullable; which program).           |
-| **expense_date**      | date     | —       |                                                     |
-| **amount**            | decimal  | —       |                                                     |
-| **description**       | varchar  | —       |                                                     |
-| **receipt_url**       | varchar  | —       | Mandatory except km (nullable).                     |
 
 #### `expense_km_logs`
 
@@ -557,17 +637,20 @@ Per-client, per-period output. The statement recreates the Excel Redwave sends c
 
 #### `client_statements`
 
-*The per-client statement for a period.*
+*The per-client statement for a period. **IMMUTABLE + gapless-numbered** (Billing batch): a re-generation creates a NEW numbered `issued` version and marks the prior one `superseded` (metadata only — number/total/lines/file are never mutated). — BRD §8*
 
-| **Field**         | **Type**  | **Key** | **Notes**          |
-|-------------------|-----------|---------|--------------------|
-| **id**            | uuid      | **PK**  |                    |
-| **client_id**     | uuid      | **FK**  | -> clients.id     |
-| **pay_period_id** | uuid      | **FK**  | -> pay_periods.id |
-| **total_amount**  | decimal   | —       |                    |
-| **file_url**      | varchar   | —       | Generated Excel.   |
-| **generated_by**  | uuid      | **FK**  | -> users.id       |
-| **generated_at**  | timestamp | —       |                    |
+| **Field**            | **Type**  | **Key** | **Notes**                                              |
+|----------------------|-----------|---------|--------------------------------------------------------|
+| **id**               | uuid      | **PK**  |                                                        |
+| **statement_number** | int       | **UQ**  | Gapless, global per type (STMT-00001); minted on issue. |
+| **status**           | enum      | —       | `issued` (current) \| `superseded` (`BillingDocStatus`). |
+| **client_id**        | uuid      | **FK**  | -> clients.id                                          |
+| **pay_period_id**    | uuid      | **FK**  | -> pay_periods.id                                      |
+| **total_amount**     | decimal   | —       | CAD, no GST.                                            |
+| **file_url**         | varchar?  | —       | Nullable — the Excel is rendered on demand / recorded in billing_exports. |
+| **generated_by**     | uuid      | **FK**  | -> users.id                                            |
+| **generated_at**     | timestamp | —       |                                                        |
+| **superseded_by_id** | uuid?     | **FK**  | -> client_statements.id (the newer version; null if current). |
 
 #### `client_statement_lines`
 
@@ -584,20 +667,50 @@ Per-client, per-period output. The statement recreates the Excel Redwave sends c
 
 #### `client_invoices`
 
-*Optional one-line commission invoice (PDF).*
+*Optional one-line commission invoice (PDF). Gapless-numbered + immutable like statements.*
 
-| **Field**            | **Type**  | **Key** | **Notes**          |
-|----------------------|-----------|---------|--------------------|
-| **id**               | uuid      | **PK**  |                    |
-| **client_id**        | uuid      | **FK**  | -> clients.id     |
-| **pay_period_id**    | uuid      | **FK**  | -> pay_periods.id |
-| **total_commission** | decimal   | —       | No GST line.       |
-| **file_url**         | varchar   | —       |                    |
-| **generated_at**     | timestamp | —       |                    |
+| **Field**            | **Type**  | **Key** | **Notes**                                                  |
+|----------------------|-----------|---------|------------------------------------------------------------|
+| **id**               | uuid      | **PK**  |                                                            |
+| **invoice_number**   | int       | **UQ**  | Gapless, global per type (INV-00001); minted on issue.     |
+| **status**           | enum      | —       | `issued` \| `superseded`.                                  |
+| **client_id**        | uuid      | **FK**  | -> clients.id                                              |
+| **pay_period_id**    | uuid      | **FK**  | -> pay_periods.id                                          |
+| **total_commission** | decimal   | —       | CAD; = the billing-stream statement total. No GST.         |
+| **file_url**         | varchar?  | —       | Nullable — PDF rendered on demand.                         |
+| **generated_by**     | uuid?     | **FK**  | -> users.id                                                |
+| **generated_at**     | timestamp | —       |                                                            |
+| **superseded_by_id** | uuid?     | **FK**  | -> client_invoices.id.                                     |
+
+#### `document_sequences`  *(Billing batch)*
+
+*The gapless per-type counter. Incremented atomically inside the issue transaction (row lock → no gaps under concurrency). — BRD §8*
+
+| **Field**         | **Type** | **Key** | **Notes**                          |
+|-------------------|----------|---------|------------------------------------|
+| **key**           | varchar  | **PK**  | `statement` \| `invoice`.          |
+| **current_value** | int      | —       | Highest number issued so far (next = +1). |
+
+#### `billing_exports`  *(Billing batch)*
+
+*A recorded export artifact (Excel / PDF / QuickBooks CSV / summary), stored by object path — like expense_exports. Downloads render on demand; configured storage also persists + records here.*
+
+| **Field**         | **Type**  | **Key** | **Notes**                                      |
+|-------------------|-----------|---------|------------------------------------------------|
+| **id**            | uuid      | **PK**  |                                                |
+| **kind**          | varchar   | —       | statement \| invoice \| summary \| quickbooks. |
+| **format**        | varchar   | —       | excel \| pdf \| csv.                           |
+| **statement_id**  | uuid?     | **FK**  | -> client_statements.id.                       |
+| **invoice_id**    | uuid?     | **FK**  | -> client_invoices.id.                         |
+| **client_id**     | uuid?     | —       | denormalised scope.                            |
+| **pay_period_id** | uuid?     | —       | denormalised scope.                            |
+| **file_path**     | varchar   | —       | Object-storage path.                           |
+| **generated_by**  | uuid      | **FK**  | -> users.id.                                   |
+| **generated_at**  | timestamp | —       |                                                |
 
 ## 12. Documents & E-Signature
 
-A two-way document-sharing and signature-request system. Either management or a rep can share a document and request one or more signatures. The original is retained and a distinct signed copy is stored per signer, with full audit metadata. Covers the compensation agreement, rate-change acknowledgements, equipment agreements, and ad-hoc docs.
+A two-way document-sharing and in-system e-signature system. Either management or a rep can share a document and request one or more signatures; the requester places fields per recipient, recipients sign in the browser (saved/drawn/typed) or upload an externally-signed file, and the server stamps a distinct copy per signer (plus a final all-signatures copy) — the original is never mutated. Covers the compensation agreement, rate-change acknowledgements, equipment agreements, and ad-hoc docs. **`*_file_url` columns hold an object PATH (re-signed on read); files are served via short-TTL access-controlled URLs, never public.**
 
 #### `documents`
 
@@ -609,7 +722,7 @@ A two-way document-sharing and signature-request system. Either management or a 
 | **title**             | varchar   | —       |                                                           |
 | **doc_type**          | enum      | —       | compensation_agreement / rate_notice / equipment / other. |
 | **owner_user_id**     | uuid      | **FK**  | -> users.id (who uploaded/owns it).                      |
-| **original_file_url** | varchar   | —       | The unsigned original (always retained).                  |
+| **original_file_url** | varchar   | —       | Object path of the unsigned original (always retained; **never mutated**, DOC-001/004). |
 | **status**            | enum      | —       | draft / shared / partially_signed / completed / declined. |
 | **created_at**        | timestamp | —       |                                                           |
 
@@ -617,15 +730,32 @@ A two-way document-sharing and signature-request system. Either management or a 
 
 *A request to sign a document, to one or many recipients.*
 
-| **Field**        | **Type**  | **Key** | **Notes**                                   |
-|------------------|-----------|---------|---------------------------------------------|
-| **id**           | uuid      | **PK**  |                                             |
-| **document_id**  | uuid      | **FK**  | -> documents.id                            |
-| **requested_by** | uuid      | **FK**  | -> users.id (sender; mgmt or rep).         |
-| **message**      | varchar   | —       | Optional note to recipients.                |
-| **due_date**     | date      | —       | Nullable.                                   |
-| **status**       | enum      | —       | pending / completed / declined / cancelled. |
-| **created_at**   | timestamp | —       |                                             |
+| **Field**             | **Type**  | **Key** | **Notes**                                   |
+|-----------------------|-----------|---------|---------------------------------------------|
+| **id**                | uuid      | **PK**  |                                             |
+| **document_id**       | uuid      | **FK**  | -> documents.id                            |
+| **requested_by**      | uuid      | **FK**  | -> users.id (sender; mgmt or rep).         |
+| **message**           | varchar   | —       | Optional note to recipients.                |
+| **due_date**          | date      | —       | Nullable.                                   |
+| **status**            | enum      | —       | pending / completed / declined / cancelled. |
+| **completed_file_path** | varchar | —       | Object path of the final all-signatures copy (set on completion, DOC-005; nullable). |
+| **created_at**        | timestamp | —       |                                             |
+
+#### `signature_fields`
+
+*A field the requester places on the PDF for a specific recipient (where/what to sign). Coordinates are normalized 0..1 fractions of the page, top-left origin; the server converts to PDF points at stamp time. Values are filled at signing.*
+
+| **Field**                | **Type**  | **Key** | **Notes**                                            |
+|--------------------------|-----------|---------|------------------------------------------------------|
+| **id**                   | uuid      | **PK**  |                                                      |
+| **signature_request_id** | uuid      | **FK**  | -> signature_requests.id                            |
+| **recipient_user_id**    | uuid      | **FK**  | -> users.id (who must fill it).                     |
+| **type**                 | enum      | —       | signature / initial / date / text.                   |
+| **page**                 | int       | —       | 0-based page index.                                  |
+| **x / y / w / h**        | decimal(6,5) | —    | Normalized 0..1 fractions (top-left origin).         |
+| **value_text**           | varchar   | —       | Filled for text/date fields at signing (nullable).   |
+| **value_image_path**     | varchar   | —       | Filled for signature/initial fields (the applied signature image path; nullable). |
+| **created_at**           | timestamp | —       |                                                      |
 
 #### `document_signatures`
 
@@ -637,10 +767,24 @@ A two-way document-sharing and signature-request system. Either management or a 
 | **signature_request_id** | uuid      | **FK**  | -> signature_requests.id                            |
 | **recipient_user_id**    | uuid      | **FK**  | -> users.id (the signer).                           |
 | **status**               | enum      | —       | pending / signed / declined.                         |
-| **signed_file_url**      | varchar   | —       | Distinct stored signed copy (nullable until signed). |
+| **signed_file_url**      | varchar   | —       | Object path of the distinct per-signer stamped copy (nullable until signed). |
 | **signed_at**            | timestamp | —       | Nullable.                                            |
-| **method**               | varchar   | —       | Signature method (e.g. typed / drawn).               |
+| **method**               | varchar   | —       | Signature method (drawn / typed / saved / uploaded). |
 | **ip_address**           | varchar   | —       | Captured at signing for audit.                       |
+
+#### `user_signatures`
+
+*A user's saved, reusable signature (private + own-scoped). One default per user.*
+
+| **Field**       | **Type**  | **Key** | **Notes**                                            |
+|-----------------|-----------|---------|------------------------------------------------------|
+| **id**          | uuid      | **PK**  |                                                      |
+| **user_id**     | uuid      | **FK**  | -> users.id (owner).                                |
+| **label**       | varchar   | —       | Display label.                                       |
+| **file_path**   | varchar   | —       | Private object path; served via an own-scoped signed URL. |
+| **method**      | enum      | —       | drawn / typed / uploaded.                            |
+| **is_default**  | boolean   | —       | One default per user.                                |
+| **created_at**  | timestamp | —       |                                                      |
 
 ## 13. Reporting & Platform
 
@@ -737,9 +881,9 @@ Seamless ingestion of Redwave's own files and client data. Every import runs thr
 | **Field**            | **Type**  | **Key** | **Notes**                                                        |
 |----------------------|-----------|---------|------------------------------------------------------------------|
 | **id**               | uuid      | **PK**  |                                                                  |
-| **source_file_url**  | varchar   | —       | The uploaded Excel/CSV.                                          |
+| **source_file_url**  | varchar   | —       | The uploaded Excel/CSV — a real object-storage path (Supabase).  |
 | **source_type**      | enum      | —       | client_report / master_migration / balance_migration.            |
-| **import_type**      | enum      | —       | reps / clients / products / sales / holdback / clawback / mixed. |
+| **import_type**      | enum      | —       | reps / clients / products / billing_rates / sales / holdback / clawback / mixed. |
 | **client_id**        | uuid      | **FK**  | -> clients.id (nullable; for client reports).                   |
 | **field_mapping_id** | uuid      | **FK**  | -> import_field_mappings.id (nullable).                         |
 | **status**           | enum      | —       | staged / committed / failed / cancelled.                         |
@@ -801,6 +945,10 @@ Key foreign-key relationships across the model (cardinality shown from the child
 | **rep_documents**               | 1:N       | reps                    |              |
 | **rep_equipment**               | 1:N       | reps                    |              |
 | **products**                    | 1:N       | clients                 |              |
+| **products**                    | N:1       | product_type_catalogue  | product_type → key |
+| **client_custom_fields**        | 1:N       | clients                 |              |
+| **commission_flat_rates**       | N:1       | product_type_catalogue  | product_type → key |
+| **incentives**                  | N:1       | product_type_catalogue  | scope_product_type → key (nullable) |
 | **client_billing_rates**        | 1:N       | clients                 |              |
 | **client_billing_rates**        | 1:N       | products                |              |
 | **commission_tiers**            | 1:N       | commission_tier_configs |              |
@@ -826,7 +974,10 @@ Key foreign-key relationships across the model (cardinality shown from the child
 | **expense_reports**             | 1:N       | users                   | submitted_by |
 | **expense_reports**             | 1:N       | reps                    |              |
 | **expense_reports**             | 1:N       | pay_periods             |              |
-| **expense_items**               | 1:N       | expense_reports         |              |
+| **expense_items**               | 1:N       | expense_reports         | nullable (optional grouping) |
+| **expense_items**               | 1:N       | reps                    |              |
+| **expense_items**               | 1:N       | users                   | submitted_by / approved_by |
+| **expense_items**               | 1:N       | pay_periods             | derived from expense_date |
 | **expense_items**               | 1:N       | clients                 |              |
 | **expense_km_logs**             | 1:1       | expense_items           |              |
 | **expense_km_stops**            | 1:N       | expense_km_logs         |              |
@@ -836,8 +987,11 @@ Key foreign-key relationships across the model (cardinality shown from the child
 | **documents**                   | 1:N       | users                   | owner        |
 | **signature_requests**          | 1:N       | documents               |              |
 | **signature_requests**          | 1:N       | users                   | requested_by |
+| **signature_fields**            | 1:N       | signature_requests      |              |
+| **signature_fields**            | 1:N       | users                   | recipient    |
 | **document_signatures**         | 1:N       | signature_requests      |              |
 | **document_signatures**         | 1:N       | users                   | signer       |
+| **user_signatures**             | 1:N       | users                   | owner        |
 | **notification_event_settings** | 1:N       | users                   | updated_by   |
 | **import_batches**              | 1:N       | clients                 |              |
 | **import_batches**              | 1:N       | import_field_mappings   | mapping      |

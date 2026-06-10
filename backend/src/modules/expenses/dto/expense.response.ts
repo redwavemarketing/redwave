@@ -1,12 +1,15 @@
 /**
- * Expenses response DTOs — weekly reports → items → (optional) km log → stops. — Batch A #2
+ * Expenses response DTOs — item-first: each ITEM carries its own lifecycle (submitter/status/approver/
+ * pay_period) + (optional) km log → stops. — Batch A #2 / Config batch (item-first)
  *
  * MONEY/Decimal → STRING (#1): item `amount`; km `total_km/deduction_km/billable_km/rate_per_km/
  * computed_amount`; stop `lat/lng`. `km_log` is present only on km items (else null); `receipt_url`/
- * `client_id` nullable. `scope_filters` (export) is a free-form JSON blob → `additionalProperties:true`.
+ * `client_id`/`rep_id`/`pay_period_id`/`expense_report_id` nullable. `scope_filters` (export) is a
+ * free-form JSON blob → `additionalProperties:true`.
  */
 import { ApiProperty } from '@nestjs/swagger';
 import { ExpenseCategory, ExpenseReportStatus, ExportFormat, TripType } from '@prisma/client';
+import { PageMetaResponse } from '../../../common/pagination/page.response';
 
 export class KmStopResponse {
   @ApiProperty()
@@ -61,8 +64,14 @@ export class ExpenseItemResponse {
   @ApiProperty()
   id!: string;
 
-  @ApiProperty()
-  expense_report_id!: string;
+  @ApiProperty({ type: String, nullable: true, description: 'Optional report grouping (item-first → usually null).' })
+  expense_report_id!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  rep_id!: string | null;
+
+  @ApiProperty({ description: 'The user who submitted this item.' })
+  submitted_by!: string;
 
   @ApiProperty({ enum: ExpenseCategory })
   category!: ExpenseCategory;
@@ -82,27 +91,7 @@ export class ExpenseItemResponse {
   @ApiProperty({ type: String, nullable: true, description: 'Required except for km items.' })
   receipt_url!: string | null;
 
-  @ApiProperty({ type: () => KmLogResponse, nullable: true, description: 'Present only on km items.' })
-  km_log!: KmLogResponse | null;
-}
-
-export class ExpenseReportResponse {
-  @ApiProperty()
-  id!: string;
-
-  @ApiProperty()
-  submitted_by!: string;
-
-  @ApiProperty({ type: String, nullable: true })
-  rep_id!: string | null;
-
-  @ApiProperty({ type: String, format: 'date-time' })
-  week_start!: string;
-
-  @ApiProperty({ type: String, format: 'date-time' })
-  week_end!: string;
-
-  @ApiProperty({ enum: ExpenseReportStatus })
+  @ApiProperty({ enum: ExpenseReportStatus, description: 'Item lifecycle (submitted/approved/rejected/sent_back).' })
   status!: ExpenseReportStatus;
 
   @ApiProperty({ type: String, nullable: true })
@@ -111,14 +100,41 @@ export class ExpenseReportResponse {
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
   approved_at!: string | null;
 
-  @ApiProperty({ type: String, nullable: true, description: 'Derived from week_start (#7).' })
+  @ApiProperty({ type: String, nullable: true, description: 'Derived from expense_date — governs the payout cycle (EXP-009).' })
   pay_period_id!: string | null;
 
   @ApiProperty({ type: String, format: 'date-time' })
   created_at!: string;
 
+  @ApiProperty({ type: () => KmLogResponse, nullable: true, description: 'Present only on km items.' })
+  km_log!: KmLogResponse | null;
+}
+
+/** Paginated list envelope (arch §5.1) — one page of expense items + the meta. */
+export class ExpenseItemPageResponse {
   @ApiProperty({ type: () => [ExpenseItemResponse] })
-  expense_items!: ExpenseItemResponse[];
+  data!: ExpenseItemResponse[];
+
+  @ApiProperty({ type: () => PageMetaResponse })
+  meta!: PageMetaResponse;
+}
+
+/** Result of a bulk review — how many items actually transitioned vs were skipped (non-pending). */
+export class BulkReviewResultResponse {
+  @ApiProperty({ example: 5, description: 'Items that transitioned to the decided status.' })
+  reviewed!: number;
+
+  @ApiProperty({ example: 1, description: 'Items skipped (not in a reviewable status, or out of scope).' })
+  skipped!: number;
+}
+
+/** Result of a receipt upload — the URL to store on the expense item + whether it was really stored. */
+export class ReceiptUploadResponse {
+  @ApiProperty({ description: 'Access-controlled (signed) URL when stored; a reference in fallback mode.' })
+  url!: string;
+
+  @ApiProperty({ description: 'True when uploaded to object storage; false in selection-only fallback mode.' })
+  stored!: boolean;
 }
 
 export class FieldConfigResponse {

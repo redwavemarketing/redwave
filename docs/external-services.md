@@ -10,21 +10,47 @@
 > `backend/.env` (dev) or the host's secret manager (prod), **never into code or chat.**
 
 ## 1. Object storage (file uploads) — REQUIRED for go-live
-- **For:** all file references are stubbed `s3://…` strings today. Real upload/download needed for:
-  rep documents (`POST /v1/reps/{id}/documents`), expense receipts (`receipt_url` on items),
-  expense exports, billing statement/invoice exports, e-signature documents
-  (`original_file_url`, `signed_file_url`).
-- **Provider options:** AWS S3 · Cloudflare R2 · Backblaze B2 · MinIO (self-host). Any S3-compatible.
-- **Credentials (env):** `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`.
-- **Code today:** CLAUDE.md §12 — "object-storage upload wiring" (HRM), expense/billing export stubs,
-  Documents binary-upload stub.
+- **WIRED → Supabase Storage (the same provider for all of):** expense receipts (`POST /v1/expense-receipts`),
+  **documents** (`POST /v1/documents` — the PDF original, per-signer stamped copies, the final all-signatures
+  copy, and saved-signature images), and **rep documents** (`POST /v1/reps/{id}/documents`). Files are stored
+  by **object path**; bytes are served only through RBAC/visibility-gated `…/file-url` endpoints that mint a
+  short-TTL **signed URL** on each access (never public). Env-gated + graceful: with the env below it's a real
+  upload; unset → a `local://` reference and file-url endpoints 404 (the workflow still functions).
+  - **Credentials (env):** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-only secret),
+    `SUPABASE_STORAGE_BUCKET` (default `receipts`). Create the bucket first.
+- **STILL STUBBED `s3://…`:** expense exports + billing statement/invoice exports (the server-recorded export
+  artifact; the client-side file export is real). **Word→PDF conversion** for documents is deferred (PDF-only
+  today) — a later enhancement (headless LibreOffice or a hosted converter, env-gated).
+- **Provider options (for the remaining stubs):** Supabase Storage (already used) · AWS S3 · Cloudflare R2 ·
+  Backblaze B2 · MinIO. Reuse the `common/storage` `StorageService` (`upload`/`uploadBuffer`/`signedUrl`).
+- **Code today:** CLAUDE.md §12 — expense/billing export stubs + the Word→PDF deferral. (Expense receipts,
+  documents/e-signature, and rep documents are no longer stubs; the e-signature provider is now real
+  in-system stamping via pdf-lib — no third-party e-sign vendor.)
 
-## 2. Email — REQUIRED for go-live
-- **For:** notification emails (the `EMAIL_DISPATCHER` is a noop today — Reporting/Notifications),
-  and unblocks the user invite / password-reset flow (AUTH-002).
-- **Provider options:** AWS SES · SendGrid · Postmark · Resend · Mailgun.
-- **Credentials (env):** `EMAIL_PROVIDER`, `EMAIL_API_KEY` (or SMTP host/user/pass), `EMAIL_FROM`.
-- **Code today:** CLAUDE.md §12 "Reporting deferrals — Email/SMS dispatch stubbed (EMAIL_DISPATCHER noop)".
+## 2. Email — WIRED → Resend (env-gated, graceful)
+- **For:** the user invite / password-reset flow (AUTH-002) + email-enabled notifications. The
+  `common/email` `MailerService` sends transactional mail (invite / reset / temp password) via Resend; the
+  notification `EMAIL_DISPATCHER` is rebound to Resend too. With no key it logs the intent (the build/flows
+  still work); sends are best-effort (never break a user-create / forgot flow).
+- **Credentials (env):** `RESEND_API_KEY`, `EMAIL_FROM` (a verified Resend sender on the domain below),
+  `APP_URL` (the frontend base used to build the links). Optional: `LOCKOUT_MAX_ATTEMPTS`/`LOCKOUT_MINUTES`,
+  `PASSWORD_RESET_TTL_MINUTES`/`INVITE_TOKEN_TTL_MINUTES`.
+- **DNS to add in Namecheap (Advanced DNS) for `app.redwavemarketing.ca`** — add the domain in the Resend
+  dashboard, then copy the EXACT values it generates (the DKIM public key is unique per domain — I cannot
+  generate it). The records have this shape (host = the part Namecheap prepends to the domain):
+
+  | Type  | Host (name)                  | Value (from the Resend dashboard)                          | Notes |
+  |-------|------------------------------|------------------------------------------------------------|-------|
+  | TXT   | `send.app`                   | `v=spf1 include:amazonses.com ~all`                        | SPF for the bounce subdomain |
+  | MX    | `send.app`                   | `feedback-smtp.<region>.amazonses.com` (priority `10`)     | bounce/complaint handling; region per Resend |
+  | TXT   | `resend._domainkey.app`      | `p=<long DKIM public key from Resend>`                     | DKIM — copy verbatim from Resend |
+  | TXT   | `_dmarc.app`                 | `v=DMARC1; p=none;`                                        | optional but recommended |
+
+  After the records propagate, verify the domain in Resend; once "Verified", set `EMAIL_FROM` to e.g.
+  `Redwave <noreply@app.redwavemarketing.ca>` and email delivers. Until then, Resend rejects sends (the app
+  still records the intent gracefully).
+- **Provider note:** chose Resend per the brief. The seam is abstracted (`EMAIL_DISPATCHER` + `MailerService`)
+  so the provider can be swapped without touching auth/notification logic.
 
 ## 3. SMS — OPTIONAL (confirm with Redwave whether they want SMS notifications at all)
 - **For:** SMS-channel notifications, if used. The notification model has channels but only
@@ -41,6 +67,17 @@
 - **Code today:** CLAUDE.md §12 "Reporting deferrals — Gemini LLM stubbed (StubLlmProvider)".
 - **Note:** the chatbot is **structurally leak-proof regardless** (intent-only LLM + entitlement-gated
   tools), so wiring the real LLM does not change the security model.
+
+## 4b. Google Maps (expense KM distance) — OPTIONAL, recommended
+- **For:** the expense kilometre log. **WIRED + env-gated, graceful.** Two keys:
+  - **Browser (frontend):** `VITE_GOOGLE_MAPS_API_KEY` enables Places **address autocomplete** + the
+    route **map** on the KM entry form (captures real lat/lng). Restrict to your domains + the Maps
+    JavaScript / Places APIs. Unset → manual address + total-km entry (the server still computes the amount).
+  - **Server (backend):** `GOOGLE_MAPS_API_KEY` lets the backend **re-derive the authoritative route
+    distance** from the stops via the **Directions API** (the client value is ignored). Enable the
+    Directions API on this key. Unset → the server falls back to the client-supplied `total_km`.
+- **Money invariant:** the KM amount is **always** computed server-side (single −30 / round −60, floor 0,
+  × $0.45). Maps only affects how the *distance* is obtained, never the amount math.
 
 ## 5. Production PostgreSQL — REQUIRED (the DB itself, not an external API)
 - **For:** the live database. Dev uses local Postgres with password `7654321` (dev-only — never prod).

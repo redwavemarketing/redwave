@@ -23,7 +23,11 @@ export interface RepLite {
 export function useClients(enabled = true) {
   return useQuery({
     queryKey: ['clients', 'list'],
-    queryFn: () => unwrap<ClientLite[]>(api.GET('/v1/clients')),
+    // /v1/clients is paginated now — unwrap the {data,meta} envelope for the dropdown (capped).
+    queryFn: async () => {
+      const page = await unwrap<{ data: ClientLite[] }>(api.GET('/v1/clients', { params: { query: { limit: 100 } } }));
+      return page.data;
+    },
     enabled,
     staleTime: 5 * 60_000,
   });

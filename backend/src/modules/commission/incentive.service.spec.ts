@@ -34,22 +34,23 @@ describe('IncentiveService.create (COMM-005)', () => {
     expect(arg.data.status).toBe('active');
   });
 
-  it('rejects a target_based incentive without target_count (422)', async () => {
+  it('rejects a one_time incentive without target_count (422)', async () => {
     const { service } = make();
     await expect(
-      service.create({ ...base, target_type: 'target_based' as never }, 'actor'),
+      service.create({ ...base, target_type: 'one_time' as never }, 'actor'),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 
-  it('stores a target_based incentive when target_count is given (modeled, but engine-deferred)', async () => {
+  it('stores a one_time incentive when target_count is given', async () => {
     const { service, prisma } = make();
     prisma.incentive.create.mockResolvedValue({
       id: 'inc2',
       name: 'Spiff',
-      target_type: 'target_based',
+      target_type: 'one_time',
+      target_count: 5,
     });
     await service.create(
-      { ...base, target_type: 'target_based' as never, target_count: 5 },
+      { ...base, target_type: 'one_time' as never, target_count: 5 },
       'actor',
     );
     const arg = prisma.incentive.create.mock.calls[0][0] as { data: { target_count: unknown } };

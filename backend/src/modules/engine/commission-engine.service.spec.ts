@@ -212,6 +212,78 @@ describe('CommissionEngineService', () => {
     expect(money(r.totalEarned)).toBe('160.00'); // 140 + 20
   });
 
+  it('EDGE — per_activation incentive with a threshold: bonus ONLY on activations beyond target_count', () => {
+    const incentive: IncentiveConfig = {
+      id: 'inc-pa',
+      scopeClientId: null,
+      scopeProductType: tv,
+      targetType: 'per_activation',
+      targetCount: 2, // pay on the 3rd activation onward
+      windowStart: '2026-01-01',
+      windowEnd: '2026-01-31',
+      amount: d('20'),
+    };
+    const activations = [
+      mk(tv, 'VF', '2026-01-10'),
+      mk(tv, 'VF', '2026-01-11'),
+      mk(tv, 'VF', '2026-01-12'),
+      mk(tv, 'VF', '2026-01-13'),
+    ];
+    const r = engine.computePeriod({ activations, config: baseConfig({ incentives: [incentive] }) });
+    const ordered = activations.map((a) => r.items.find((i) => i.id === a.id)!);
+    expect(money(ordered[0].incentiveAmount)).toBe('0.00'); // 1st — within threshold
+    expect(money(ordered[1].incentiveAmount)).toBe('0.00'); // 2nd — within threshold
+    expect(money(ordered[2].incentiveAmount)).toBe('20.00'); // 3rd — beyond
+    expect(money(ordered[3].incentiveAmount)).toBe('20.00'); // 4th — beyond
+    expect(money(r.incentiveTotal)).toBe('40.00'); // 2 × $20
+    expect(money(r.grossCommission)).toBe('120.00'); // 4 × $30 base, incentive excluded
+  });
+
+  it('EDGE — one_time incentive: a SINGLE bonus on the threshold-crossing activation', () => {
+    const incentive: IncentiveConfig = {
+      id: 'inc-ot',
+      scopeClientId: null,
+      scopeProductType: null, // any product
+      targetType: 'one_time',
+      targetCount: 3,
+      windowStart: '2026-01-01',
+      windowEnd: '2026-01-31',
+      amount: d('100'),
+    };
+    const activations = [
+      mk(internet, 'VF', '2026-01-10'),
+      mk(internet, 'VF', '2026-01-11'),
+      mk(internet, 'VF', '2026-01-12'),
+      mk(internet, 'VF', '2026-01-13'),
+      mk(internet, 'VF', '2026-01-14'),
+    ];
+    const r = engine.computePeriod({ activations, config: baseConfig({ incentives: [incentive] }) });
+    const ordered = activations.map((a) => r.items.find((i) => i.id === a.id)!);
+    expect(money(ordered[2].incentiveAmount)).toBe('100.00'); // the 3rd (crossing) activation only
+    expect(ordered[2].incentiveId).toBe('inc-ot');
+    expect(money(ordered[0].incentiveAmount)).toBe('0.00');
+    expect(money(ordered[4].incentiveAmount)).toBe('0.00');
+    expect(money(r.incentiveTotal)).toBe('100.00'); // paid exactly once
+  });
+
+  it('EDGE — one_time incentive: NO bonus when the threshold is not reached', () => {
+    const incentive: IncentiveConfig = {
+      id: 'inc-ot2',
+      scopeClientId: null,
+      scopeProductType: null,
+      targetType: 'one_time',
+      targetCount: 3,
+      windowStart: '2026-01-01',
+      windowEnd: '2026-01-31',
+      amount: d('100'),
+    };
+    const r = engine.computePeriod({
+      activations: [mk(internet, 'VF', '2026-01-10'), mk(internet, 'VF', '2026-01-11')],
+      config: baseConfig({ incentives: [incentive] }),
+    });
+    expect(money(r.incentiveTotal)).toBe('0.00'); // only 2 < 3
+  });
+
   it('EDGE — incentive does NOT apply outside its window or scope', () => {
     const outOfWindow: IncentiveConfig = {
       id: 'inc-w',

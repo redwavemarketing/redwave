@@ -12,12 +12,14 @@
  *
  *  • onRequest: attaches `Authorization: Bearer <access token>` from the session.
  *  • onResponse: on a 401 for a non-auth request, performs a SINGLE-FLIGHT refresh and RETRIES the
- *    original request ONCE; if refresh fails, signals session-expired (the AuthProvider redirects).
+ *    original request ONCE. We hard-logout ONLY if the refresh fails because the refresh token is itself
+ *    expired (401/403). A transient refresh failure (5xx / network / Render cold start) does NOT log out —
+ *    the original error is surfaced and the session is preserved for a later retry.
  */
 import createClient, { type Middleware } from 'openapi-fetch';
 import type { paths } from './generated/schema';
 import { getAccessToken } from './auth-store';
-import { notifySessionExpired, refreshAccessToken } from '../auth/session';
+import { getCsrfToken, notifySessionExpired, refreshAccessToken } from '../auth/session';
 
 const AUTH_PATHS = ['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout'];
 const isAuthRequest = (url: string) => AUTH_PATHS.some((p) => url.includes(p));
@@ -29,6 +31,12 @@ const authMiddleware: Middleware = {
     if (token) {
       request.headers.set('Authorization', `Bearer ${token}`);
     }
+    // Double-submit CSRF: echo the readable rw_csrf cookie on every request (the server checks it on
+    // mutating cookie-session requests; harmless on GETs and on the exempt pre-auth routes). — arch §security
+    const csrf = getCsrfToken();
+    if (csrf) {
+      request.headers.set('X-CSRF-Token', csrf);
+    }
     return request;
   },
 
@@ -37,14 +45,17 @@ const authMiddleware: Middleware = {
     if (response.status !== 401 || isAuthRequest(request.url) || request.headers.has(RETRIED)) {
       return response;
     }
-    const token = await refreshAccessToken();
-    if (!token) {
-      notifySessionExpired(); // session is dead → AuthProvider clears + redirects to /login
+    const result = await refreshAccessToken();
+    if (!result.ok) {
+      // Only a DEFINITIVE expiry logs out; a transient failure keeps the session (no logout on 5xx/network).
+      if (result.expired) {
+        notifySessionExpired(); // session is dead → AuthProvider clears + redirects to /login
+      }
       return response;
     }
     // Retry the original request ONCE with the new token via raw fetch (no middleware re-entry).
     const retried = request.clone();
-    retried.headers.set('Authorization', `Bearer ${token}`);
+    retried.headers.set('Authorization', `Bearer ${result.token}`);
     retried.headers.set(RETRIED, '1');
     return fetch(retried);
   },
@@ -54,5 +65,7 @@ const authMiddleware: Middleware = {
 // `/v1` or a trailing slash — see the header note above.
 const baseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || undefined;
 
-export const api = createClient<paths>(baseUrl ? { baseUrl } : {});
+// `credentials: 'include'` so the httpOnly refresh cookie + readable CSRF cookie ride every request
+// (cross-subdomain in prod, same-origin in dev). The backend CORS allowlist must echo the FE origin. — arch §security
+export const api = createClient<paths>({ ...(baseUrl ? { baseUrl } : {}), credentials: 'include' });
 api.use(authMiddleware);

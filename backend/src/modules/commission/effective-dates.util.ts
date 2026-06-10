@@ -3,7 +3,8 @@
  * closed periods (a change applies prospectively only). — SRS COMM-006, CLAUDE §3 #10
  */
 import { UnprocessableEntityException } from '@nestjs/common';
-import { dateOnly, toUtcDateOnly } from '../../common/effective-dating';
+import { dateOnly } from '../../common/effective-dating';
+import { winnipegDateOnly } from '../../common/timezone';
 
 export function parseEffectiveWindow(
   effectiveFrom: string,
@@ -11,7 +12,7 @@ export function parseEffectiveWindow(
 ): { from: Date; to: Date | null; today: Date } {
   const from = dateOnly(effectiveFrom);
   const to = effectiveTo ? dateOnly(effectiveTo) : null;
-  const today = toUtcDateOnly(new Date());
+  const today = winnipegDateOnly(); // "today" in the canonical Winnipeg zone — CLAUDE §11
   if (from.getTime() < today.getTime()) {
     throw new UnprocessableEntityException('effective_from cannot be in the past');
   }

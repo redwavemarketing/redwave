@@ -8,15 +8,18 @@
 import {
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { NOTIFICATION_EMITTER, NotificationEmitter } from '../../common/notifications/notification-emitter';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { ScopeService } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/rbac/auth-user.type';
+import { todayInWinnipeg } from '../../common/timezone';
 import { saleCodeBase, withSuffix } from './sale-id.logic';
 import { assertTransition } from './sale-status.logic';
 import { resolvePayPeriod } from './pay-period.logic';
@@ -27,17 +30,23 @@ import { ValidateSaleDto } from './dto/validate-sale.dto';
 import { SetGreenfieldDto } from './dto/greenfield.dto';
 import { BulkValidateDto } from './dto/bulk-validate.dto';
 import { ListSalesQuery } from './dto/list-sales.query';
+import { buildPage, resolveOrderBy, toSkipTake } from '../../common/pagination/paginate';
 
 const dateOnly = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
-const todayIso = (): string => new Date().toISOString().slice(0, 10);
+// Default sale_date = the CANONICAL Winnipeg calendar day (#7), so a late-night sale never lands in the
+// wrong pay period under UTC. — CLAUDE §11
 const SALE_INCLUDE = { sale_items: true } as const;
 
 @Injectable()
 export class SalesService {
+  /** Columns a client may sort the list on (allowlist — the orderBy-injection guard). */
+  private static readonly SORTABLE = ['sale_code', 'customer_name', 'sale_date', 'status', 'created_at'] as const;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: ScopeService,
+    @Inject(NOTIFICATION_EMITTER) private readonly emitter: NotificationEmitter,
   ) {}
 
   async create(dto: CreateSaleDto, user: AuthUser) {
@@ -78,7 +87,7 @@ export class SalesService {
       }
     }
 
-    const saleDate = dto.sale_date ?? todayIso();
+    const saleDate = dto.sale_date ?? todayInWinnipeg();
     const isGreenfield = dto.is_greenfield ?? false;
     const base = saleCodeBase({
       saleDate,
@@ -176,6 +185,16 @@ export class SalesService {
       before: { status: 'entered' },
       after: { status: 'validated', is_greenfield: updated.is_greenfield },
     });
+    // Best-effort, post-commit: notify the rep their sale was validated. — sale_validated / RPT-009
+    const rep = await this.prisma.rep.findUnique({ where: { id: updated.rep_id }, select: { user_id: true } });
+    await this.emitter.emitMany([rep?.user_id], {
+      eventType: 'sale_validated',
+      title: `Sale ${updated.sale_code} validated`,
+      body: `Your sale for ${updated.customer_name} has been validated.`,
+      relatedEntityType: 'sales',
+      relatedEntityId: updated.id,
+      variables: { sale_code: updated.sale_code, customer_name: updated.customer_name },
+    });
     return updated;
   }
 
@@ -270,13 +289,24 @@ export class SalesService {
     if (query.client_id) and.push({ client_id: query.client_id });
     if (query.date_from) and.push({ sale_date: { gte: dateOnly(query.date_from) } });
     if (query.date_to) and.push({ sale_date: { lte: dateOnly(query.date_to) } });
+    if (query.search) {
+      and.push({
+        OR: [
+          { sale_code: { contains: query.search, mode: 'insensitive' } },
+          { customer_name: { contains: query.search, mode: 'insensitive' } },
+        ],
+      });
+    }
 
-    const sales = await this.prisma.sale.findMany({
-      where: and.length ? { AND: and } : {},
-      include: SALE_INCLUDE,
-      orderBy: { sale_date: 'desc' },
-    });
-    return this.attachPeriods(sales);
+    const where: Prisma.SaleWhereInput = and.length ? { AND: and } : {};
+    const { skip, take, page, limit } = toSkipTake(query);
+    const orderBy = resolveOrderBy(query.sort, SalesService.SORTABLE, { sale_date: 'desc' });
+
+    const [rows, total] = await Promise.all([
+      this.prisma.sale.findMany({ where, include: SALE_INCLUDE, orderBy, skip, take }),
+      this.prisma.sale.count({ where }), // same `where` → an accurate total for the meta
+    ]);
+    return buildPage(await this.attachPeriods(rows), total, page, limit);
   }
 
   async findOne(id: string, user: AuthUser) {

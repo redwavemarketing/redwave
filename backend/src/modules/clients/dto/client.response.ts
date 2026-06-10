@@ -2,11 +2,26 @@
  * Clients & Products response DTOs — the billing-stream config the controllers return. — Batch A #2
  * `BillingRateResponse.amount` is a money STRING (#1) + carries the server-derived effective-dating `status`.
  */
-import { ApiProperty } from '@nestjs/swagger';
-import { Market, ProductType, RateKind } from '@prisma/client';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Market, RateKind } from '@prisma/client';
+import { PageMetaResponse } from '../../../common/pagination/page.response';
 
 const RATE_STATUS = ['current', 'pending', 'past'] as const;
 type RateStatus = (typeof RATE_STATUS)[number];
+
+export class ClientCustomFieldResponse {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty({ example: 'Account manager' })
+  field_name!: string;
+
+  @ApiProperty({ example: 'Jane Smith' })
+  field_value!: string;
+
+  @ApiProperty({ example: 0 })
+  display_order!: number;
+}
 
 export class ClientResponse {
   @ApiProperty()
@@ -29,6 +44,9 @@ export class ClientResponse {
 
   @ApiProperty({ type: String, format: 'date-time' })
   created_at!: string;
+
+  @ApiPropertyOptional({ type: () => [ClientCustomFieldResponse], description: 'Present on the detail GET.' })
+  custom_fields?: ClientCustomFieldResponse[];
 }
 
 export class ProductResponse {
@@ -41,14 +59,32 @@ export class ProductResponse {
   @ApiProperty()
   name!: string;
 
-  @ApiProperty({ enum: ProductType })
-  product_type!: ProductType;
+  @ApiProperty({ type: String, example: 'internet', description: 'Product-type catalogue key.' })
+  product_type!: string;
 
   @ApiProperty()
   is_active!: boolean;
 
   @ApiProperty({ type: String, format: 'date-time' })
   created_at!: string;
+}
+
+/** Paginated list envelope (arch §5.1) — one page of clients + the meta. */
+export class ClientPageResponse {
+  @ApiProperty({ type: () => [ClientResponse] })
+  data!: ClientResponse[];
+
+  @ApiProperty({ type: () => PageMetaResponse })
+  meta!: PageMetaResponse;
+}
+
+/** Paginated list envelope (arch §5.1) — one page of products (cross-client) + the meta. */
+export class ProductPageResponse {
+  @ApiProperty({ type: () => [ProductResponse] })
+  data!: ProductResponse[];
+
+  @ApiProperty({ type: () => PageMetaResponse })
+  meta!: PageMetaResponse;
 }
 
 export class BillingRateResponse {

@@ -94,3 +94,33 @@ export class ImportBatchResponse {
   })
   import_rows?: ImportRowResponse[];
 }
+
+/** Stage/remap also return the parsed headers + the applied mapping so the FE can show + adjust it. */
+export class StagedImportResponse extends ImportBatchResponse {
+  @ApiPropertyOptional({ type: [String], description: 'The parsed source column headers.' })
+  source_headers?: string[];
+
+  @ApiPropertyOptional({ type: 'object', additionalProperties: { type: 'string' }, description: 'The applied `{ systemField: sourceColumn }` mapping.' })
+  applied_mapping?: Record<string, string>;
+}
+
+/** A saved reusable column→field mapping. */
+export class ImportFieldMappingResponse {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  name!: string;
+
+  @ApiProperty({ enum: ImportSourceType })
+  source_type!: ImportSourceType;
+
+  @ApiProperty({ type: String, nullable: true })
+  client_id!: string | null;
+
+  @ApiProperty({ type: 'object', additionalProperties: { type: 'string' } })
+  mapping_json!: Record<string, string>;
+
+  @ApiProperty()
+  created_by!: string;
+}

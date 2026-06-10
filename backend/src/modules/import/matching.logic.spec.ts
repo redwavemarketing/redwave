@@ -1,4 +1,12 @@
-import { classifyHoldbackRow, classifyRateRow, classifySalesRow } from './matching.logic';
+import {
+  classifyBillingRateRow,
+  classifyClientRow,
+  classifyHistoricalSaleRow,
+  classifyHoldbackRow,
+  classifyProductRow,
+  classifyRepRow,
+  classifySalesRow,
+} from './matching.logic';
 
 describe('classifySalesRow (bulk validation — SALE-007/IMP-010)', () => {
   it('exactly one entered match → matched + matched_entity_id', () => {
@@ -19,24 +27,59 @@ describe('classifySalesRow (bulk validation — SALE-007/IMP-010)', () => {
   });
 });
 
-describe('classifyRateRow (back-dated rates — #10)', () => {
-  const good = { client_id: 'c1', product_id: 'p1', rate_kind: 'product', amount: '60.00', effective_from: '2025-01-01' };
-  it('valid shape → matched (ready to insert)', () => {
-    expect(classifyRateRow(good).match_status).toBe('matched');
+describe('classifyBillingRateRow (back-dated rates by code — #10)', () => {
+  const good = { client_code: 'VF', product_name: 'Internet', rate_kind: 'product', amount: '60.00', effective_from: '2025-01-01' };
+  const ctx = { clientExists: true, productExists: true };
+  it('valid shape + existence → matched', () => {
+    expect(classifyBillingRateRow(good, ctx).match_status).toBe('matched');
   });
-  it("rate_kind 'product' without product_id → error", () => {
-    expect(classifyRateRow({ ...good, product_id: '' }).match_status).toBe('error');
+  it("rate_kind 'product' without product_name → error", () => {
+    expect(classifyBillingRateRow({ ...good, product_name: '' }, ctx).match_status).toBe('error');
   });
   it('non-decimal amount → error', () => {
-    expect(classifyRateRow({ ...good, amount: '6o' }).match_status).toBe('error');
+    expect(classifyBillingRateRow({ ...good, amount: '6o' }, ctx).match_status).toBe('error');
   });
-  it('bad effective_from → error', () => {
-    expect(classifyRateRow({ ...good, effective_from: '01/01/2025' }).match_status).toBe('error');
+  it('client not found → error', () => {
+    expect(classifyBillingRateRow(good, { ...ctx, clientExists: false }).match_status).toBe('error');
+  });
+});
+
+describe('classifyClientRow / classifyProductRow / classifyRepRow', () => {
+  it('client: needs code/name/market∈{CA,US}', () => {
+    expect(classifyClientRow({ client_code: 'VF', name: 'Valley Fiber', market: 'CA' }, { existingClientId: null }).match_status).toBe('matched');
+    expect(classifyClientRow({ client_code: 'VF', name: 'x', market: 'XX' }, { existingClientId: null }).match_status).toBe('error');
+    // existing code → matched WITH the existing id (upsert/update)
+    expect(classifyClientRow({ client_code: 'VF', name: 'x', market: 'CA' }, { existingClientId: 'c1' }).matched_entity_id).toBe('c1');
+  });
+  it('product: needs client + a catalogue product_type', () => {
+    const row = { client_code: 'VF', name: 'Internet 1Gb', product_type: 'internet' };
+    expect(classifyProductRow(row, { clientExists: true, productTypeExists: true }).match_status).toBe('matched');
+    expect(classifyProductRow(row, { clientExists: false, productTypeExists: true }).match_status).toBe('error');
+    expect(classifyProductRow(row, { clientExists: true, productTypeExists: false }).match_status).toBe('error');
+  });
+  it('rep: rep_code never reused (#11)', () => {
+    const row = { rep_code: 'RW-D-0009', full_name: 'New Rep', hire_date: '2026-01-01' };
+    expect(classifyRepRow(row, { codeExists: false }).match_status).toBe('matched');
+    expect(classifyRepRow(row, { codeExists: true }).match_status).toBe('error'); // reuse rejected
+  });
+});
+
+describe('classifyHistoricalSaleRow (reference-only)', () => {
+  const good = { client_code: 'VF', rep_code: 'RW-D-0001', product_type: 'internet', sale_date: '2025-03-12', billed_amount: '60.00' };
+  const ctx = { clientExists: true, repExists: true, productExists: true };
+  it('valid + existing client/rep/product → matched', () => {
+    expect(classifyHistoricalSaleRow(good, ctx).match_status).toBe('matched');
+  });
+  it('no product for the client+type → error (import products first)', () => {
+    expect(classifyHistoricalSaleRow(good, { ...ctx, productExists: false }).match_status).toBe('error');
+  });
+  it('bad billed_amount → error', () => {
+    expect(classifyHistoricalSaleRow({ ...good, billed_amount: 'x' }, ctx).match_status).toBe('error');
   });
 });
 
 describe('classifyHoldbackRow (opening balances — IMP-007)', () => {
-  const base = { rep_id: 'r1', origin_pay_period_id: 'p1', amount_held: '993.00' };
+  const base = { rep_code: 'RW-D-0001', origin_pay_period_id: 'p1', amount_held: '993.00' };
   const ctx = { repExists: true, originPeriodStatus: 'closed' as const, ledgerExists: false };
 
   it('rep + closed origin + no existing ledger → matched', () => {

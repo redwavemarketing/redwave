@@ -24,6 +24,13 @@ export interface BusinessFilters {
   pay_period_id?: string;
 }
 
+// ── Cross-period trends (Super Admin only) ──────────────────────────────────────────
+export type BusinessTrends = components['schemas']['BusinessTrendsResponse'];
+export type TrendPeriod = components['schemas']['TrendPeriodResponse'];
+
+// ── Sales targets (count goals; per rep per period) ─────────────────────────────────
+export type SalesTarget = components['schemas']['SalesTargetResponse'];
+
 // ── Admin operational home ──────────────────────────────────────────────────────────
 export type AdminDashboard = components['schemas']['AdminDashboardResponse'];
 

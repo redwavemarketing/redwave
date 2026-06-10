@@ -17,6 +17,21 @@ export type StatusFilter = 'active' | 'inactive' | 'all';
 
 export type Client = components['schemas']['ClientResponse'];
 
+/** The paginated /v1/clients envelope ({ data, meta }) the server now returns (arch §5.1). */
+export type ClientPage = components['schemas']['ClientPageResponse'];
+
+export interface ClientsFilters {
+  status?: StatusFilter;
+  search?: string;
+}
+
+/** Server-side list params: filters + pagination/sort (page is 1-based). */
+export interface ClientsListParams extends ClientsFilters {
+  page: number;
+  limit: number;
+  sort?: string;
+}
+
 export type Product = components['schemas']['ProductResponse'];
 
 /** A client billing rate (what we charge the partner). The server annotates each row with `status`. */
@@ -35,3 +50,7 @@ export type UpdateClientBody = components['schemas']['UpdateClientDto'];
 export type CreateProductBody = components['schemas']['CreateProductDto'];
 export type UpdateProductBody = components['schemas']['UpdateProductDto'];
 export type CreateBillingRateBody = components['schemas']['CreateBillingRateDto'];
+export type UpdateBillingRateBody = components['schemas']['UpdateBillingRateDto'];
+/** A name/value custom field on a client (sent on create/edit; returned on the detail). */
+export type ClientCustomFieldInput = components['schemas']['ClientCustomFieldInput'];
+export type ClientCustomField = components['schemas']['ClientCustomFieldResponse'];

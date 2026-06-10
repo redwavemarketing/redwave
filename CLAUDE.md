@@ -33,11 +33,12 @@ The client-facing `.docx`/`.drawio` originals may also be kept in `docs/`; the `
 - **Frontend:** **React + TypeScript** (consumes the generated API client).
 - **Database:** **PostgreSQL**. Exact `NUMERIC` for money. JSONB where the model uses it.
 - **ORM:** **Prisma** (PostgreSQL). Money columns use Prisma **`Decimal`** (`@db.Decimal`, backed by Postgres `NUMERIC`) — **never `Float`/`number`** (#1). **Pay-run finalize (#8) and import commit run inside Prisma interactive transactions** (`$transaction`). Prisma owns the migrations (under `backend/prisma/migrations/`); `db/` documents/points to them. Pinned to **Prisma 6** — do not auto-upgrade to v7 (it drops `url` from the datasource block); the VS Code Prisma extension may flag this as an error, which is a false positive for our toolchain.
-- **Schema conventions (data model is built — all 48 entities, `init` migration applied).** Models are **PascalCase + `@@map("snake_table")`**; **columns stay snake_case**, 1:1 with `docs/data-model.md`. Surrogate UUID PKs (`@db.Uuid`), business keys `@unique`, join tables composite `@@id`. **Money `Decimal(12,2)`**; non-money decimals: pct `(5,4)`, `*_km` `(10,2)`, `rate_per_km` `(6,3)`, lat/lng `(9,6)`. **One shared `ProductType` enum.** `sale_items` snapshot fields are **nullable until paid** (#2). Polymorphic id columns (`audit_log.entity_id`, `notifications.related_entity_id`, `import_rows.matched_entity_id`) carry **no FK**. No cascade deletes (ledger preserves records).
+- **Schema conventions (data model is built — all 48 entities, `init` migration applied).** Models are **PascalCase + `@@map("snake_table")`**; **columns stay snake_case**, 1:1 with `docs/data-model.md`. Surrogate UUID PKs (`@db.Uuid`), business keys `@unique`, join tables composite `@@id`. **Money `Decimal(12,2)`**; non-money decimals: pct `(5,4)`, `*_km` `(10,2)`, `rate_per_km` `(6,3)`, lat/lng `(9,6)`. **Product types are a CONFIGURABLE catalogue** (`product_type_catalogue`, key PK + `behaviour` enum `tiered|greenfield|standard_addon`), NOT a fixed enum — the SA adds types at runtime (always `standard_addon`; the 4 core types are `is_system`, behaviour locked). `products`/`commission_flat_rates`/`incentives.scope_product_type` are String FKs → `catalogue.key`; `sale_items.product_type` stays a plain string snapshot (no FK, #2). `sale_items` snapshot fields are **nullable until paid** (#2). Polymorphic id columns (`audit_log.entity_id`, `notifications.related_entity_id`, `import_rows.matched_entity_id`) carry **no FK**. No cascade deletes (ledger preserves records).
 - **API:** **REST, described by an OpenAPI 3 spec** — the spec is the contract/seam for backend, frontend, and the future mobile app.
 - **Auth:** JWT bearer tokens. **RBAC enforced server-side** on every endpoint.
 - **Files:** S3-compatible object storage; references stored in Postgres.
 - **Background jobs:** in-stack job queue (exports, email, heavy aggregation).
+- **Dates & timezone (canonical — America/Winnipeg).** Every date-boundary decision (which pay period a `sale_date` falls in, period start/end, "today"/"now" defaults) is made in **America/Winnipeg**, via `backend/src/common/timezone.ts` (`todayInWinnipeg()` → `'YYYY-MM-DD'`, `winnipegDateOnly()` → UTC-midnight `Date`; built on `Intl.DateTimeFormat('en-CA', { timeZone })` — DST-correct, no date lib). Dates are **stored + compared as `'YYYY-MM-DD'` parsed at UTC-midnight on both sides**, so the pure date logic (`resolvePayPeriod`, `selectEffectiveRate`) stays timezone-agnostic; **only** the `now`/`today` derivations are Winnipeg-zoned. This is what keeps a late-night sale (e.g. 23:30 Winnipeg = next-day UTC) in the correct period (#7). Never reintroduce a bare `new Date()` / `toISOString().slice(0,10)` for a date boundary — use the helper. (`timezone.spec.ts` covers DST + a boundary sale.)
 
 Do not introduce a second language/runtime. The data-import module is **in-stack TypeScript**, isolated by boundary (it writes to staging tables), not by language. A separate analytics/ML service is a possible Phase-3+ decision only — not now.
 
@@ -92,6 +93,11 @@ RedWave/
 
 One module = one NestJS module owning its tables and endpoints. A module calls another's **defined interface**, never reaches into its internals.
 
+**Seeding & clean-wipe (`backend/prisma/`).** Two operator scripts share one bootstrap:
+- `seed/bootstrap.ts` — the **genesis catalogue** the system needs day-one (RBAC 15 modules/90 perms, 4 built-in roles, Super Admin, Schedule C v2 commission config, 2026 pay periods, expense/notification/chatbot configs). Idempotent upserts; **an existing Super Admin password is never overwritten**.
+- `seed/demo.ts` — a rich, **idempotent** demo (re-running wipes + regenerates transactional data — never duplicates) anchored to the **run-time current pay period** so the leaderboard/dashboards are live whenever it runs: 3 clients (VF/RF/CTI) + own products + billing rates, a manager + 8 reps (`RW-D-*`), sales across three cycles spread by `sale_date`, a **finalized** prior cycle (70/30 + holdback), clawbacks, a statement, expenses (incl. a KM log), notifications, a pending signature. It drives the **real services** so every invariant holds (#8/#2/#5/#6/#3).
+- `seed/wipe.ts` — FK-safe child→parent delete of **transactional tables only** (schema has no cascades; the DB RESTRICTs hard deletes). `seed.ts` (entry, `npm run prisma:seed`) = Nest context → bootstrap → demo. `reset.ts` (`npm run seed:reset`) = the **handover clean-wipe**: guarded by `RESET_CONFIRM=yes`, it wipes transactional data and re-seeds the bootstrap, **keeping the master catalogue** (login, roles, clients, products, reps, commission config, pay periods, chatbot config). Demo logins use `DEMO_PASSWORD` in `seed/demo.ts` (rotate via the UI).
+
 ---
 
 ## 5. RBAC (enforce server-side, every endpoint)
@@ -107,10 +113,10 @@ One module = one NestJS module owning its tables and endpoints. A module calls a
 - **Permission identity is the string `moduleKey:action`** (e.g. `users:view`); effective permissions = the union of the user's roles, built by `buildEffectivePermissions` (`common/rbac/permissions.util.ts`). Denial → `403` **and** an `access_denied` audit row.
 - **Query-level scoping** lives in `ScopeService` (`common/scope/`): `all` / `roster` / `self` rep-id scope, plus profile-review routing. Apply `where: { rep_id: { in: … } }`; never filter after fetch.
 - **Auditing is explicit** at the service layer via `AuditService` (`common/audit/`, `@Global`) — accurate before/after — not a magic interceptor; the guard logs denials.
-- **Auth stack:** `@nestjs/jwt` with **custom guards (no passport)**; **access + refresh** tokens (separate secrets, env `JWT_*`); password hashing with **bcryptjs** (`password_hash` never selected/returned).
+- **Auth stack:** `@nestjs/jwt` with **custom guards (no passport)**; **access + refresh** tokens (separate secrets, env `JWT_*`); password hashing with **bcryptjs** (`password_hash` never selected/returned). **TTLs are ms-strings (not coerced):** `JWT_ACCESS_TTL` (`'15m'`) / `JWT_REFRESH_TTL` (`'7d'`) are passed **verbatim** to `signAsync({ expiresIn })` — jsonwebtoken parses the string natively. Do **not** wrap them in `parseInt`/`Number` (that yields `15`/`NaN` ms → tokens expire instantly, the classic "logged out within a minute"). `token.service.spec.ts` locks the access call to `expiresIn: '15m'` (string). The premature-logout bug was **not** here — it was the frontend refresh clearing the session on transient failures; see the §13 auth note.
 - **HR-field profile edits** (name/phone/avatar) go through `ProfileChangeRequest` review (`account` module) — never a direct write; **theme applies instantly**. (SRS §4.4)
-- **RBAC catalogue:** 15 module keys + 6 actions seeded as 90 permissions; 4 built-in (`is_system`) roles (`prisma/seed.ts`, idempotent). Built-in roles can't be deleted/renamed (RBAC keys off names like `Super Admin`). Module keys live in `common/rbac/rbac.constants.ts`. The `permissions` table carries `@@unique([module_id, action])`.
-- **API surface:** all routes under **`/v1`** (URI versioning; `/health` is version-neutral); Swagger UI at **`/docs`**; `npm run contract:export` writes the spec to `contract/openapi.yaml`.
+- **RBAC catalogue:** **18 module keys** + 6 actions seeded as the standard grid (`billing_rates` — its full 6-action set gates the client billing rate cards, **granted to Super Admin only** by default so partner financials aren't visible to every `clients:view` holder; a custom Business-Partner role can be granted `billing_rates:view`; **and `audit`** — `audit:view`/`audit:export` gate the SA audit log + per-record History, **Super Admin only** by default — §13 Security), **plus two off-grid permissions `notifications:broadcast` + `reports:business`** (each kept off the module×action grid so the action doesn't cross-product onto every module: `broadcast` gates the manual broadcast, `business` gates the business/executive dashboard + cross-period trends); 4 built-in (`is_system`) roles (`prisma/seed.ts`, idempotent). `broadcast` and `business` are added to the `PermissionAction` Prisma enum (migrations) and granted to **Super Admin only** (already in the SA's all-perms grant); each is seeded by an explicit `permission.upsert` after the grid. Built-in roles can't be deleted/renamed (RBAC keys off names like `Super Admin`). Module keys live in `common/rbac/rbac.constants.ts`. The `permissions` table carries `@@unique([module_id, action])`. **The catalogue is unchanged by the global-search endpoint** — `/v1/search` adds **no new permission**; it reuses the per-entity reads (`hrm:view`/`clients:view`/sales scope) to gate each result group.
+- **API surface:** all routes under **`/v1`** (URI versioning; `/health` is version-neutral); Swagger UI at **`/docs`** (dev only — in production it is DISABLED unless `ENABLE_SWAGGER=true`, then gated behind HTTP Basic; never public — §13 Security); `npm run contract:export` writes the spec to `contract/openapi.yaml`.
 - **Global error envelope (built — `common/filters/all-exceptions.filter.ts`, Batch A #1).** One `APP_FILTER` (`@Catch()`, registered in `app.module.ts` like the global guards) normalizes **every** error to the contract envelope **`{ error: { code, message, details } }`** (arch §5.1), statuses preserved. Three classes: **`HttpException`** → `CODE_BY_STATUS[status]` (400→`BAD_REQUEST`, 401→`UNAUTHORIZED`, 403→`FORBIDDEN`, 404→`NOT_FOUND`, 409→`CONFLICT`, 422→`UNPROCESSABLE_ENTITY`), message from the response (array joined → `details.messages`), structured payloads (billing's **`unpriced`**, the import gate) preserved into `details`; **`DomainError`** (the **framework-free** marker `common/errors/domain-error.ts` — extends `Error`, **no `@nestjs/common` import**, carries `code`/`message`/`details?`) → **422**; **anything else** (bare `Error`, Prisma, the engine's internal-invariant throws) → **masked 500** generic message + `details.correlationId` (`randomUUID()`) + a server-side `Logger.error` (no internal leak, arch §11). **Map a client-fault domain error at the service boundary**, never inside pure/mirrored logic: e.g. `tier-schedule.service` wraps the pure `validateTierBrackets` bare-`Error` in `DomainError('TIER_SCHEDULE_INVALID', …)`; the engine throws are **left bare → stay 500** (real server faults, NOT 422). Contract: `ErrorEnvelopeDto` is registered via `extraModels` (in `main.ts` + `scripts/export-openapi.ts`) so the envelope is documented in `components.schemas` (per-endpoint `@ApiResponse` wiring still deferred — responses are `never`-typed). FE companion: `frontend/src/lib/query/unwrap.ts` reads `body.error.message`/`body.error.details`. **Reuse `DomainError` for any new client-fault domain rule** instead of returning a bare `Error` (→ 500) or coupling pure logic to Nest.
 - **Sensitive-PII gating (built, HRM):** sensitive fields are **redacted in the query/response server-side**, gated on a permission — e.g. rep `payment_details` and document `file_url`s require **`hrm:edit`** (a plain `hrm:view` caller gets them nulled), computed from `user.permissions.has(permissionKey(...))`. Sensitive values are also kept **out of audit payloads**. Reuse this redaction pattern for other PII.
 - **Sale lifecycle + Sale ID (built, Sales):** the **§16 state machine** is the authoritative pure model in `modules/sales/sale-status.logic.ts` (`assertTransition` → 409 on any invalid move); Sales owns create→entered, validate (entered→validated), delete (entered|validated→**soft** `status=deleted`); in_pay_run/paid/clawed_back are triggered by Pay Run/Clawback. The composite **Sale ID** is pure (`sale-id.logic.ts`: `sale_date[-mpu]-client`, duplicate → `-1/-2`, never blocked). Sales **produces activations only** — `sale_items` snapshot fields stay **NULL** until Pay Run (#5/#2). Reads/mutations are **scoped via `ScopeService`** in the query (rep=own/manager=roster/admin=all).
@@ -140,7 +146,7 @@ The most important piece. Build it **first, in isolation, against tests, before 
 | 2 | 17–35 | $145 |
 | 1 (highest) | 36+ | $160 |
 
-Flat: Greenfield internet **$100** (excluded from tally), TV **$30**, Home Phone **$30**.
+Flat: Greenfield internet **$100** (excluded from tally), TV **$30**, Home Phone **$30**. (Flat rates are a **keyed map** `Record<key, Decimal>` in the engine, not a fixed trio — an SA-added `standard_addon` type is priced by its own effective-dated flat rate; the tally stays `=== 'internet'` and greenfield mapping is unchanged, so #5/#9 are provably preserved.)
 
 ### Implementation (built — `backend/src/modules/engine/`)
 - **Pure & isolated:** `CommissionEngineService` has no constructor deps and imports **only**
@@ -155,7 +161,7 @@ Flat: Greenfield internet **$100** (excluded from tally), TV **$30**, Home Phone
 - **Split rounding (durable):** `advance = roundHalfUp(gross × advancePct)`, `holdback = gross −
   advance` — derived so the two always sum to gross exactly (no lost cent). HALF_UP, applied only at
   the split; passed per-call (no global decimal.js config mutation).
-- **`per_activation` incentives** computed (scope + sale_date window); **`target_based` deferred** (§12).
+- **Both incentive modes applied** (threshold-relative, period-level pass): `per_activation` (bonus beyond `target_count`; null/0 = all) + `one_time` (one bonus at `target_count`, frozen onto the crossing activation).
 - **Config provider (built — `modules/commission/commission-config.provider.ts`) closes the loop:**
   `getEngineConfig(date)` reads the effective-dated config and returns the typed `EngineConfig` the
   engine expects. **This is the Prisma.Decimal → decimal.js boundary** (keeps the engine pure).
@@ -237,36 +243,38 @@ This file is the project's **persistent memory**. Claude Code loads it at the st
 ## 12. Deferred items (to revisit)
 
 - **`roles.status` for soft-deactivation of roles.** AUTH-003 says the Super Admin can *deactivate* custom roles, but the data model has no status column on `roles`, so role removal is currently implemented as **delete-of-custom-only** (built-in roles blocked with `409`). Add a `roles.status` (active/inactive) field in a future migration and switch the "deactivate" path to a soft status change rather than a hard delete.
-- **`target_based` incentives in the Commission Engine.** Commission Config can now **create/store** `target_based` incentives (modeled, flagged), but the engine still **does not apply** them — its exact rule (one-time bonus vs per-activation after threshold) isn't pinned down in the SRS. Confirm the rule with Redwave, then implement it in `CommissionEngineService` and add fixtures.
-- **Holdback-release timing (SRS §17.1, PROPOSED).** Commission Config persists the bulk/sticky setting only: `release_rule` is stored as a **free string** (latest wins) and is **not interpreted** here. The Pay Run module will interpret which cycle a period's 30% releases into — confirm the rule with Redwave before building that logic.
+- **Dual-mode incentives in the Commission Engine (DONE — CONFIRMED).** Both modes are applied by the engine, threshold-relative: **`per_activation`** pays the bonus on each matching activation BEYOND `target_count` (null/0 = every activation — back-compatible) and **`one_time`** pays a single bonus once the rep reaches `target_count` matching activations (frozen onto the threshold-crossing activation). The enum value `target_based` was **renamed `one_time`** (Prisma `ALTER TYPE … RENAME VALUE` migration). Incentives apply in a period-level pass in `CommissionEngineService`, stay separate from the 70/30 base (#1), and freeze into the snapshot (#2). Fixtures cover both modes + the threshold boundary.
+- **Holdback-release timing (SRS §17.1, DONE — CONFIRMED).** The Super Admin sets a sticky **structured** rule via Commission Config: `release_rule` is `cycles:N` (release in the Nth pay period after the origin) or `days:N` (first period whose payday ≥ origin payday + N days); `next_cycle_after_30_days` is the `days:30` alias. A later change affects only future holds.
 - **Back-dated / historical billing-rate loading (DONE — Import).** Clients & Products rejects a past `effective_from` (422) to protect closed periods; historical rates load through the **Import** module's `master_migration`+`clients` path (`billing-rate.handler.ts`, reconcile-gated, writes `client_billing_rate` directly, #10). The live POST still rejects back-dating.
 - **`rate_kind ↔ product_id` pairing rules.** Currently only `rate_kind='product'` is required to carry a `product_id`; add-on kinds (tv_addon/hp_addon/bundle_bonus/spiff) may be client-wide (null product). Confirm with Redwave whether any add-on kind must (or must not) target a product.
-- **Object-storage upload wiring (HRM documents & equipment).** Rep documents currently store an object-storage **reference** (`file_url`) only; the actual multipart upload → S3-compatible storage is **stubbed/deferred**. Wire the storage provider + access-controlled URLs (arch §11) so the POST accepts a file, not just a reference.
+- **Object-storage upload wiring (DONE — HRM rep documents; equipment has no file column).** Rep documents upload for real: `POST /v1/reps/{id}/documents` is multipart (PDF/image → `StorageService.upload('rep-docs', …)`, storing the object **path**; the `hrm:edit` redaction of `file_url` is preserved) + `GET /v1/reps/{id}/documents/{docId}/file-url` (`hrm:edit`, short-TTL signed URL). `RepEquipment` has **no file column** — if Redwave wants an equipment agreement/photo, add a column via migration then wire it the same way.
 - **Dedicated `reps.contact` column.** Rep contact is currently sourced from the optional linked user (`rep.user_id → users.email/phone`); reps without a login have no separate contact. If Redwave needs contact on login-less reps, add a `reps` contact (phone/email) column via migration.
 - **Greenfield two-step at close (SALE-006/§17.2, PROPOSED).** Sales captures the confirmed flag as `sale.is_greenfield` + per-item `sale_item.counts_toward_tally` (`= internet && !is_greenfield`), set at entry and at validation. **Pay Run** must, at period close, map a greenfield internet activation to the flat **$100** rate (engine `productType=greenfield_internet`) when building engine inputs — Sales never runs the engine. Confirm the rule with Redwave.
 - **Bulk-validation ↔ Import boundary (DONE — Import).** Sales implements **queue bulk-select** validation (`POST /v1/sales/bulk-validate`) and now exposes the tx-aware `SalesService.validateWithinTx`. The **client-report ingestion** (MPU matching, manual reconciliation, atomic commit) lives in the **Import** module (`client_report`+`sales`), which drives `validateWithinTx` inside its commit transaction. Real Excel/CSV parsing is still stubbed (rows fed).
-- **Holdback-release timing in Pay Run (SRS §17.1, PROPOSED).** Finalize schedules each 30% hold via the pure `modules/payrun/holdback-release.logic.ts#resolveScheduledReleasePeriod` (default `next_cycle_after_30_days` = first period with payday ≥ origin payday + 30d). Confirm the exact rule with Redwave and change that one function.
-- **Expense ↔ Pay Run seam (built, rebound).** `EXPENSE_TOTAL_PROVIDER` is now bound to `ExpensePayrunProvider` (`modules/expenses/`); it is **read-only** (no finalize hook — unlike Clawback). Each report's `pay_period_id` is fixed at submit from `week_start` (#7), so `getApprovedExpenseTotal(rep, period)` is period-scoped and Pay Run's own finalize idempotency pays an approved report **exactly once**. Pay Run finalize is **unchanged**. Edge: a report **approved after** its period was already finalized is never auto-paid — it needs manual re-assignment to an open period (no `ExpenseReportStatus='paid'` / `paid_in_pay_run_id` column exists; adding one would let a finalize hook sweep late approvals).
+- **Holdback-release timing in Pay Run (SRS §17.1, DONE — CONFIRMED).** Finalize schedules each 30% hold via the pure `modules/payrun/holdback-release.logic.ts#resolveScheduledReleasePeriod`, which parses the sticky `cycles:N` / `days:N` rule (both modes, spec'd). At finalize a rep's pending **clawback sets off against the due release first** (records `holdback_ledger.clawback_applied`, lowers `amount_released`); only the remainder hits net — the clawback is recovered exactly once, net unchanged, books show the source. Same atomic/idempotent `$transaction` (#8).
+- **Expense ↔ Pay Run seam (built, rebound; ITEM-FIRST).** `EXPENSE_TOTAL_PROVIDER` is bound to `ExpensePayrunProvider` (`modules/expenses/`); **read-only** (no finalize hook — unlike Clawback). It sums approved expense **ITEMS** directly by `{rep_id, pay_period_id, status:'approved'}` — each item's `pay_period_id` is derived from its **own `expense_date`** at create (EXP-009), so an approved item pays in the cycle of its date and Pay Run's finalize idempotency pays it **exactly once**. Pay Run finalize is **unchanged** (`expense-payrun.provider.spec` asserts the item-level where + no report join). Edge: an item **approved after** its period was already finalized is never auto-paid — needs manual re-assignment to an open period (no `paid_in_pay_run_id` column).
 - **Clawback ↔ Pay Run seam (built, rebound).** `CLAWBACK_TOTAL_PROVIDER` is now bound to `ClawbackPayrunProvider` (`modules/clawback/`); finalize gained one hooked line `markApplied(rep, period, run, tx)` inside its transaction (atomic pending→applied + link). Two known edges: (a) a clawback entered *during* a finalize (admin-gated, rare) could be marked-but-not-deducted or vice-versa — acceptable now, revisit if concurrent entry becomes real; (b) a clawback for a rep with **no validated sales** in the period being run is not applied until their **next run that has a line** (it stays pending) — fine for active reps, but a terminated rep with a trailing clawback would never have it applied.
 - **`pay_run_exports` table (PAY-010).** The data model has no pay-run export table, so the ADP export is currently generated, the run marked `exported`, and the **audit row is the stored record**. Add a `pay_run_exports` table (file_url/format/generated_by, like `expense_exports`) if the artifact must be persisted.
-- **Expenses built (any user submits; report-level approval).** `modules/expenses/` — weekly `expense_reports` + `expense_items`; the **km log is pure** (`km.logic.ts`: single −30 km / round −60 km, billable floored at 0, `$0.45/km`). Approval is at the **report** level (submitted→approved/rejected/sent_back); **edit-rights gating** (EXP-007): pre-approval needs `expenses:edit` (Manager/Admin), **after approval only a Super Admin** may edit. Receipt requirement is **config-driven** (`expense_field_configs.requires_receipt`; km=false, others true — seeded). Meal eligibility is the **approver's judgement**, not auto-enforced. Scoping reuses `ScopeService` (own = `submitted_by`, roster = `rep_id ∈ roster`, all). Manager seed grant gained `expenses:create`/`edit`.
+- **Expenses built (ITEM-FIRST; per-item approval).** `modules/expenses/` — the **expense item is the atomic unit**: `expense_items` gained `submitted_by`/`status`/`approved_by`/`approved_at`/`rep_id`/`pay_period_id` (derived from `expense_date`, EXP-009) and `expense_report_id` is **nullable** (the `expense_reports` table is kept for history/optional grouping; new items are report-less — migration `expense_items_item_first` backfills + applies with `migrate deploy`). Endpoints at **`/v1/expense-items`** (`ExpenseItemsController`): create one/**several** in a tx, paginated+scoped list (filters status/category/rep/client/period/date/search), per-item edit, **per-item + bulk review** (`/bulk-review`), delete. The **km log is pure** (`km.logic.ts`: single −30 / round −60, floor 0, `$0.45/km`); the km amount is **server-authoritative**. Approval is **per item** (submitted→approved/rejected/sent_back); **edit-gating** (EXP-007): pre-approval needs `expenses:edit` (Manager/Admin), **after approval only Super Admin**; delete (not-yet-approved) needs `expenses:delete` (Admin/SA). KM dedup is **one per (rep, expense_date)**. Receipt is **config-driven** (`expense_field_configs.requires_receipt`). Meal eligibility = approver judgement. Scoping reuses `ScopeService` (own = `submitted_by`, roster = `rep_id ∈ roster`, all). Seed grants: Admin gained `expenses:delete`.
+- **Expense KM Maps + receipt storage (WIRED, env-gated, graceful).** **Distance:** `MapsService` (`GOOGLE_MAPS_API_KEY`) re-derives the authoritative route distance from the stops via the Directions API; falls back to the client `total_km` when no key / stub coords / error. FE (`VITE_GOOGLE_MAPS_API_KEY`, `@react-google-maps/api`) does Places autocomplete + a route map + auto-distance, else manual entry. **Receipts:** `common/storage` `StorageService` (Supabase) + `POST /v1/expense-receipts` (multipart) returns a signed URL; falls back to a selection-only reference when unconfigured. Both never block the build/tests without keys.
 - **Expense km-rate config.** The km rate is the **constant `0.45 $/km`** (`km.logic.ts#DEFAULT_RATE_PER_KM`) — there is no rate-config table. If Redwave changes the rate or wants it effective-dated, add a config row + read it at submit (reuse the effective-dating pattern).
 - **Configurable expense categories beyond the 7 enum values.** `expense_field_configs` is an open catalogue (label/requires_receipt/is_active), but `expense_items.category` is bound to the **`ExpenseCategory` enum** (km/meals/hotel/flight/rental/gas/other). A new `category_key` is catalogue-only until an **enum migration** adds the value; the POST endpoint accepts the config row but items can't use it yet.
-- **Real expense export generation.** `POST /v1/expense-exports` records an `expense_exports` row with a **stubbed `file_url`** (`s3://…`); the actual PDF/Excel render + object-storage upload is deferred (same as HRM document upload). Wire the storage provider + generator.
+- **Expense export (FE file = real; server record = stub).** The FE generates the actual **CSV/Excel/PDF** client-side via the Batch-1 `ExportMenu`/`exportRows` (per-item rows or grouped daily/weekly/monthly buckets). The **server-recorded** `POST /v1/expense-exports` still writes an `expense_exports` row with a **stubbed `file_url`** (`s3://…`) — the server-side render + object-storage upload is still deferred (reuse `common/storage`).
 - **2026 pay-period anchor/payday offset.** The seed generates a standard bi-weekly schedule (anchor Sunday `2026-01-04`, payday = close + 13d). Confirm the exact Redwave 2026 schedule + payday offset; adjust `pay-periods.seed-data.ts` if needed.
 - **Billing built (read-only over sales × `client_billing_rates`; computes no commission).** `modules/billing/` — per client+period: **client statement** (one line per **sale** = customer/household, `products_summary` + `line_total`) and one-line **commission invoice**. **#3 is the law here**: priced **solely** from `client_billing_rates` (only `rate_kind='product'`, effective on each **sale_date** via the shared `selectEffectiveRate`, #7/#10) — **zero** path reads `commission_*`/engine; the pure `statement.logic.ts#buildStatement` is reused by the invoice so `total_commission` == statement `total_amount` (billing stream only). Asserted by `billing.no-commission.spec` (structural source scan + behavioral throw-on-touch Prisma mock + total equivalence). Confirmed rules: **invoice total = billing-stream statement total** (NOT rep payout); **missing rate → 422** (never silently under-bill); confirmed sales only (`validated|in_pay_run|paid`), excluding clawed-back sales **and** clawed-back items; **NO GST** (no tax field); **replace-in-place** regeneration per (client, period) in a txn (no `@@unique`, no silent dup). **No `ScopeService`** (per-client partner data, RBAC `billing:{view,create,export}`, Admin/Super Admin only). No seam, no migration, no Pay Run change.
 - **Billing add-on `rate_kind` pricing (deferred).** Only `rate_kind='product'` is applied when pricing a statement; the add-on kinds (`tv_addon`/`hp_addon`/`bundle_bonus`/`spiff`) are **not yet combined into line totals** — their combination rules aren't pinned down. Confirm with Redwave, then extend `StatementService.priceClientPeriod` (the pure `buildStatement` already sums whatever priced items it's given).
-- **Real billing export generation.** `POST /v1/statements/{id}/export` and `/v1/invoices/{id}/export` (and generation itself) set a **stubbed `file_url`** (`s3://…`); the actual Excel/PDF render + object-storage upload is deferred (same as HRM/Expenses). Wire the storage provider + generator. There is **no `billing_exports` table** — the `file_url` lives on the statement/invoice row and the audit row records the export.
-- **Documents & E-Signature built (workflow + status + audit; upload & provider stubbed).** `modules/documents/` — upload → share → request signatures → sign/decline → per-signer signed copies, with the overall status **derived** by the pure `document-status.logic.ts` (`deriveRequestStatus`/`deriveDocumentStatus`) + recomputed in a `$transaction` after every action (`status.recompute.ts`). **Share == signature request** (no shares table; DOC-002 unifies them); recipients become the **visibility** set — a user sees only documents they own or are a recipient of, **Admin/Super Admin see all** (user-based `OR` in the query, NOT `ScopeService` which is rep-based). **Decline is terminal** (request + document → `declined`). **RBAC maps to the real 6 actions**: upload + request = `documents:create` (+ owner/admin row gate on request); reads = `documents:view`; **sign + cancel carry NO permission** — authenticated + row-level (recipient / requester-owner-admin), per arch §6.10 "any (recipient)". Re-acting on a signature → 409; per-signer `signed_file_url` stub set on sign, `Document.original_file_url` **never mutated** (DOC-004); decline/sign time+IP captured in the **audit_log** (no `updated_at`/`declined_at` columns; DOC-007). Seed: Manager + Sales Rep gained `documents:create` (DOC-002). **Stubbed**: binary upload → object storage, and the e-signature **provider** (model the references/events; real integration plugs in later). Signature events (request/sign/complete) now emit notifications via the **`NOTIFICATION_EMITTER` seam** (noop interface in `documents/seams/`, rebound by `NotificationsModule`); `DocumentsModule` imports `NotificationsModule` (one-directional). No migration.
-- **Data Import & Integration built (stage → reconcile → commit; atomic + idempotent #8).** `modules/import/` — the generic pipeline over `import_batches`/`import_rows`. **Stage** classifies each fed row (file upload stubbed; rows in the request body) via pure logic (`mapping.logic` `applyMapping`, `matching.logic` `classify{Sales,Rate,Holdback}Row`) → `matched/unmatched/duplicate/error/ignored` + counts. **Reconcile** (match/edit/ignore) recomputes counts. **Commit** runs the pure `reconcile-gate.logic#evaluateGate` (block while any row is unmatched/duplicate/error; `balance_migration` must also reconcile to the **operator-provided** `reconcile_total`, IMP-007) then applies all rows in **one `prisma.$transaction`** — a throw rolls back the entire batch (stays `staged`, retryable); re-committing a `committed` batch is a **no-op** (state-based idempotency, no key column). Three supported pairings: **`client_report`+`sales`** drives `SalesService.validateWithinTx(tx,…)` (entered→validated, atomic, never reimplemented); **`master_migration`+`clients`** inserts back-dated `client_billing_rate` rows directly (the sanctioned #10 path, bypassing the Clients 422); **`balance_migration`+`holdback`** inserts opening `holdback_ledger` entries (`release_status='scheduled'`, target via the shared `resolveScheduledReleasePeriod`). **Opening-holdback no-double-count is structural**: origin must be a **closed/paid** period (open origins rejected at stage) that Pay Run never re-finalizes, so its freeze-once guard never recreates the hold; it releases **once** when the scheduled period finalizes (proven by smoke). RBAC per arch §6.11: create/view/edit + **commit = `import:approve`** (Admin/Super Admin). **Sales seam added:** `SalesService.validateWithinTx(tx,id,dto,user)` (public `validate` wraps it + audits; `loadScoped` gained an optional tx). ImportModule imports SalesModule (one-directional).
-- **Import deferrals.** **Historical/paid sales LOAD** (`master_migration`+`sales`) is unsupported (rejected at stage) — reconstructed paid snapshots conflict with #2 (frozen only by Pay Run) and #5 (engine owns tiers); confirm the go-live rule then build. **No `import_batch_id`/`migration_origin` column** on live targets (sales/client_billing_rates/holdback_ledger) — SRS §15.4 implies one, but schema is frozen; traceability is **one-directional** via `import_rows.matched_entity_id` → the live id (+ batch `source_type`). Add the columns via migration if reverse (entity→batch) lookup is needed. **`mixed` import_type** unsupported. **Field-mapping CRUD/editor** deferred (a saved `import_field_mappings.mapping_json` is applied if `field_mapping_id` given; else identity). **Real Excel/CSV parse + file upload** stubbed (rows fed; `source_file_url` is a stub `s3://…`).
+- **Real billing export generation (DONE — Billing batch).** Statements/invoices/QuickBooks-CSV now render for real ON DEMAND (exceljs / pdf-lib / hand-rolled CSV) and stream from the FROZEN record; a `billing_exports` table records each artifact (+ Supabase upload when configured). Statements/invoices are also gapless-numbered + immutable now. See the §13 "Billing — gapless numbering · immutability · reconciliation · QuickBooks" subsection.
+- **Documents & E-Signature built — REAL storage + in-system stamping (no e-sign vendor).** `modules/documents/` — upload (real PDF → Supabase) → share + **place fields** → sign (server **stamps** a per-signer copy) / decline / sign-upload → final all-signatures copy, with the overall status **derived** by the pure `document-status.logic.ts` (`deriveRequestStatus`/`deriveDocumentStatus`) + recomputed in a `$transaction` after every action (`status.recompute.ts` — UNCHANGED). **Share == signature request** (no shares table; DOC-002); recipients become the **visibility** set — a user sees only documents they own or are a recipient of, **Admin/Super Admin see all** (user-based `OR` in the query, NOT `ScopeService`). **Decline is terminal**. **RBAC maps to the real 6 actions**: upload + request = `documents:create`; reads + the `…/file-url` endpoints = `documents:view`; **sign / sign-upload / cancel + `/v1/signatures/{id}/file-url` carry NO permission** — authenticated + row-level (recipient / requester-owner-admin), per arch §6.10. Re-acting → 409. **Storage model (the law):** files (original, per-signer copy, final copy, saved-signature images, rep docs) live in Supabase by **object PATH**; bytes are served only via short-TTL signed URLs minted by the visibility-gated `…/file-url` endpoints — never public; `Document.original_file_url` is **set once, never mutated** (DOC-001/004). **Stamping** = `pdf-lib` (`stamp.service.ts` + the pure `stamp.logic.ts`: top-left-fraction → pdf-lib points, unit-tested) — loads the original, draws each field (signature/initial → image, date → signing date, text → typed value), uploads a NEW object; graceful no-op when storage is off. **PDF-only** at upload (non-PDF → 422; Word→PDF conversion deferred, §12). **New entities** (migration `20260610130000_documents_esign_real`): `signature_fields` (per request/recipient: type signature|initial|date|text, page, normalized x/y/w/h, value_text/value_image_path) + `user_signatures` (per-user saved reusable signature, method, is_default) + `signature_requests.completed_file_path`. **Saved signatures** = own-scoped `/v1/account/signatures` CRUD (no module permission). Signature events (request/sign/complete) emit via the **`NOTIFICATION_EMITTER` seam** (rebound by `NotificationsModule`). decline/sign time+IP in the **audit_log** (DOC-007). Seed unchanged (`documents:create` already on Manager + Sales Rep; **no new permission** — saved signatures + field placement + file-url all ride existing gates).
+- **Data Import & Integration — REAL upload + parse + 7 targets + historical sales (stage → reconcile → commit; atomic + idempotent #8).** `modules/import/`. **Real file upload**: `POST /v1/imports` is **multipart** (xlsx/xls/csv/tsv) → `ParserService` (**exceljs** + **papaparse**) → `applyMapping` → `cleanMappedRow` (pure `clean.logic`: trim, **date→'YYYY-MM-DD'** by the cell's own day [no DST drift], **money→exact decimal string**, **codes UPPER-cased** [kills VF/Vf], missing→null) → classify → stage; the source file is stored via `StorageService.upload('imports')`. **Mapping is auto-suggested** from headers (pure `suggest-mapping.logic`) when no `field_mapping_id`; the `target-fields` registry (per `${source}:${import_type}`: field+type+aliases+required+dict) is the single source of truth for cleaning + suggestion + templates. **Mapping CRUD** (`/v1/import-mappings`, IMP-002) + **`POST /:id/remap`** (re-apply a mapping to the stored `raw_data`, no re-upload). **7 targets**: `client_report`+`sales` (bulk validation → `SalesService.validateWithinTx`); `master_migration`+`clients`/`products`(+inline rate)/`billing_rates`(back-dated #10)/`reps`/`sales`(**historical**); `balance_migration`+`holdback`. Code-based classifiers + handlers (`handlers/master.handlers` + the re-keyed billing-rate/holdback) resolve client_code/rep_code/product_name → ids within the tx. **Commit** = the pure `reconcile-gate.logic#evaluateGate` (block any unmatched/duplicate/error; `balance_migration` reconciles to the operator `reconcile_total`, IMP-007) then ONE `prisma.$transaction` (throw → whole batch rolls back, stays `staged`); re-commit is a **no-op** (state-based). **Error report** `GET /:id/error-report` (CSV). RBAC per arch §6.11: create/view/edit + **commit = `import:approve`** (Admin/SA) — **no new permission** (mapping CRUD + remap + error-report ride existing). ImportModule imports StorageModule + SalesModule (one-directional).
+- **Historical sales (CONFIRMED rule, IMP-012).** `master_migration`+`sales` → `sale.status='historical'` + `sale_items` with `counts_toward_tally=false`, commission snapshots **NULL** (#2: not a commission record), `historical_billed_amount` set (the source-file BILLED amount — a **billing-stream reference**, never commission, never joined to commission_*, #3), `import_batch_id` set (IMP-008). **Reference-only**: every rep-facing query already filters `CONFIRMED=[validated,in_pay_run,paid]` (or `'validated'`), so `historical` is **auto-excluded** from pay run / commission / tier / leaderboard / billing / clawback with NO filter change (a `dashboards.service.spec` locks it). The **Business dashboard ALONE blends it**: `business()`+`businessTrends()` add a separate historical `sale_items` pass into revenue (+Σ`historical_billed_amount`) + total_activations + by-product/by-client mix (current + prev), never into internet tally / greenfield / tier / payout. `SaleStatus` += `historical` (terminal, `sale-status.logic` `historical:[]`); migration `20260610140000_import_real_historical` (+ `historical_billed_amount`, `ImportType.billing_rates`, `sales.import_batch_id`).
+- **Import deferrals (remaining).** **`mixed` import_type** unsupported. **Provenance is one-directional** for non-sales targets (clients/products/reps/rates/holdback) via `import_rows.matched_entity_id` (only **sales** carry `import_batch_id`). VF/RF/CTI templates are **sensible defaults** (`frontend/.../templates.ts`) — refine from a real file (import is mapping-driven, so any layout works). The **server-recorded** export render stays the only stub (FE templates are real, generated via `exportRows`). Excel parsing uses **exceljs** (not SheetJS `xlsx` — parse-side CVE avoidance, consistent with the export side).
 - **Reporting & Dashboards built (read-layer; NO money recompute; leakage-scoped).** `modules/reporting/` — the final backend module: four role-scoped dashboards, a counts-only leaderboard, notifications, and a scoped read-only chatbot. **Every read is scoped server-side**: **rep** dashboard scopes to `user.repId` *directly* (null → 403 + audit — NOT `getRepScope`, which returns `roster` for a player-coach); **manager** uses `getRepScope` roster and **rejects a bare rep** (`scope.level==='self'` → 403); **business** is `@RequirePermission('reports','view')` + a service `if(!isSuperAdmin) 403+audit` (there is **no `business` action**); **admin** = `reports:view` + Admin/SA queues. **All money is READ** from `pay_run_lines`/`holdback_ledger`/`clawbacks`/`client_statements` (business net_margin = revenue − payout, a display subtraction — never recomputed, #1/#5); counts from `sales`/`sale_items`; tier-progress is a pure count→bracket lookup (`tier-progress.logic`, no rates). **Leaderboard** = company-wide ranked internet-activation **counts only** (no money field — asserted), visible to anyone with `reports:view` (Sales Rep seed gained `reports:view`). **Notifications** (`NotificationsModule`): `notify(event,user,…)` reads the global `NotificationEventSetting` (Super-Admin-set, **no per-user override**), creates in-app rows + stubbed `EMAIL_DISPATCHER`; best-effort (never breaks the triggering action); `GET /v1/notifications` is own-only; settings GET/PATCH gated `settings:{view,edit}` (Super Admin). **Chatbot** (`POST /v1/chatbot/query`, authenticated): the stubbed `LLM_PROVIDER` returns ONLY an allow-listed intent (no ids/SQL); tools take **only the AuthUser** + are entitlement-gated (`isToolAllowed`) → a rep can never retrieve another rep's/role's data regardless of prompt (proven by smoke). Seeded: 8 notification settings (`rate_change` in-app-only, RPT-010) + a `gemini` `ChatbotConfig` (`is_active=false`).
 - **Reporting deferrals.** **Email/SMS dispatch stubbed** (`EMAIL_DISPATCHER` noop — real SMTP rebinds). **Gemini LLM stubbed** (`LLM_PROVIDER` `StubLlmProvider` keyword router — real provider rebinds; `ChatbotConfig` row exists). **Sales targets (RPT-008) deferred** — leaderboard is pure counts (no target/progress column); no `SalesTarget` endpoints. **Materialized views deferred** — dashboards use Prisma `groupBy`/`count`/`aggregate`; the leaderboard counts a bounded period set in-app (raw GROUP BY / MV is the scale optimization). Other modules (Sales/Expenses/Pay Run) can call `NotificationsService.notify()` later for their events; only Documents signature events are wired now.
 - **User-facing notification-preferences READ endpoint (deferred — surfaced by the Account UI).** AUTH-013 says every user can see (read-only) which notifications they receive, but the only channel-config endpoint is `GET /v1/notification-settings`, gated **`settings:view` (Super Admin)**. So the My Account → Notifications tab can only show the real list to a Super Admin; a non-SA gets a graceful "your administrator controls these" banner. Add a small authenticated, **own-scoped read** of the global event×channel settings (no per-user override — still SA-configured) so non-SA users can see their channels. No per-user override is intended (AUTH-013), just visibility.
 - **Trend/period-aggregation dashboard endpoint (deferred — surfaced by the Business dashboard).** The business dashboard returns single-period scalars only; cross-period trend/breakdown charts need a backend aggregation endpoint (`date_from`/`date_to` are accepted by the contract but ignored server-side today). Flagged, not built; the FE shows a single-period breakdown + a "trends coming" banner.
-- **User invite / password-reset flow (AUTH-002, deferred — surfaced by User Management).** There is **no** admin-set-password, invite/email, must-change, or self-service reset capability: `CreateUserDto.password` is **required** (8–128), `UpdateUserDto` has **no password field**, and the only self-service path is `POST /v1/account/change-password` (needs the current password). So the create-user UI **generates a temp password shown once** and tells the admin to share it securely + the user to change it under My Account → Security. Build the real flow: an invite/email or an admin "reset password" endpoint (and optionally a `must_change_password` flag). Until then a user who forgets their password cannot self-recover. Also note: the server has **no self-protection** (an admin can deactivate themselves / remove their own roles → lockout) — the UI adds guardrails, but a server-side actor self-check (block self-deactivate / self-role-removal) would be safer.
-- **KM map / geocoder (deferred — surfaced by Expenses entry).** The km log requires ≥2 stops each with `lat`/`lng` (signed-decimal, required) + a client-supplied `total_km`, but there's no geocoder/map in scope. The entry form sends **address-only stops with `lat`/`lng` stubbed `'0'`** and the user types `total_km` manually; the indicative billable preview is client-side and the server computes the authoritative amount. Build a map/places integration to capture real coordinates and **auto-derive `total_km`** (then drop the manual field + the `'0'` stubs).
-- **No expense-report DELETE endpoint (noted — surfaced by the Expenses smoke).** `expense_reports`/`expense_exports` have create/edit/review but **no delete** — so test data (and any mis-submitted report) can't be removed via the API; a report is corrected via reject/send-back + edit, not deletion. Add a soft-delete/void if reports ever need removing. (Real receipt upload + real export-file generation remain stubbed — see the Expenses deferrals in §12 above.)
+- **User invite / password-reset flow (AUTH-002, DONE — Resend wired).** Real email via **Resend** (`common/email` `MailerService`, env-gated graceful; the notification `EMAIL_DISPATCHER` is rebound to it too). **Invite**: `CreateUserDto.password` is now optional — omitting it creates the user with `must_change_password` + emails a **set-password link** (`PasswordResetToken`, single-use, HASH-only, expiring). **Forgot** (`@Public POST /v1/auth/forgot-password`, non-enumerating) + **reset** (`@Public POST /v1/auth/reset-password`). **Admin-assisted** (`POST /v1/users/:id/reset-password`, `users:edit`): emails a reset link OR a forced-change temp password — the admin **never sees** the password. **Strength policy** (`auth/password-policy.ts`, ≥8 + upper+lower+digit) + **brute-force lockout** (`failed_login_attempts`/`locked_until`, default 5 attempts / 15 min). `must_change_password` rides login + `/me`; the FE forces a change. **No new permission** (invite/reset ride `users:create`/`users:edit`). DNS for `app.redwavemarketing.ca` is operator-set in Namecheap (records in `docs/external-services.md`). *Still open: a server-side actor self-check (block self-deactivate / self-role-removal) — the UI guards it but the server doesn't.*
+- **KM map / geocoder (DONE — env-gated).** Wired: with `VITE_GOOGLE_MAPS_API_KEY` the FE captures real `lat`/`lng` via Places autocomplete + shows the route map + auto-derives the distance; with `GOOGLE_MAPS_API_KEY` the server re-derives the authoritative route distance via the Directions API. Graceful fallback (no key) = manual address + `total_km` (stops carry `lat`/`lng`=`'0'`, the server falls back to the typed total). The amount is always server-computed.
+- **Expense item DELETE (DONE — per item).** `DELETE /v1/expense-items/{id}` (`expenses:delete`, scoped) removes a **not-yet-approved** item (approved items are preserved). The legacy `expense_reports`/`expense_exports` tables still have no delete endpoint. Real **server-side** export-file generation remains stubbed (the FE file export is real — see above).
 
 ---
 
@@ -331,10 +339,18 @@ sign in as `superadmin@redwave.local` / `DevSuperAdmin!123`.
   (`redwave-refresh`) so a reload silently re-authenticates (`auth/session.ts`). Tradeoff accepted for an
   internal ERP. **`auth/session.ts`** owns: token storage, a **single-flight `refreshAccessToken`**,
   `clearSession`, and the `onSessionExpired` callback (how the non-React client signals React).
-- **Refresh:** the client's `onResponse` 401 interceptor (`api/client.ts`) runs a single-flight refresh
-  and **retries the original request once** (raw `fetch`, excludes `/v1/auth/login|refresh|logout`, no
-  loops); on refresh failure → `notifySessionExpired` → AuthProvider clears + RequireAuth redirects to
-  `/login`. **Multi-tab** logout/expiry syncs via the `storage` event on the refresh key.
+- **Refresh = SILENT; only a DEFINITIVE 401/403 logs you out (never a 5xx/network).** `doRefresh()` returns
+  a discriminated `RefreshResult` (`{ok,token}` | `{ok:false, expired:true}` | `{ok:false, expired:false}`):
+  refresh **200** → new access token, keep session; refresh **401/403** → `clearSession` + `expired:true`;
+  refresh **5xx/408/429 or a network throw** → **transient, session KEPT** (`expired:false`). The `onResponse`
+  401 interceptor (`api/client.ts`) runs a single-flight refresh and **retries the original request once**
+  (raw `fetch`, excludes `/v1/auth/login|refresh|logout`, no loops); only `expired` calls `notifySessionExpired`
+  → redirect to `/login`; a transient result **returns the original response without logging out**. On boot
+  `AuthProvider` **retries a transient refresh** (~4×2s) to ride a Render cold start before giving up (and even
+  then keeps the refresh token, so a later reload recovers). This fixed the "logged out within a minute" report
+  — the cause was the old refresh clearing the session on any non-OK response, so a cold-start 503 nuked it; the
+  JWT TTLs were fine (see §5 auth-stack note). `session.test.ts` (Vitest) covers 200/401/503/network. **Multi-tab**
+  logout/expiry syncs via the `storage` event on the refresh key.
 - **`AuthProvider`** (App.tsx order: `ThemeProvider › AuthProvider › QueryClientProvider › Tooltip › Toast
   › Router`) boots by restoring the session (refresh→`/me`, StrictMode-guarded), exposes
   `login`/`logout`/`setTheme`, and holds `{status, user, roles, permissions, isSuperAdmin}`; `logout` calls
@@ -344,10 +360,10 @@ sign in as `superadmin@redwave.local` / `DevSuperAdmin!123`.
 - **Theme server-sync (loop closed):** on login the user's `theme_preference` from `/me` is applied
   locally; changing the theme while authed PATCHes `/v1/account/theme` (`useAuth().setTheme`, used by
   `ThemeToggle`); logged-out = local/System. No-flash boot preserved.
-- **Deferred / proposals (NOT built):** **httpOnly secure refresh cookie** (more XSS-resistant; needs a
-  backend change — it currently returns/accepts the refresh token in the JSON body); password-reset flow
-  (AUTH-002, the login forgot-password link is a placeholder). *(`@ApiResponse` typed responses — incl.
-  `auth/auth.types.ts` — are DONE, Batch A #2.)*
+- **DONE (Security batch — see the §13 "Security hardening" subsection + `docs/security.md`):** the refresh
+  token is now an **httpOnly, rotating, DB-backed cookie** (no longer in localStorage / the JSON body) with
+  double-submit CSRF, `sid`-based immediate revocation, TOTP MFA, and active-session management. The
+  password-reset flow is wired (AUTH-002). *(`@ApiResponse` typed responses are DONE, Batch A #2.)*
 
 ### Screen patterns (built — Sales cluster is the reference; COPY these for every later screen)
 The Sales cluster (`frontend/src/features/sales/`) is the FIRST feature screen and sets the conventions.
@@ -490,7 +506,8 @@ Session 1 = hub shell + review queue; Session 2 adds users/roles/notification-se
   exception** — the Preferences tab reuses the wired `<ThemeToggle/>` (`useAuth().setTheme` → instant +
   `PATCH /v1/account/theme`); the UI calls this out explicitly.
 - **My Account = foundation `Tabs`** (`features/account/pages/AccountPage.tsx`): Profile · Security
-  (change-password RHF+zod, `type="password"`, never echoed/logged) · Preferences (theme) · Notifications
+  (change-password RHF+zod, `type="password"`, never echoed/logged) · **Signatures** (manage saved reusable
+  e-signatures — draw/type/upload, set default, delete; own-scoped) · Preferences (theme) · Notifications
   (**read-only**). No permission gate — every user manages their own account.
 - **Notifications tab degrades by design.** The only channel-config endpoint is `settings:view`-gated
   (Super Admin), so the tab shows the real event×channel list ONLY to an SA (`useCan('settings:view')` gates
@@ -559,46 +576,45 @@ the notification-settings WRITE lives in `features/notifications/` next to its r
   **inactive** (no hard-delete endpoint exists). **Not done (needs a browser):** the light/dark visual pass
   (esp. the matrix). **§12 follow-ups recorded:** AUTH-002 invite/reset + a server-side self-protection check.
 
-### Expenses (built — weekly submission, KM log, approval queue, list/detail/export)
-The daily expenses workflow. `features/expenses/`. Reuses the playbook + the **profile-review approval-queue
-pattern**; the Sales entry form is the form reference. SRS §11; design-system §10.4.
+### Expenses (built — ITEM-FIRST: DataTable list, multi-add, KM maps, real receipts, per-item bulk approval, grouped export)
+The daily expenses workflow, rebuilt item-first. `features/expenses/`. Reuses the playbook (DataTable +
+`use{Feature}Table` + bulk + export). SRS §11; design-system §10.4. The **expense item is the unit** — no
+weekly report in the UI.
 
-- **Categories are config-driven (never hard-coded).** The entry form's category Select renders from
-  `GET /v1/expense-field-configs` (active rows; `{category_key,label,requires_receipt}`), so an SA-added
-  category appears automatically and the **receipt rule is per-category** (`requires_receipt`; km = false).
-  Receipt is enforced client-side (zod, built from the configs) AND the server is the real gate.
-- **KM amount is SERVER-AUTHORITATIVE.** The km item sends `km:{trip_type, total_km, stops}` and **never an
-  `amount`** — the server computes `billable_km`/`computed_amount` (single −30 / round −60, floor 0, ×$0.45).
-  `km.ts#kmPreview` shows a **live INDICATIVE** preview (string→Number, display-only, #1) labelled "the
-  server computes the final amount" — same pattern as the Sales-ID preview. **Stops are address-only;
-  `lat`/`lng` are stubbed `'0'`** and `total_km` is typed manually (no geocoder — §12 follow-up).
-- **Entry = one weekly report, multi-item.** `ExpenseForm` (RHF+zod+**`useFieldArray`**) over items; each
-  `ExpenseItemRow` picks a category → **`KmItemFields`** (trip RadioGroup + reorderable address stops +
-  total_km + preview) or **`StandardItemFields`** (date + `MoneyInput` + description + optional client +
-  `ReceiptField`). `ReceiptField` (FileUpload selection-only) sets a **stub `receipt_url`** (`s3://…`). One
-  POST submits the week (`status:'submitted'` — no draft flow). The schema + payload builder live in
-  `components/expenseForm.schema.ts` (km amount omitted; lat/lng stubbed). **Edit reuses the same form**
-  (PATCH replaces all items).
-- **Approval queue = a status-filtered, server-scoped list.** `/expenses/approvals` calls
-  `useExpenseReports({status:'submitted'})` (the server scopes manager=roster / admin=all; the UI never
-  filters) → `ExpenseReviewCard` + **`ReviewActions`** (Approve immediate; Reject/Send-back open a note
-  Modal). **Review is ONE endpoint** `POST /{id}/approve {decision:'approve'|'reject'|'send_back', note?}`.
-- **Edit-rights gating by approval state (EXP-007).** Detail/edit show **Edit** when `(status!=='approved'
-  && useCan('expenses:edit')) || (status==='approved' && isSuperAdmin)`; the edit page re-checks and the
-  **server is the real gate** (an approved report → non-SA PATCH → 403 → AccessDenied).
-- **`ExpenseStatusBadge`** maps submitted→info / approved→success / rejected→danger / sent_back→warning /
-  draft→neutral (StatusPill is sale-only). **`money()`** for display; **`sumMoney()`** (new, integer-cents,
-  no float #1) totals a report. List default date = **current pay cycle** when `payrun:view` (else no
-  default). Export = `ExportModal` → `POST /v1/expense-exports` (stub `file_url`).
-- **Nav:** the Sidebar Money group's **Expenses** placeholder now links `/expenses` (`expenses:view`); added
-  **Approvals** `/expenses/approvals` (`expenses:approve`). Routes: `/expenses[/new|/approvals|/:id|/:id/edit]`.
-- **Verified live** (seeded backend, SA token + a temp Admin for the gate; creates-then-cleans-up): configs=7
-  (km no receipt); **km round 130 → computed 31.5 ($31.50), billable 70**; **single → 45 ($45.00)**; meals
-  **without receipt → 422**, with stub → 201; list/detail; **edit pre-approval (SA) → 200**; approve/reject/
-  send_back transitions; **temp Admin PATCH of an APPROVED report → 403**; export 201. Temp Admin deactivated;
-  **expense reports/exports persist (no DELETE endpoint — §12)**. **Not done (needs a browser):** the
-  light/dark visual pass (esp. the km-log entry + the approval queue). **§12 follow-ups:** km map/geocoder
-  (lat/lng `'0'`, manual total_km), real receipt upload + export generation (stubs), no report-delete endpoint.
+- **Item-first API hooks.** `expenses.types.ts` aliases the generated schema (`ExpenseItem(Page)`,
+  `BulkReviewResult`, `ReceiptUpload`). `api/useExpenseItems.ts` = `useExpenseItemsTable(filters)`
+  (server page+sort, reset-on-filter), `useExpenseItem(id)`, `useAllExpenseItems`/`fetchAllExpenseItems`
+  (export/grouped summary), `useFieldConfigs`, `useExpenseExports`. `api/useExpenseMutations.ts` =
+  create-items / update / review / **bulk-review** / delete / export + **`useUploadReceipt`** (raw multipart
+  fetch to `POST /v1/expense-receipts`, bearer from the session).
+- **List = item DataTable** (`ExpenseItemsTable` on `ExpensesListPage`): server-paginated; filters in the URL
+  (status/category/rep/client/date-range/search), **default = current pay cycle** (`payrun:view`). Columns:
+  date · category (+ KM badge) · rep/client (gated) · description · status · amount (mono). Row kebab →
+  View/Edit/Delete (edit-gating EXP-007; delete only pre-approval, `expenses:delete`). Approvers
+  (`expenses:approve`) get row-select → a **bulk approve/reject/send-back** bar (`BulkReviewBar` →
+  `/bulk-review`). `ExpenseApprovalsPage` is the same table fixed to `status=submitted`.
+- **Add = multi-item** (`ExpenseForm`, RHF+zod+`useFieldArray`): "Add another item" captures several at once →
+  `POST /v1/expense-items`; **edit = a single item** → PATCH. `ExpenseItemRow` picks a category →
+  `KmItemFields` or `StandardItemFields`. Schema/builders in `components/expenseForm.schema.ts`
+  (`buildItemsBody`/`buildItemBody`; km amount omitted).
+- **KM amount is SERVER-AUTHORITATIVE; distance via Maps (env-gated).** `KmItemFields` branches on
+  `maps.config#mapsEnabled` (`VITE_GOOGLE_MAPS_API_KEY`): with a key → `MapStops` (`@react-google-maps/api`
+  Places autocomplete per stop → real lat/lng, a route `GoogleMap` + `DirectionsService` that **auto-derives
+  `total_km`**); without → manual address + total-km entry (lat/lng `'0'`). The server re-derives the
+  authoritative distance + always computes the amount; `km.ts#kmPreview` is the indicative-only preview.
+- **Receipts upload for real** (`ReceiptField`): selecting a file → `useUploadReceipt` → stores the returned
+  access-controlled URL; required per category (config-driven, client + server gate). Graceful when storage
+  is unconfigured (server returns a reference).
+- **Grouping + export (FE-6).** `ExpenseExportControls` = a grouping Select (none/daily/weekly/monthly;
+  from/to = custom range) + the Batch-1 `ExportMenu` (per-item rows, or grouped period·count·total buckets) as
+  CSV/Excel/PDF; `GroupedSummary` (StatCards) shows the bucket totals. `format.ts#groupItems` buckets via
+  `sumMoney` (exact, #1). The server-recorded export (`ExportModal` → `POST /v1/expense-exports`) is kept for
+  the per-rep KM-log client submission (stub `file_url`). `ExpenseStatusBadge` unchanged.
+- **Nav/routes unchanged:** `/expenses[/new|/approvals|/:id|/:id/edit]` (Sidebar Expenses + Approvals).
+  Removed the report-era files (`useExpenses`, `ExpenseReportsTable`, `ExpenseReviewCard`).
+- **Verified LOCAL only** (tsc + build + lint + stylelint green). Operator applies `migrate deploy` + re-seeds
+  bootstrap, and optionally sets `GOOGLE_MAPS_API_KEY`/`SUPABASE_*`/`VITE_GOOGLE_MAPS_API_KEY`. Light/dark +
+  live-data + the map/upload visual pass needs a browser/running backend with the keys.
 
 ### Clients & Products + the EFFECTIVE-DATING UI (built — Admin Config Session 1; Commission Config = Session 2)
 The deployment-setup config for the **billing stream** (what we charge partners). `features/clients/`. Fills
@@ -841,11 +857,14 @@ the Money nav group.
   **superseding** a pending row. **Not done (needs a browser):** the light/dark visual pass (esp. the statement
   table, the generate modal, and the unpriced banner).
 
-### Documents & E-Signature UI (built — upload · request-signature · per-signer status · row-level sign/decline · cancel)
+### Documents & E-Signature UI (built — REAL: PDF upload · preview · field placement · in-system signing · download)
 The documents workflow (SRS §13). `features/documents/`. The backend DERIVES the overall status, enforces
-ROW-LEVEL sign/cancel auth, and scopes visibility (owner-or-recipient; 404 for outsiders); **this UI displays
-the server's truth, never re-derives status, and models signing as row-level (not a permission)**. Reuses the
-playbook; the binary upload + e-sign provider stay **STUBBED** (§12). Two pages under the People nav group.
+ROW-LEVEL sign/cancel auth, scopes visibility (owner-or-recipient; 404 for outsiders), and STAMPS signed
+copies server-side; **this UI displays the server's truth, never re-derives status, models signing as
+row-level (not a permission), and computes no money/coordinates the server is authoritative for**. Reuses the
+playbook. **Upload + signing are now REAL** (storage + pdf-lib stamping). Two pages under the People nav group
++ a **My Account → Signatures** tab. NEW deps (frontend): `pdfjs-dist` (preview, **lazy** — its own ~360 kB
+chunk, loads only on document screens) + `signature_pad` (drawing).
 
 - **Signing is ROW-LEVEL, NOT a permission (the law here, §5).** Sign/decline/cancel carry **no
   `@RequirePermission`**; the pure `documents.logic.ts#findMyPendingSignature(doc, userId)` (current user via
@@ -868,67 +887,65 @@ playbook; the binary upload + e-sign provider stay **STUBBED** (§12). Two pages
   id. **There is NO audit-timeline endpoint** — `DocumentTimeline` is **composed** from the detail's nested
   `signature_requests` + `document_signatures` (request created · each sign with `signed_at` · declines); IP +
   full audit_log aren't exposed (a flagged backend follow-up). Declines carry no timestamp in the response.
-- **Upload** (`UploadDocumentModal`, `documents:create`): title + doc_type + a **stub `FileUpload`** (the body
-  sends only `{title, doc_type}`; the server mints `original_file_url`). Per-signer **signed copies**
-  (`signed_file_url`) are shown read-only; the **original is never mutated** (#DOC-004).
-- **Nav/route:** the Sidebar **People** group's "Documents" placeholder now links `/documents` (`FileSignature`,
+- **Upload is REAL + PDF-only** (`UploadDocumentModal`, `documents:create`): a multipart PDF + title + doc_type
+  via the shared `lib/api/multipartUpload.ts` (bearer from the session) → `POST /v1/documents`; non-PDF guarded
+  client-side + the server 422s. The **original is stored once + never mutated** (DOC-001/004).
+- **Preview + download = pdf.js + access-controlled URLs.** `PdfDocumentView` (lazy) renders all pages to
+  canvases + exposes each page's display size for overlays; `DocumentPreview` wraps a `…/file-url` query.
+  Every file (original / per-signer copy / final copy / saved signature) is fetched via a **short-TTL signed
+  URL** from an RBAC/visibility-gated endpoint (`useDocumentFileUrl`/`useCompletedFileUrl`/`useSignatureFileUrl`);
+  `DownloadLink` is the download/open anchor. The object path is never exposed.
+- **Field placement** (`FieldPlacer`, in `RequestSignatureModal` behind a Switch): the requester places
+  signature/initial/date/text fields per recipient on the PDF (drag to move, corner to resize), stored as
+  normalized 0..1 fractions (top-left) sent with the request. No fields → a simple click-to-sign.
+- **In-system signing** (`SignDeclineModal`): preview the document with the signer's fields highlighted, apply
+  a signature (**a saved one, drawn via the `SignaturePad` ui primitive, or typed → PNG**), fill text fields
+  (dates auto server-side) → the server stamps a per-signer copy. A **"sign outside the app"** path uploads an
+  externally-signed PDF (`/sign-upload`, method=uploaded). The signature image goes up as `signature_id` (saved)
+  or `signature_image` (inline data-URL).
+- **Saved signatures** (`features/account` → Signatures tab): list (image thumbnails via own-scoped file-url),
+  create by **draw / type / upload**, set default, delete — own-scoped, no permission. Shared helpers in
+  `lib/signature.ts` (`dataUrlToFile`/`typedSignatureDataUrl`).
+- **Nav/route:** the Sidebar **People** group's "Documents" item links `/documents` (`FileSignature`,
   `documents:view`). Routes: `/documents`, `/documents/:id`.
-- **Verified live** (seeded backend, SA token + per-signer logins; signers get the **Sales Rep** role —
-  `documents:view`, non-admin; created users/docs persist, SA creds untouched): **18/18 smoke checks pass** —
-  upload → **draft**; request signatures from A+B → **shared** (2 signers pending); **A signs →
-  partially_signed** (signed copy + time set, **original_file_url unchanged**); **B signs → completed**; a
-  **non-signer (C) sign → 403**; an **outsider (C, has documents:view, not a recipient) GET → 404**; **decline
-  → declined (terminal)** + a further sign → 409; **cancel → document back to draft**. **Not done (needs a
-  browser):** the light/dark visual pass (esp. the per-signer rows, the detail actions, and the timeline).
+- **Verified LOCAL only** (tsc + build + lint + stylelint green; `PdfDocumentView` is its own lazy chunk;
+  backend 74 suites / 394 tests green incl. real pdf-lib stamping on an in-memory PDF + the `original never
+  mutated` assertion). The operator applies `migrate deploy` (the `documents_esign_real` migration) + sets the
+  Supabase creds; the **live + light/dark + real preview/stamp visual pass needs a browser** with storage
+  configured. The earlier 18-check smoke predates the storage/stamping rewrite (the workflow assertions still
+  hold; re-run against Supabase to exercise the real files).
 
-### Data Import & Integration UI (built — the stage → reconcile → commit wizard)
-The import wizard (SRS §15). `features/import/`. The backend does ALL pipeline work (staging, matching, the
-reconcile-before-commit GATE, the ATOMIC + idempotent commit, the 3 handlers); **this UI walks the steps and
-RECONCILES — it does NO matching/commit logic**. Unblocks **bulk sales validation** (drives the Sales
-`validateWithinTx` seam server-side). Reuses the playbook; real Excel/CSV parse stays **STUBBED** (§12). Three
-pages under the Administration nav group.
+### Data Import & Integration UI (built — REAL upload → map → reconcile → commit wizard + templates)
+The import wizard (SRS §15). `features/import/`. The backend does ALL pipeline work (parse/clean/classify, the
+reconcile-before-commit GATE, the ATOMIC + idempotent commit, the 7 handlers); **this UI uploads a file,
+adjusts the mapping, reconciles, and commits — it does NO matching/commit logic**. Reuses the playbook +
+`lib/api/multipartUpload`. Three pages + a templates panel under the Administration nav group.
 
-- **The UI does NO matching/commit logic.** STAGE feeds rows (the backend classifies → matched/unmatched/
-  duplicate/error/ignored); RECONCILE asks the backend to match/edit/ignore a row; COMMIT is the backend's
-  **ATOMIC + IDEMPOTENT** apply (#8). The `import.logic.ts` helpers only **parse the JSON editor** and
-  **mirror the gate to disable + explain** — never match or apply.
-- **Rows entry = JSON editor + per-type template (confirmed UX; parse stubbed §12).** `RowsEditor` = a
-  Textarea pre-fillable with the kind's **template** + a **stub `FileUpload`** that reads a selected `.json`
-  file into the editor (the real Excel/CSV parse is deferred). `parseRows` validates a non-empty array of
-  objects client-side before staging. **Batch A #2 fixed** the `rows`/`mapped_data` swagger quirk
-  (`additionalProperties:true`), so the generated `CreateImportDto`/`ReconcileDto` are used directly — the
-  hand-written request bodies + boundary casts were **dropped**.
-- **The 3 kinds** (`KINDS` in `import.types.ts`; the UI offers only these, so an unsupported pairing can't be
-  staged): **Bulk sales validation** (`client_report+sales`, needs `client_id`; commit drives the Sales seam),
-  **Historical billing rates** (`master_migration+clients`, back-dated — the sanctioned #10 path), **Opening
-  holdback balances** (`balance_migration+holdback`, needs `reconcile_total`; origin must be closed/paid).
-- **STAGE** (`NewImportPage`, `import:create`): kind Select + (client / reconcile_total when needed) +
-  `RowsEditor` → POST → the batch detail. **REVIEW + RECONCILE** (`ImportDetailPage`, `import:view`):
-  `StepIndicator` (Stage→Reconcile→Commit) + count `StatCard`s + `ImportRowsTable` (per-row status + the
-  mapped data + matched target + the **issue**). While staged, a kebab per row (`import:edit`): **Match a
-  sale** (`MatchSaleModal` — reuses the Sales `useSalesQuery({status:'entered', client_id})` finder →
-  reconcile `match`), **Edit data** (`ReconcileEditModal` → fix `mapped_data` JSON → reconcile `edit`, server
-  re-classifies), **Ignore** (direct reconcile `ignore`).
-- **The reconcile-before-commit GATE:** the **Commit** button (`import:approve`) is **disabled while
-  `outstandingCount > 0`** (unmatched+duplicate+error) with a Banner naming what's outstanding — the UI
-  prevents it and the **server 422 is the real gate** (incl. the holdback `reconcile_total` ≠ staged-sum
-  check, which the **UI never computes** — it shows the value + a note and surfaces the server's message).
-- **COMMIT** (`CommitConfirmModal`): a deliberate confirm that **explains the per-kind atomic apply**
-  ("validates the matched sales / writes the back-dated rates / writes the opening holdback — one transaction,
-  cannot be undone"), **double-submit-safe** (`isPending` disables). On success the batch is **committed +
-  locked** (read-only; shows `committed_at` + "N matched rows applied"); **re-commit is a backend no-op and is
-  NOT offered**.
-- **Nav/route:** the Sidebar **Administration** group's "Import" placeholder now links `/import` (`Upload`,
-  `import:view`). Routes: `/import`, `/import/new`, `/import/:id`.
-- **Verified live** (seeded backend, SA token; created users/reps/clients/batches persist, SA creds untouched):
-  **20/20 smoke checks pass** — **Bulk validation**: stage 3 rows → 2 matched + 1 unmatched → **commit while
-  unreconciled → 422 (gate)** → reconcile (ignore) → **commit → committed**, the matched sales **validated via
-  the Sales seam**, **re-commit → no-op** → **ATOMIC ROLLBACK** (re-point a row at an already-validated sale →
-  commit throws → **batch stays staged + the good row's sale rolled back to entered**). **Historical rates**:
-  back-dated rate (`effective_from 2025-01-01`) → matched → commit (**bypasses the live 422**). **Opening
-  holdback**: a **paid** period (finalized) + a **second rep** (no ledger) → **reconcile_total 999 ≠ 100 →
-  422**, then **=100 → committed**; an **open-origin row → error** + commit blocked. **Not done (needs a
-  browser):** the light/dark visual pass (esp. the rows table, the reconcile modals, and the gate).
+- **STAGE = a REAL file upload** (`NewImportPage`, `import:create`): kind Select (the **7 targets** in `KINDS`,
+  `import.types.ts`) + client / reconcile_total (when needed) + an optional **saved-mapping** picker
+  (`useImportMappings`) + a real `FileUpload` (xlsx/xls/csv/tsv) → multipart `useStageImport` → the batch
+  detail. The historical kind shows a clear **reference-only** note. (The old JSON `RowsEditor`/`parseRows` are
+  **gone**.)
+- **MAP** (`MappingEditor`, while staged, `import:edit`): system fields (from the target's `templates.ts`
+  field defs) → a Select of the parsed source columns (pre-filled with a client-side guess); **Apply** →
+  `remap` (re-map/clean/classify the stored `raw_data`, no re-upload); **Save** → a reusable mapping (mapping
+  CRUD, IMP-002). The server already auto-suggested a mapping at upload.
+- **DOWNLOADABLE TEMPLATES** (`TemplatesPanel` on the import home, `templates.ts`): Excel + CSV for every
+  target — clients · products/rates · billing rates · reps · historical sales · opening holdback · the
+  **VF / RF Now / CTI** client-report formats — each with the exact columns, example rows, and a column
+  data-dictionary (generated client-side via `exportRows`). VF/RF/CTI are **sensible defaults** (refine from a
+  real file; import is mapping-driven).
+- **REVIEW + RECONCILE** (`ImportDetailPage`): `StepIndicator` + count `StatCard`s + `ImportRowsTable` (per-row
+  status + cleaned mapped data + matched target + **issue**); per-row **Match / Edit / Ignore** (the existing
+  modals); a **Download error report (CSV)** button surfaces the outstanding rows. The **Commit** button is
+  disabled while `outstandingCount > 0` (the **server 422 is the real gate**, incl. the holdback
+  `reconcile_total` check the UI never computes).
+- **COMMIT** (`CommitConfirmModal`): now a **typed confirmation** (`ConfirmDialog requireTyped="COMMIT"`) that
+  explains the per-kind atomic apply; double-submit-safe. On success the batch is **committed + locked**;
+  re-commit is a backend no-op and is NOT offered.
+- **Nav/route:** Sidebar Administration "Import" → `/import`; routes `/import`, `/import/new`, `/import/:id`.
+  `StatusPill` gained the `historical` status (muted). **Verified LOCAL only** (tsc + build + lint + stylelint
+  green). Operator applies `migrate deploy` + Supabase creds; the live + light/dark visual pass needs a browser.
 
 ### Chatbot UI (built — the FINAL screen; a thin surface over the leak-proof, intent-only assistant)
 The natural-language assistant (SRS RPT-011). `features/chatbot/`. The backend is **structurally leak-proof**:
@@ -968,3 +985,249 @@ Reuses the playbook. One page under the Dashboards nav group.
   user, proving the server's leak-proof scoping while the UI just renders. **Also fixed:** a corrupted
   `components/ui/Breadcrumbs.tsx` (a missing interface `}` — an IDE truncation) restored so the build passes.
   **Not done (needs a browser):** the light/dark visual pass (the conversation + input).
+
+### Shared data primitives + the SERVER-SIDE list contract (built — adopt these on every new list/form)
+A batch of shared primitives + an app-shell pass. **New screens MUST reuse these** rather than reinventing.
+
+- **SERVER-SIDE list contract (arch §5.1) — `{ data, meta }`.** List endpoints accept `?page=&limit=&sort=field:dir&search=` (+ their filters) and return `{ data: [...], meta: { total, page, limit, pageCount } }`. **`page` is 1-based**, `limit` default 20 / **max 100**. Shared backend primitives in **`common/pagination/`**: `PaginationQuery` (base DTO feature query DTOs `extends`), pure `paginate.ts` (`toSkipTake`/`buildPage`/`resolveOrderBy(sort, allowlist, fallback)` — the **allowlist is the orderBy-injection guard**), `PageMetaResponse`. A service builds `where` (preserving `ScopeService` scoping + filters + a `search` OR-filter), then `Promise.all([findMany({where,orderBy,skip,take}), count({where})])` → `buildPage`. Each list has a per-entity `*PageResponse` DTO (`@ApiProperty({ type: () => [X] })` + `@ApiOkResponse`). **Done on `/v1/sales` + `/v1/clients`; new `GET /v1/products` (cross-client, `clients:view`)**; the nested `/v1/clients/{id}/products` stays a plain array. **Indexes** added (`sales` status + `client_id,sale_date`; `clients` is_active; `products` client_id,is_active + product_type) via the hand-authored `add_list_pagination_indexes` migration (CREATE INDEX only — applies with `migrate deploy`, no shadow DB).
+  - **Ripple:** moving an endpoint to `{data,meta}` breaks every dropdown/finder that unwrapped it as an array. The fix pattern: keep the array-returning hook (`useClients`, `useSalesQuery`) but **unwrap `.data` with a capped `limit` (100)**; add a SEPARATE paginated hook (`useClientsPage`/`useSalesPage`) for the management DataTable. (Finder/dropdown reads cap at 100 until a typeahead combobox lands.)
+- **`<DataTable>`** (`components/data/DataTable.tsx`) — the enterprise list surface over the `Table` primitives: `DataColumn<Row,SortKey>[]` (header/align/numeric/`sortKey`/`render`), server `sort`+`onSortChange`, pager (`page/pageCount/total/limit/onPageChange`), controlled selection (`selectedIds`/`onSelect`/`isRowSelectable`/`onToggleAll`, tri-state select-all), `rowActions`+`bulkActions` slots, and a **dedicated FORBIDDEN state** (`isForbidden(error)` → friendly panel, **not** "Failed to load"). The server-driven list hook (`useSalesList`/`useClientsTable`/`useProductsTable`) owns page+sort state and resets to page 1 on a filter/sort change. **Reference adoptions: Sales, Clients, Products** — copy their shape.
+- **`<ConfirmDialog>`** (`components/ui`) — confirm on `Modal` that restates the consequence; **`requireTyped`** gates irreversible/financial actions (type a phrase to enable). Used for bulk soft-delete; **finalize/clawback can adopt it**.
+- **`exportRows` + `<ExportMenu>`** (`components/data`, `lib/export/`) — CSV (hand-rolled), Excel (**`write-excel-file`**) + PDF (**`jspdf`+`jspdf-autotable`**) **dynamically imported** (load only on export). Caller passes `getRows()` (a paged `fetchAll*` respecting filters, OR the selection). **Print** = browser dialog + a print stylesheet (`#main-content` only; `.no-print` opt-out in `base.css`). Chose `write-excel-file` over SheetJS `xlsx` (parse-side CVEs) / `exceljs` (pulls `jimp→request`).
+- **`<DatePicker>`** (`components/ui`) — a custom token-styled calendar in a Radix Popover; value/onChange **always `'YYYY-MM-DD'`**, opens to today, optional min/max. **Replaced every native `<input type=date>`** (OS-locale bug). **`<PayPeriodSelect>`** (`components/data`) — effective-dated config selects a **pay period** (`Period N · start–end`), emitting the period's start (`effective_from`) or end (`effective_to`, with open-ended); future-only (server rejects back-dating). Used in the billing-rate + commission config modals (BRD §9.4 / SRS §6.2).
+- **`<SelectWithOther>`** (`components/ui`) — a Select that reveals a text input on "Other" → `{ value, other_text }`. Available wherever free entry is needed.
+- **Overlays + z-index + responsive shell.** Radix menus already portal; the clip fixes were (a) `max-height: var(--radix-*-content-available-height)` + `overflow-y:auto` on the Select/DropdownMenu/Popover viewports, and (b) **reordering the z-index ladder so floating menus (dropdown/select/popover = 1300) sit ABOVE modal/drawer content (1200)** — a Select opened inside a Modal was rendering behind it (both portal to `<body>`; z-index decides). The shell is now responsive on the design-system §8 breakpoints (`--bp-mobile 640` / `--bp-tablet 1024`, `lib/useMediaQuery`): **<640px** sidebar → off-canvas drawer (hamburger); **640–1024** icon rail; **>1024** full. `.sr-only` helper in `base.css`.
+- **Global search** (`GET /v1/search?q=`, `modules/search/`) — authenticated; the SERVICE scopes each group to the caller's perms (reps→`hrm:view`, clients→`clients:view`, sales→`ScopeService`). **No new RBAC permission** (the role-permission matrix is unchanged). FE: `features/search/GlobalSearch` is the real top-bar box (debounced, grouped results, deep-links).
+- **Verified LOCAL only** (build + lint + stylelint + 329 backend tests green; the `add_list_pagination_indexes` migration is applied by the operator with `migrate deploy`). The light/dark + live-data visual pass needs a browser/running backend.
+
+### Notifications overhaul + SA event management/broadcast + dead-tab fixes (built — Notifications batch)
+A real, Super-Admin-manageable notification system + the previously dead Reps/Reports/`/users` tabs fixed.
+The architecture below is durable — reuse it; don't reinvent.
+
+- **The emitter seam is PROMOTED to `common/notifications/`** (`notification-emitter.ts`: `NOTIFICATION_EMITTER`
+  token + `NotificationEmitter {emit, emitMany, emitRole}` interface + `NotificationEvent` with optional
+  `variables`). `NotificationsModule` (`modules/reporting/`) is **`@Global()`** and binds it via
+  `NotificationEmitterAdapter`, so **any** domain module injects `@Inject(NOTIFICATION_EMITTER)` with no
+  import + no cycle (NotificationsService depends only on Prisma/Audit/`EMAIL_DISPATCHER`). Emits are
+  **post-commit, best-effort** (never inside a `$transaction`, never throw to the originating action); rep
+  `user_id` is nullable → **`emitMany` centralizes the null-skip**. `emitRole(event, roleName, payload)`
+  targets active users in a role. **Templates render in `notify`** via the pure
+  `common/notifications/render-template.ts#renderTemplate(tpl, vars, fallback)` — `{var}` substitution that
+  **falls back to the complete call-site text if ANY token is unfilled** (never shows a raw `{placeholder}`).
+- **Catalogue (bootstrap, idempotent):** **17 automatic events** + `broadcast`, each with `label` +
+  `title_template` + `body_template` (new nullable `NotificationEventSetting` columns). The upsert `update`
+  refreshes label/templates but **never clobbers** the SA's channel toggles. The documented
+  **recipients + variables per event** live in `frontend/src/features/notifications/eventCatalogue.ts`
+  (mirrors the emit sites) — shown read-only in the editor. **A genuinely NEW automatic trigger needs a code
+  change** (a new emit call); the SA manages wording/channel, not trigger logic.
+- **API (own-scoped, paginated):** `GET /v1/notifications` → `{data, meta}` (PaginationQuery: page/limit/
+  sort/search + `is_read`); `GET /unread-count`; `PATCH /:id {is_read}` (replaced `/:id/read`);
+  `POST /mark-all-read`; `POST /mark-read {ids, read}`; `POST /broadcast` gated
+  **`@RequirePermission('notifications','broadcast')`**. Settings GET/PATCH carry label/title/body templates.
+- **Frontend:** the bell shows a **numeric unread-count badge** (`useUnreadCount`, `refetchInterval 60s` +
+  `refetchOnWindowFocus`); **`lib/notifications/resolveLink.ts`** deep-links a notification to its record by
+  `related_entity_type`; clicking marks read + navigates. **Notification Center** `/notifications` (DataTable:
+  unread/all filter + search, bulk mark read/unread, row click-through). **SA event management** extends the
+  settings editor (per-event channels + title/body template inputs + read-only recipients). **Broadcast
+  composer** `/admin/broadcast` (audience everyone/role/specific-users, gated `notifications:broadcast`).
+- **Dead-tab fixes:** `features/reps/` (server-paginated roster on DataTable, `/admin/reps`, `hrm:view`);
+  `features/reports/ReportsLandingPage` (hub of dashboard cards, `/reports`, `reports:view`); router gained
+  `/users`→`/admin/users` + `/reps`→`/admin/reps` redirects and a friendly **catch-all `NotFoundPage`** so no
+  path dead-ends. Sidebar Reps/Reports items now carry a `to`.
+- **Paginated `GET /v1/reps`** (`buildPage`, sort allowlist `rep_code/full_name/status/hire_date/created_at`,
+  PII redaction preserved) — the contract was regenerated.
+- **Verified LOCAL only** (backend build + affected specs green; frontend build + lint + stylelint green). The
+  **operator applies the migration (`migrate deploy`) + re-seeds bootstrap** (idempotent) against Supabase to
+  add `notifications:broadcast` + the 17-event catalogue/templates. Light/dark + live-data visual pass needs a
+  browser.
+
+### Configurable product types · rate-card CRUD · client custom fields · commission CRUD (built — Config batch)
+The deployment-config surfaces are now runtime-managed. Reuse these patterns; the invariants below are load-bearing.
+- **Product-type catalogue (the engine's behaviour seam).** `product_type_catalogue` (key PK · label ·
+  `behaviour` enum `tiered|greenfield|standard_addon` · `is_system` · `is_active`) replaced the fixed Prisma
+  `ProductType` enum (dropped); `products`/`commission_flat_rates`/`incentives.scope_product_type` are String
+  FKs → `catalogue.key`, `sale_items.product_type` is a plain snapshot (no FK, #2). **CRUD lives in the
+  COMMISSION module** (it's an engine-config concept): `GET /v1/product-types` (authenticated reference) +
+  `POST`/`PATCH /:key` (`commission:edit`). **A new type is FORCED `standard_addon`** (behaviour never
+  client-supplied) so it can NEVER change tally/greenfield logic (#5/#9); the 4 core types are `is_system`
+  (behaviour immutable, non-deletable, non-deactivatable). **Q2: create may carry an inline COMMISSION flat
+  rate** written to `commission_flat_rates` in the same `$transaction` (the catalogue row stores no rate — #3
+  holds; this is the commission stream, distinct from the product inline CLIENT-BILLING rate). FE:
+  `features/productTypes/` (DataTable manager at `/admin/product-types`) + `useProductTypes()`; the hard-coded
+  `PRODUCT_TYPES` arrays were replaced by the live catalogue in the product / flat-rate / incentive / filter
+  dropdowns; `productTypeLabel` humanizes unknown SA keys.
+- **`billing_rates` module (SA-only).** The 17th RBAC module — its 6-action grid gates the client rate cards,
+  granted to **Super Admin only** by default (Admin/Manager/Rep lose default rate visibility; a custom
+  Business-Partner role can be granted `billing_rates:view`). The nested `/v1/clients/:id/billing-rates`
+  endpoints were re-gated (`view`/`create`) and gained **`PATCH`/`DELETE .../:rateId`** (`edit`/`delete`).
+- **Rate-card + commission CRUD honour #10 (pending-only edit/delete).** `billing-rates.service` +
+  `tier-schedule`/`flat-rate`/`holdback` services gained `update`/`remove` restricted to **pending** rows
+  (current/past → 422, supersede instead); edit re-runs `planSupersession`, delete re-opens any predecessor it
+  had bounded (no gap). Shared `commission/effective-edit.util` (`assertPending`/`resolveEditWindow`).
+  Incentives gained `remove` (only if no `sale_item` references it — else end it, #2). FE: `EffectiveDatedTable`
+  grew an optional `rowActions` slot; the clients `BillingRatesPanel` (gated `billing_rates:view`, hidden
+  otherwise) + the commission sections offer pending-row Edit (reusing the create modals in an edit mode) +
+  Delete (`ConfirmDialog`); tier-edit = delete + re-add (the bracket editor is the create surface).
+- **Product create inline CLIENT-BILLING rate** — `CreateProductDto.initial_billing_rate` (rate_kind
+  `product`) written with the product in one tx; providing it additionally requires `billing_rates:create`.
+- **Client custom fields** — `client_custom_fields` (name/value + display_order, no cascade); Create/Update
+  client accept a `custom_fields[]` REPLACED in a tx; the detail GET includes them. FE: a `useFieldArray` on
+  `ClientFormModal` (edit fetches the detail first so existing fields load before a save — never wiped) +
+  display on `ClientDetailPage`.
+- **Two hand-authored migrations** (`product_type_catalogue`, `client_custom_fields`) — operator runs
+  `migrate deploy` + re-seeds bootstrap (idempotent: 4 core types `is_system`, the `billing_rates` grid).
+  **Verified LOCAL only** (backend 68 suites/350 tests + build green; contract regen; frontend build + lint +
+  stylelint green). Light/dark + live-data visual pass needs a browser.
+
+### Dashboards & Reporting overhaul (built — Operations queues · Business KPIs · trends · scoped Manager/Rep · greenfield)
+The read-layer is now real end-to-end. **Money invariant holds throughout: dashboards are READ-ONLY aggregation
+over frozen tables — no commission is recomputed, no new money logic.** Reuse these patterns.
+- **`reports:business` (off-grid, SA-only)** — a `business` `PermissionAction` value (migration
+  `reports_business_action`) seeded off-grid; gates `GET /v1/dashboards/business` + `…/business/trends`. The
+  `SalesTarget`/`sales_targets` entity ALREADY existed (original 48-entity schema / init migration) — no new
+  table; BE-4 wired its CRUD.
+- **Business dashboard (`dashboards.service#business`)** — period-aware (default = current period). KPIs READ
+  from frozen tables: revenue (`client_statements.total_amount`), payout (`pay_run_lines.net_payout`), net
+  margin $/% (display), holdback {held/scheduled `holdback_ledger`, released `pay_run_lines.holdback_release_30`},
+  clawback total + **rate** (= clawback ÷ `commission_70`), expense km/other (`expense_items` by category),
+  activations by product/client + internet + greenfield $ (`sale_items.commission_paid`), validation funnel,
+  tier distribution (all active reps bucketed via `countToTier`), client mix, and PoP growth. One bounded
+  confirmed-items `findMany` reduces the count breakdowns in JS.
+- **Trends (`#businessTrends`, `GET …/business/trends?periods=N`)** — last N periods (≤24) reduced from single
+  `findMany` passes; returns headline series + `by_product` / `by_client_revenue` / `tier_distribution` over
+  time. **Bounded in-app aggregation; materialized views stay deferred.**
+- **Manager (`#manager`)** — roster AGGREGATE money (payout/holdback) + top performers by activation count +
+  target-vs-actual ALWAYS; **per-rep payout + money-ranking only when the caller holds `hrm:edit`** (the
+  payment_details gate), built/omitted server-side (`can_see_rep_money`). **Rep (`#rep`)** — adds own target +
+  recent sales. **Targets** (`targets.{service,controller}`): `GET /v1/sales-targets` (scoped) + `PUT`
+  (`hrm:edit` + roster-scope check).
+- **FE** — `features/dashboards/`: business page rebuilt (KPI `StatCard`s + funnel + by-product/tier/client
+  bars + `BusinessTrends`); new token-themed `ThemedLineChart` / `ThemedStackedAreaChart` + `SeriesTooltip`
+  (colours from `--chart-N`, lazy-loaded). Manager/Rep pages scoped (roster aggregates, `SetTargetsModal`,
+  rep target + recent-sales). **Operations queues** are all live (`AdminQueueCard` `to` for every card; a
+  `/documents?queue=awaiting-signatures` preset + the `pending_signatures` documents filter, with the admin
+  count counting those DOCUMENTS so count==queue); **expense approvals gained bulk-approve** (`BulkActionBar`).
+- **Greenfield** — `Switch` gained `tone="success"` (grey off / green on); `SaleForm` uses it; `GreenfieldBadge`
+  is now green "Greenfield" / muted "Standard", shown across the sales list/detail/validation queue.
+- **Verified LOCAL only** (backend 69 suites/358 tests + build green; contract regen — 2 enum migrations
+  `reports:business` only; frontend build + lint + stylelint green). Operator: `migrate deploy` + re-seed
+  bootstrap to add `reports:business`. Light/dark + live-data visual pass needs a browser.
+
+### Holdback release rule · dual-mode incentives · password reset/invite + email · team management (built)
+The confirmed-rules batch — all CONFIRMED rules + a new feature, money/security paths.
+- **Holdback release (CONFIRMED).** `holdback-release.logic#resolveScheduledReleasePeriod` parses the sticky
+  structured rule `cycles:N` / `days:N` (`next_cycle_after_30_days`=`days:30` alias). The SA picks it once in
+  Commission Config (`ReleaseSettingSection` — mode + N, future-holds-only). Pay Run finalize applies a
+  **clawback set-off**: a rep's pending clawback reduces the due release first (records
+  `holdback_ledger.clawback_applied`, lowers `amount_released`), remainder hits net — recovered once, net
+  unchanged. Surfaced in `HoldbackPanel`/`LineBreakdownDrawer` (a "set-off" column). Specs: both modes + the
+  set-off.
+- **Dual-mode incentives (CONFIRMED).** Enum `target_based` → **`one_time`** (rename migration). The engine
+  applies both threshold-relative: `per_activation` pays beyond `target_count` (null/0 = all), `one_time` pays
+  one bonus at the threshold-crossing activation; period-level pass, separate from the 70/30 base (#1), frozen
+  in the snapshot (#2). FE `IncentiveModal` has both modes + a threshold field + per-mode help (ProposedChip
+  gone). Fixtures for both modes + boundary.
+- **AUTH-002 (Resend wired).** `common/email` `MailerService` (Resend, env-gated graceful) + the notification
+  `EMAIL_DISPATCHER` rebound to it. **Invite** (`CreateUserDto.password` optional → set-password link),
+  **forgot** (`@Public`, non-enumerating) + **reset** (`@Public`) via single-use hashed `PasswordResetToken`,
+  **admin reset** (`POST /v1/users/:id/reset-password` link|temp — admin never sees the password). **Policy**
+  (`auth/password-policy.ts`) + **lockout** (`failed_login_attempts`/`locked_until`, 5/15 default) +
+  `must_change_password` (login + `/me`; FE `RequirePasswordChange` gate → `/change-password`). FE pages:
+  `features/auth` (forgot/reset/set-password) + the invite/reset UI in User Management. **DNS for
+  `app.redwavemarketing.ca`** is operator-set in Namecheap (records in `docs/external-services.md` §2; the
+  DKIM value comes from the Resend dashboard).
+- **Team management.** `POST /v1/reps/bulk-assign-manager` (`hrm:edit`) + the `?fieldManagerId=` manager-team
+  filter (the roster scope `ScopeService.getRepScope` already reads `field_manager_id`). FE: the reps roster
+  `DataTable` gains bulk-select + an "Assign manager" action + a manager filter.
+- **No new permission** (release/incentive = `commission:edit`; team = `hrm:edit`; invite/reset =
+  `users:create`/`users:edit`; forgot/reset = `@Public`). New env: `RESEND_API_KEY`/`EMAIL_FROM`/`APP_URL` +
+  `LOCKOUT_*`/`*_TTL_MINUTES`. Migrations: `incentive_one_time` (enum rename) + `auth_reset_lockout` (User
+  cols + `password_reset_tokens`). **Verified LOCAL** (backend 80 suites/456 tests + build green; contract
+  regen; frontend build+lint+stylelint green). Operator: `migrate deploy` + set the Resend env + DNS;
+  light/dark + live-email visual pass needs a browser + a configured Resend domain.
+
+### Security hardening — cookie/CSRF · helmet/CSP · MFA · sessions · Swagger lock · audit view · rate-limit · PII (built)
+The security batch. Authoritative posture doc: **`docs/security.md`**. Server-side RBAC is still the real
+gate; the audit trail is append-only.
+- **Refresh → httpOnly rotating cookie + double-submit CSRF.** `refresh_sessions` table; the cookie value is
+  opaque `<sid>.<secret>` (only the secret HASH stored), **rotated** each `/v1/auth/refresh` — replaying an
+  old secret is **reuse → the session is revoked** (breach detection). `rw_refresh` (httpOnly) + `rw_csrf`
+  (readable) cookies; `Secure`+`Domain=COOKIE_DOMAIN` in prod only (dev host-only via the Vite proxy). Access
+  tokens carry `sid`; `JwtAuthGuard` rejects revoked sessions → **immediate** force-logout. `TokenService.
+  verifyAccess` accepts `JWT_ACCESS_SECRET` or `*_OLD` (zero-downtime secret rotation). A **global**
+  `CsrfGuard` checks `X-CSRF-Token == rw_csrf` on mutating cookie-session requests (skips safe methods,
+  `@CsrfExempt` pre-auth routes, and Bearer/API requests with no csrf cookie). FE: the refresh token is NO
+  LONGER in localStorage / the JSON body — `doRefresh()` POSTs with `credentials:'include'` + the CSRF header;
+  the client + multipart uploads send both on every request; multi-tab logout via a localStorage ping.
+- **MFA (TOTP + recovery codes), policy-driven.** `user_mfa` + `mfa_recovery_codes` (otplib; 10 hashed
+  one-time codes, shown once). Enroll/disable from **My Account → Security** (`/auth/mfa/{setup,enable,
+  disable}`); login is two-step when enrolled (`mfa_token` challenge → `/auth/mfa/verify`, no session until
+  verified). Policy: `roles.mfa_required` (SA seeded true) + singleton `security_settings.mfa_enforced`
+  (**default OFF** so testers aren't locked out) at `/admin/security` (`settings:view/edit`); when ON, a
+  required-role un-enrolled user is routed to `/setup-mfa` (RequireMfaEnrollment; `/me` carries
+  `mfa_enrollment_required`). SA force-logout + disable-MFA on `/v1/users/:id` (`users:edit`); active-session
+  list/revoke at `/v1/auth/sessions` (self) + the My-Account sessions panel.
+- **Headers.** Helmet on the API (HSTS prod, frame-ancestors none, nosniff, referrer, strict API CSP; relaxed
+  CSP on `/docs`). SPA security headers in `frontend/vercel.json` (CSP with `script-src 'self'` — the theme
+  boot is externalised to `public/theme-boot.js`; `worker-src blob:` for pdf.js; `connect-src` = API origin +
+  Maps + Supabase — **operator sets the real API origin**). **Swagger `/docs` is disabled in prod** unless
+  `ENABLE_SWAGGER=true` + HTTP Basic (`SWAGGER_USER`/`SWAGGER_PASSWORD`).
+- **Audit (append-only).** `audit_log.ip_address` stamped from an `AsyncLocalStorage` request context.
+  New `audit` RBAC module (`audit:view`/`export`, **SA only**). `GET /v1/audit-logs` (filter actor/entity/
+  action/date + pagination) → the SA **Audit log** page (`/admin/audit`) with a before→after drawer; the same
+  endpoint filtered by entity powers the reusable **`<HistoryTab entityType entityId/>`** (the Batch-1
+  deferred per-record history), wired into the Sale detail as the reference adoption. **No write/update/delete
+  path — the trail stays immutable.**
+- **Chatbot rate-limit/cost-cap.** Per-user 60s window (`CHATBOT_RPM`, in-memory) + daily cap from the
+  persisted conversation count (`CHATBOT_DAILY_CAP`); over the limit → a **graceful 200** (`intent:
+  'rate_limited'`, a normal assistant bubble), never an error. (Dropped the unused `@nestjs/throttler`.)
+- **PII / exports.** Pay-run + expense exports now scope to the caller's reps (manager=roster, rep=own,
+  admin/SA=all) — the pay-run export previously leaked every rep's pay. PIPEDA stance + secrets-rotation
+  runbook in `docs/security.md`.
+- **Migration** `20260610170000_security_hardening` (additive: 4 tables + `roles.mfa_required` +
+  `audit_log.ip_address`). New env (see `.env.example` / `docs/security.md`): `NODE_ENV`, `COOKIE_DOMAIN`,
+  `CORS_ORIGIN`, `ENABLE_SWAGGER`, `SWAGGER_USER`/`PASSWORD`, `MFA_ISSUER`, `MFA_CHALLENGE_TTL`,
+  `CHATBOT_RPM`/`CHATBOT_DAILY_CAP`, `JWT_ACCESS_SECRET_OLD`. **Verified LOCAL** (backend 84 suites/489 tests
+  + build + contract regen green; frontend build + lint + stylelint + tsc + session test green). Operator:
+  `migrate deploy` + re-seed bootstrap (adds the `audit` perms + SA `mfa_required` + `security_settings`) +
+  set the env + the Vercel CSP `connect-src` origin. Live cookie/CSP round-trip + a real MFA enrol + the
+  light/dark visual pass need a browser.
+
+### Billing — gapless numbering · immutability · reconciliation · QuickBooks (built — Billing batch)
+The client-billing surface is now accounting-grade. Reuse these; the invariants are load-bearing. Posture
+unchanged: priced SOLELY from `client_billing_rates` (#3, `billing.no-commission.spec` still green), ONE LINE
+PER CUSTOMER, **NO GST**, single-currency **CAD**.
+- **Gapless sequential numbers.** `document_sequences` (key `statement`/`invoice`, `current_value`) is the
+  per-type counter, incremented **atomically inside the issue `$transaction`** (`SequenceService.next(tx,key)`
+  → row lock → gapless, concurrency-safe). Display `STMT-00001` / `INV-00001`. Numbers are minted ONLY on
+  issue (never on preview). Scheme = **global per document type** (issuer-side register).
+- **Immutability = append-only versions.** A generate CREATES a NEW numbered `issued` statement/invoice and
+  marks the prior current one `superseded` + `superseded_by_id` (metadata only — number/total/lines/file are
+  **never** mutated; lines are never deleted). A correction is just another generate → a new numbered doc.
+  Replace-in-place is GONE. "Current" = the issued version; the list shows every version (audit trail).
+- **Preview.** `POST /v1/clients/:id/statements/preview` (`billing:create`) returns the one-line-per-customer
+  draft + total, **not persisted, no number minted** (422 on an unpriced product, like generate).
+- **Real files, rendered on demand from the FROZEN record.** `statement-excel.renderer` (exceljs),
+  `invoice-pdf.renderer` (pdf-lib), `quickbooks-csv.renderer` (QB-mappable CSV, no tax, CAD). `GET
+  /v1/{statements,invoices}/:id/download` (`billing:view`, `?format=excel|quickbooks` for statements) STREAMS
+  the bytes (works with storage off); `POST …/export` (`billing:export`) additionally records a
+  `billing_exports` row + uploads via `common/storage` when configured, then streams. FE downloads use
+  `lib/api/downloadFile` (raw fetch + bearer + CSRF → blob).
+- **Reconciliation (`modules/reconciliation/`, NOT in billing/ — keeps the #3 scan clean).** `GET
+  /v1/reconciliation/statements` (`billing:view`): statement total = Σ lines = Σ **live re-priced** confirmed
+  sales (a drift = stale → flag). `GET /v1/reconciliation/pay-runs/:id` (`payrun:view`): each line's net =
+  `computeNet(components)` (reused from payrun), run total = Σ net → flags mismatches. **Two INDEPENDENT
+  checks; never joins the two rate streams.** FE: `/admin/reconciliation` (Money nav + Admin hub card).
+- **Central rounding policy = `common/money`** (`roundMoneyHalfUp`/`formatMoney`/`sumMoney`): exact decimal
+  in storage, **2dp HALF_UP at the presentation boundary only**, CAD. Used by billing + exports +
+  reconciliation; the FE authority is `lib/format/money#money`. (The isolated Commission Engine keeps its own
+  identical helper to preserve §6 purity — same rule, separate stream.)
+- **Single-currency CAD (CONFIRMED).** No FX/multi-currency code anywhere; on-screen `$`, exports labelled CAD.
+- **No new permission** — `billing:view/create/export` (Admin + SA) cover everything; pay-run tie-out reuses
+  `payrun:view`. Migration `20260611120000_billing_numbering_immutability` (additive: numbers/status/
+  superseded + `document_sequences` + `billing_exports`; `file_url` nullable; invoices gain `generated_by`;
+  bootstrap seeds the counters idempotently — **never resets** an existing one). **Verified LOCAL** (backend
+  88 suites/511 tests + build green; contract regen 131 paths; frontend build+lint+stylelint+tsc green).
+  **Excel/PDF layout is a faithful GENERIC default — refine against Redwave's real client template** (same
+  stance as the import templates). Operator: `migrate deploy` + re-seed bootstrap + set Supabase storage; the
+  real-file/visual pass needs a browser + the real template.

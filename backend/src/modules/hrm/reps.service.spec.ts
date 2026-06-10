@@ -17,18 +17,22 @@ const VIEW_ONLY = authUser(['hrm:view']);
 const EDITOR = authUser(['hrm:view', 'hrm:edit']);
 
 function make() {
+  const tx = { rep: { updateMany: jest.fn().mockResolvedValue({ count: 2 }) } };
   const prisma = {
     rep: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 2 }),
     },
     user: { findUnique: jest.fn() },
+    $transaction: jest.fn().mockImplementation(async (cb: (t: typeof tx) => unknown) => cb(tx)),
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  return { service: new RepsService(prisma as never, audit as never), prisma, audit };
+  return { service: new RepsService(prisma as never, audit as never), prisma, tx, audit };
 }
 
 const managerUser = { id: 'mgr-1', status: 'active', user_roles: [{ role: { name: 'Manager' } }] };
@@ -109,6 +113,26 @@ describe('RepsService.create — field-manager validation (HRM-002)', () => {
       user_roles: [{ role: { name: 'Sales Rep' } }],
     });
     await expect(service.create(newRepDto, 'actor-1')).rejects.toBeInstanceOf(
+      UnprocessableEntityException,
+    );
+  });
+});
+
+describe('RepsService.bulkAssignManager (team management — HRM-002)', () => {
+  it('validates the manager + reassigns the reps in a transaction', async () => {
+    const { service, prisma, tx, audit } = make();
+    prisma.user.findUnique.mockResolvedValue(managerUser);
+    prisma.rep.findMany.mockResolvedValue([{ id: 'r1' }, { id: 'r2' }]);
+    const result = await service.bulkAssignManager({ rep_ids: ['r1', 'r2'], field_manager_id: 'mgr-1' }, 'actor-1');
+    expect(tx.rep.updateMany).toHaveBeenCalledWith({ where: { id: { in: ['r1', 'r2'] } }, data: { field_manager_id: 'mgr-1' } });
+    expect(result).toEqual({ success: true, count: 2 });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'reassign_manager' }));
+  });
+
+  it('rejects an invalid manager (422)', async () => {
+    const { service, prisma } = make();
+    prisma.user.findUnique.mockResolvedValue(null);
+    await expect(service.bulkAssignManager({ rep_ids: ['r1'], field_manager_id: 'bad' }, 'actor-1')).rejects.toBeInstanceOf(
       UnprocessableEntityException,
     );
   });

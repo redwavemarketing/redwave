@@ -19,16 +19,21 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { AuthUser } from '../../common/rbac/auth-user.type';
 import { BUILTIN_ROLES } from '../../common/rbac/rbac.constants';
+import { StorageService, UploadedFile } from '../../common/storage/storage.service';
 import { CreateDocumentDto } from './dto/create-document.dto';
 import { CreateSignatureRequestDto } from './dto/create-signature-request.dto';
 import { ListDocumentsQuery } from './dto/list-documents.query';
 import { recomputeDocumentStatus } from './status.recompute';
-import { NOTIFICATION_EMITTER, NotificationEmitter } from './seams/notification-emitter.provider';
+import { NOTIFICATION_EMITTER, NotificationEmitter } from '../../common/notifications/notification-emitter';
 
 const dateOnly = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
 
 const isAdmin = (user: AuthUser): boolean =>
   user.isSuperAdmin || user.roleNames.includes(BUILTIN_ROLES.ADMIN);
+
+/** Filename-safe slug for a download name (keeps the user's title recognizable). */
+const slug = (title: string): string =>
+  title.replace(/[^a-zA-Z0-9._ -]/g, '').trim().replace(/\s+/g, '-').slice(0, 80) || 'document';
 
 const DETAIL_INCLUDE = {
   signature_requests: {
@@ -43,6 +48,10 @@ const DETAIL_INCLUDE = {
           method: true,
         },
       },
+      signature_fields: {
+        select: { id: true, recipient_user_id: true, type: true, page: true, x: true, y: true, w: true, h: true },
+        orderBy: { created_at: 'asc' },
+      },
     },
     orderBy: { created_at: 'asc' },
   },
@@ -53,41 +62,61 @@ export class DocumentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly storage: StorageService,
     @Inject(NOTIFICATION_EMITTER) private readonly emitter: NotificationEmitter,
   ) {}
 
-  // ── Upload ──────────────────────────────────────────────────────────────────────
-  async upload(dto: CreateDocumentDto, user: AuthUser) {
+  // ── Upload (real object storage; the original is never mutated, DOC-001/004) ──────────
+  async upload(dto: CreateDocumentDto, file: UploadedFile, user: AuthUser) {
+    const stored = await this.storage.upload('documents', file); // returns the object PATH (or local:// ref)
     const document = await this.prisma.document.create({
       data: {
         title: dto.title,
         doc_type: dto.doc_type,
         owner_user_id: user.id,
-        // STUB: the binary upload → object storage is deferred (CLAUDE §12); store a reference only.
-        original_file_url: `s3://redwave-docs/${dto.doc_type}.pdf`,
+        original_file_url: stored.path, // the object path — re-signed on read; set once, never mutated
         status: 'draft',
       },
-    });
-    // Backfill a stable per-id reference now that the id exists (still a stub).
-    const withRef = await this.prisma.document.update({
-      where: { id: document.id },
-      data: { original_file_url: `s3://redwave-docs/${document.id}.pdf` },
     });
     await this.audit.log({
       actorId: user.id,
       entityType: 'documents',
       entityId: document.id,
       action: 'create',
-      after: { title: dto.title, doc_type: dto.doc_type, status: 'draft' },
+      after: { title: dto.title, doc_type: dto.doc_type, status: 'draft', stored: stored.stored },
     });
-    return withRef;
+    return document;
+  }
+
+  // ── Access-controlled file URLs (re-check visibility, then mint a short-TTL signed URL) ──
+  async fileUrl(id: string, user: AuthUser): Promise<{ url: string; filename: string }> {
+    const doc = await this.findOne(id, user); // 404 if not visible — no leak
+    const url = await this.storage.signedUrl(doc.original_file_url);
+    if (!url) {
+      throw new NotFoundException('the document file is not available (storage not configured)');
+    }
+    return { url, filename: `${slug(doc.title)}.pdf` };
+  }
+
+  async completedFileUrl(id: string, user: AuthUser): Promise<{ url: string; filename: string }> {
+    const doc = await this.findOne(id, user); // visibility-gated
+    const req = await this.prisma.signatureRequest.findFirst({
+      where: { document_id: id, completed_file_path: { not: null } },
+      orderBy: { created_at: 'desc' },
+      select: { completed_file_path: true },
+    });
+    const url = req?.completed_file_path ? await this.storage.signedUrl(req.completed_file_path) : null;
+    if (!url) {
+      throw new NotFoundException('no completed (all-signatures) copy is available yet');
+    }
+    return { url, filename: `${slug(doc.title)}-signed.pdf` };
   }
 
   // ── Share / request signature ──────────────────────────────────────────────────────
   async requestSignature(documentId: string, dto: CreateSignatureRequestDto, user: AuthUser) {
     const document = await this.prisma.document.findUnique({
       where: { id: documentId },
-      select: { id: true, owner_user_id: true },
+      select: { id: true, owner_user_id: true, title: true },
     });
     if (!document) {
       throw new NotFoundException('Document not found');
@@ -109,6 +138,15 @@ export class DocumentsService {
       throw new UnprocessableEntityException('recipient_user_ids must not contain duplicates');
     }
 
+    // Every placed field must target a recipient of THIS request. — DOC-003
+    const fields = dto.fields ?? [];
+    const recipientSet = new Set(recipients);
+    for (const field of fields) {
+      if (!recipientSet.has(field.recipient_user_id)) {
+        throw new UnprocessableEntityException('a signature field targets a non-recipient');
+      }
+    }
+
     const request = await this.prisma.$transaction(async (tx) => {
       const created = await tx.signatureRequest.create({
         data: {
@@ -123,8 +161,19 @@ export class DocumentsService {
               status: 'pending',
             })),
           },
+          signature_fields: {
+            create: fields.map((f) => ({
+              recipient_user_id: f.recipient_user_id,
+              type: f.type,
+              page: f.page,
+              x: f.x.toString(),
+              y: f.y.toString(),
+              w: f.w.toString(),
+              h: f.h.toString(),
+            })),
+          },
         },
-        include: { document_signatures: true },
+        include: { document_signatures: true, signature_fields: true },
       });
       await recomputeDocumentStatus(tx, documentId); // → 'shared'
       return created;
@@ -144,9 +193,10 @@ export class DocumentsService {
         eventType: 'signature_requested',
         userId: recipientId,
         title: 'A document needs your signature',
-        body: dto.message ?? 'You have been asked to sign a document.',
-        relatedEntityType: 'signature_requests',
-        relatedEntityId: request.id,
+        body: dto.message ?? `${user.full_name} asked you to sign ${document.title}.`,
+        relatedEntityType: 'documents', // deep-links to the document so the recipient can sign
+        relatedEntityId: documentId,
+        variables: { requester_name: user.full_name, document_name: document.title },
       });
     }
     return request;
@@ -160,6 +210,7 @@ export class DocumentsService {
           this.visibilityWhere(user),
           ...(query.status ? [{ status: query.status }] : []),
           ...(query.doc_type ? [{ doc_type: query.doc_type }] : []),
+          ...(query.pending_signatures ? [{ signature_requests: { some: { status: 'pending' as const } } }] : []),
         ],
       },
       orderBy: { created_at: 'desc' },

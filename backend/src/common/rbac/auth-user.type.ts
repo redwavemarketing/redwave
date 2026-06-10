@@ -17,4 +17,6 @@ export interface AuthUser {
   permissions: Set<string>;
   /** The rep id if this user is linked to a rep profile, else null. */
   repId: string | null;
+  /** The refresh-session id from the access token (`sid`), used for self-logout/revocation. Null/absent on legacy tokens. */
+  sid?: string | null;
 }

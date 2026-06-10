@@ -64,6 +64,16 @@
   --sidebar-width-collapsed: 64px;
   --topbar-height: 56px;
 
+  /* ── Breakpoints (design-system §8) — documentation only ──────────────────
+   * CSS @media can't read var(), so media queries use these literal px with a
+   * comment; JS reads them via lib/useMediaQuery (MOBILE_MAX / TABLET_RANGE).
+   *   mobile  < 640px   sidebar → off-canvas drawer (hamburger)
+   *   tablet  640–1024  sidebar → icon rail (auto-collapsed)
+   *   desktop > 1024px  full sidebar (user-collapsible)
+   */
+  --bp-mobile: 640px;
+  --bp-tablet: 1024px;
+
   /* Static colour — white text on the accent fill, identical in both themes. */
   --on-accent: #ffffff;
 
@@ -72,11 +82,25 @@
      each placement's text token); only this accent is fixed. See components/ui/Logo. */
   --brand-orange: #ff6600;
 
-  /* ── Z-index scale ─────────────────────────────────────────────────────── */
+  /* ── Z-index scale (single ordered ladder — the ONE source of truth) ──────
+   * Floating menus (dropdown / select / popover) sit ABOVE modal & drawer
+   * content so a menu opened INSIDE a modal is never clipped behind it. Radix
+   * portals both the menu and the modal to <body>, so z-index alone decides the
+   * stacking — a dropdown below the modal (the old --z-dropdown: 1000) rendered
+   * "behind the screen". Toasts sit above menus; tooltips top everything.
+   *   (base content)      auto   page content, tables
+   *   --z-sticky   100    sticky table headers / sub-nav
+   *   --z-overlay  1100   modal & drawer scrim
+   *   --z-modal    1200   modal & drawer content
+   *   --z-dropdown 1300   dropdown / select menus      (above modal)
+   *   --z-popover  1300   popovers / multi-select      (above modal)
+   *   --z-toast    1400   toasts                       (above menus)
+   *   --z-tooltip  1500   tooltips                     (top)
+   */
   --z-sticky: 100;
-  --z-dropdown: 1000;
   --z-overlay: 1100;
   --z-modal: 1200;
+  --z-dropdown: 1300;
   --z-popover: 1300;
   --z-toast: 1400;
   --z-tooltip: 1500;

@@ -42,7 +42,7 @@ const ENGINE_RESULT = {
 
 const decLike = (s: string) => ({ toString: () => s });
 
-function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknown[] } = {}) {
+function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknown[]; clawbackTotal?: string; scopeRepIds?: string[] } = {}) {
   const runStatus = opts.runStatus ?? 'draft';
   const period = {
     id: 'P1',
@@ -85,6 +85,7 @@ function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknow
         .mockResolvedValue({ id: 'run-1', status: runStatus, pay_period: period }),
       findFirst: jest.fn(),
       create: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
     },
     payRunLine: {
       findMany: jest.fn().mockResolvedValue(opts.bonuses ?? []),
@@ -92,15 +93,24 @@ function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknow
       update: jest.fn().mockResolvedValue({}),
     },
     sale: { findMany: jest.fn().mockResolvedValue([{ rep_id: 'rep-1' }]) }, // repsWithValidatedSales (distinct)
+    rep: { findMany: jest.fn().mockResolvedValue([{ id: 'rep-1', user_id: null }]) }, // pay_run_finalized recipients
     holdbackReleaseSetting: {
       findFirst: jest.fn().mockResolvedValue({ release_rule: 'next_cycle_after_30_days' }),
     },
     $transaction: jest.fn().mockImplementation(async (cb: (t: typeof tx) => unknown) => cb(tx)),
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const scope = { getRepScope: jest.fn().mockResolvedValue({ level: 'all' }) };
+  const scope = {
+    getRepScope: jest
+      .fn()
+      .mockResolvedValue(opts.scopeRepIds ? { level: 'roster', repIds: opts.scopeRepIds } : { level: 'all' }),
+  };
   const config = { getEngineConfig: jest.fn().mockResolvedValue({}) };
   const engine = { computePeriod: jest.fn().mockReturnValue(ENGINE_RESULT) };
+  const emitter = { emit: jest.fn(), emitMany: jest.fn(), emitRole: jest.fn() };
+  const clawbackSeam = opts.clawbackTotal
+    ? { getClawbackTotal: jest.fn().mockResolvedValue(new Decimal(opts.clawbackTotal)), markApplied: jest.fn().mockResolvedValue(undefined) }
+    : new ZeroClawbackTotalProvider();
   const service = new PayRunService(
     prisma as never,
     audit as never,
@@ -108,7 +118,8 @@ function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknow
     config as never,
     engine as never,
     new ZeroExpenseTotalProvider(),
-    new ZeroClawbackTotalProvider(),
+    clawbackSeam as never,
+    emitter as never,
   );
   return { service, prisma, tx };
 }
@@ -192,6 +203,33 @@ describe('PayRunService.finalize', () => {
     expect(lineArg(tx).clawback_total).toBe('0.00');
     expect(lineArg(tx).net_payout).toBe('127.00'); // 77 + 50 bonus
   });
+
+  it('CLAWBACK SET-OFF: a pending clawback reduces the due release first, then the remainder hits net', async () => {
+    // A $33 hold is due; a $20 clawback sets off against it → $13 released, ledger records clawback_applied 20.
+    const { service, tx } = make({ dueHolds: [{ id: 'h0', amount_held: decLike('33.00') }], clawbackTotal: '20.00' });
+    await service.finalize('run-1', user);
+    expect(tx.holdbackLedger.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'h0' },
+        data: expect.objectContaining({ release_status: 'released', amount_released: '13.00', clawback_applied: '20.00' }),
+      }),
+    );
+    expect(lineArg(tx).holdback_release_30).toBe('13.00'); // 33 − 20 set-off
+    expect(lineArg(tx).clawback_total).toBe('0.00'); // fully covered by the set-off → 0 remainder on net
+    // net unchanged either way: 77 advance + 13 released − 0 = 90  (== 77 + 33 − 20)
+    expect(lineArg(tx).net_payout).toBe('90.00');
+  });
+
+  it('CLAWBACK SET-OFF: a clawback larger than the release consumes it all; the remainder deducts from net', async () => {
+    const { service, tx } = make({ dueHolds: [{ id: 'h0', amount_held: decLike('33.00') }], clawbackTotal: '50.00' });
+    await service.finalize('run-1', user);
+    expect(tx.holdbackLedger.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'h0' }, data: expect.objectContaining({ amount_released: '0.00', clawback_applied: '33.00' }) }),
+    );
+    expect(lineArg(tx).holdback_release_30).toBe('0.00'); // fully consumed
+    expect(lineArg(tx).clawback_total).toBe('17.00'); // 50 − 33 remainder on net
+    expect(lineArg(tx).net_payout).toBe('60.00'); // 77 + 0 − 17  (== 77 + 33 − 50)
+  });
 });
 
 describe('PayRunService.setBonus', () => {
@@ -211,5 +249,27 @@ describe('PayRunService.setBonus', () => {
         data: expect.objectContaining({ bonus_amount: '50.00', net_payout: '127.00' }),
       }),
     );
+  });
+});
+
+describe('PayRunService.exportRun — RBAC scope (PII; a manager exports only their roster)', () => {
+  const finalizedRun = { id: 'run-1', status: 'finalized', pay_period: { id: 'P1' } };
+
+  it('a roster-scoped caller filters the exported lines to their reps', async () => {
+    const { service, prisma } = make({ runStatus: 'finalized', scopeRepIds: ['rep-1', 'rep-2'] });
+    prisma.payRun.findUnique.mockResolvedValue(finalizedRun);
+    prisma.payRunLine.findMany.mockResolvedValue([]);
+    await service.exportRun('run-1', { format: 'csv' }, user);
+    const where = (prisma.payRunLine.findMany.mock.calls[0][0] as { where: Record<string, unknown> }).where;
+    expect(where).toMatchObject({ pay_run_id: 'run-1', rep_id: { in: ['rep-1', 'rep-2'] } });
+  });
+
+  it('an all-scope caller (admin/SA) exports every line (no rep_id filter)', async () => {
+    const { service, prisma } = make({ runStatus: 'finalized' });
+    prisma.payRun.findUnique.mockResolvedValue(finalizedRun);
+    prisma.payRunLine.findMany.mockResolvedValue([]);
+    await service.exportRun('run-1', { format: 'csv' }, user);
+    const where = (prisma.payRunLine.findMany.mock.calls[0][0] as { where: Record<string, unknown> }).where;
+    expect(where).toEqual({ pay_run_id: 'run-1' });
   });
 });

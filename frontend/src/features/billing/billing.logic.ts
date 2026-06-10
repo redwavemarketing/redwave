@@ -6,6 +6,10 @@
 import { ApiError } from '../../lib/api/apiError';
 import type { UnpricedDetail } from './billing.types';
 
+/** Display form of the gapless document numbers (1 → "STMT-00001" / "INV-00001"). */
+export const statementNo = (n: number | null | undefined): string => `STMT-${String(n ?? 0).padStart(5, '0')}`;
+export const invoiceNo = (n: number | null | undefined): string => `INV-${String(n ?? 0).padStart(5, '0')}`;
+
 export function extractUnpriced(error: unknown): UnpricedDetail[] | null {
   if (!(error instanceof ApiError) || error.status !== 422) return null;
   const details = error.details;

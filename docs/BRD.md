@@ -100,15 +100,16 @@ The data model is the foundation of the system. It is designed so that business 
 |----------------------------|----------------------------------------------|--------------------------------------------------------------------------------------------------|
 | Rep / Distributor          | A field salesperson and their HR record.     | 1 Rep → many Sales, Expenses, Pay-Run Lines, Equipment, Documents. Has 1 Field Manager (a User). |
 | User & Role                | Any system login; role drives module access. | 1 Role → many Users; Role ↔ Modules (many-to-many permissions).                                  |
-| Client (Program Partner)   | VF, RF, CTI, and future partners.            | 1 Client → many Products; 1 Client → many Sales.                                                 |
-| Product                    | An admin-created, per-client sellable item.  | Belongs to 1 Client; referenced by Sales; has effective-dated client + rep rates.                |
+| Client (Program Partner)   | VF, RF, CTI, and future partners.            | 1 Client → many Products; 1 Client → many Sales; carries optional SA-defined custom fields.       |
+| Product Type (catalogue)   | Configurable product types + commission behaviour (tiered/greenfield/standard add-on). | The SA adds types at runtime (always standard add-on); core types are locked.                     |
+| Product                    | An admin-created, per-client sellable item.  | Belongs to 1 Client; has a product type from the catalogue; referenced by Sales; has effective-dated client + rep rates. |
 | Sale                       | One customer/household activation.           | Belongs to Rep + Client + Product(s); has 1 unique Sale ID; spawns 0..1 Clawback.                |
 | Rate Card / Tier Config    | Effective-dated commission rules.            | Referenced by the commission engine at period close.                                             |
 | Incentive / Spiff          | Admin-defined, time-boxed bonus.             | Applied to qualifying Sales; recorded per Sale.                                                  |
 | Pay Run                    | A bi-weekly payroll cycle.                   | 1 Pay Run → many Pay-Run Lines (one per rep).                                                    |
 | Holdback Ledger            | Tracks each 30% hold and its release.        | Belongs to Rep + originating Pay Period; released into a later Pay Run.                          |
 | Clawback                   | A cancellation recovery.                     | References the original Sale; applied against a Pay-Run Line.                                    |
-| Expense Report / Item      | Weekly expense submission and its lines.     | Belongs to Rep; many Items per Report; flows into a Pay Run.                                     |
+| Expense Item               | A single expense (item-first; the atomic unit). | Belongs to a submitter/Rep; carries its own status + pay period (by its date); flows into a Pay Run. |
 | Client Statement / Invoice | Billing output per client per period.        | Aggregates Sales for one Client + period.                                                        |
 
 ### 3.2 The Sale Entity & Unique Sale ID
@@ -276,13 +277,13 @@ Per rep per cycle the pay run produces: 70% advance for the period, any 30% hold
 
 ## 7. Expense Module
 
-Expenses are submitted weekly (work Tue–Sat, sometimes Sun; submit by Sunday night; approve by Monday). Approved expenses follow the SAME pay cycle as the commission for that period — i.e. they pay out with the current period’s payday, not the next.
+Expenses are captured **item-by-item** (the expense item is the atomic unit — there is no mandatory weekly report to fill in first; a user adds one or several items whenever they incur them). Each approved item follows the SAME pay cycle as the commission for the period **its own expense date falls in** — i.e. it pays out with that period's payday, not the next.
 
 ### 7.1 Expense Categories (confirmed)
 
 | **Category** | **Rules**                                                                                                                                                                                                                                              |
 |--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Kilometres   | From / To with multi-stop (Google Maps style “add stop”). ONE km log per day. Rep manually selects Single Trip (‒30 km) or Round Trip (‒60 km). $0.45/km on billable distance. Origin is an open input, not a hardcoded office. Receipt NOT required. |
+| Kilometres   | From / To with multi-stop (Google Maps Places autocomplete + “add stop”). ONE km log per day per rep. Rep selects Single Trip (‒30 km) or Round Trip (‒60 km). $0.45/km on billable distance, computed server-side. With a Maps key the route distance is derived automatically from the stops; otherwise the rep enters it manually. Origin is an open input, not a hardcoded office. Receipt NOT required. |
 | Meals        | Lunch $15, Dinner $30 (admin-configurable; may be lowered). Amount entered manually + place name. Receipt mandatory.                                                                                                                                 |
 | Hotel        | Name, location, date, amount. Receipt mandatory.                                                                                                                                                                                                       |
 | Flight       | Description, date, amount. Receipt mandatory.                                                                                                                                                                                                          |
@@ -295,15 +296,15 @@ Expenses are submitted weekly (work Tue–Sat, sometimes Sun; submit by Sunday n
 
 ### 7.2 Submission, Approval & Visibility
 
-- All users (reps, managers, admins, partners) can submit their own expenses; receipts are stored as cloud digital copies.
+- All users (reps, managers, admins, partners) can add their own expense items — one or several at a time; receipts upload to cloud storage and are stored as access-controlled digital copies.
 
-- Submitted expenses go to a Pending Approval queue for the Field Manager / Admin.
+- Submitted items go to a Pending Approval queue for the Field Manager / Admin. Approval is **per item, with bulk select** to act on many at once (approve / reject / send back).
 
-- Manager/Admin can edit before approval and can send a report back for correction. After approval, only the Super Admin can change it.
+- Manager/Admin can edit an item before approval and can send it back for correction. After approval, only the Super Admin can change it; a not-yet-approved item can be deleted.
 
-- **List view, not folders.** Expenses display as a filterable list — default filter is the current pay cycle — filterable by Date, Rep, Client, and Type.
+- **List view, not folders.** Expenses display as a filterable, paginated list of items — default filter is the current pay cycle — filterable by Date range, Rep, Client, Category, and Status, and **groupable daily/weekly/monthly/custom**.
 
-- **Export.** Exportable to Excel/PDF: per-rep KM logs for client submission (KM only where that is all the client needs), and select-all for internal accounting/bookkeeping.
+- **Export.** Exportable to Excel/PDF/CSV — per-item rows or grouped period totals: per-rep KM logs for client submission (KM only where that is all the client needs), and select-all for internal accounting/bookkeeping; each server-recorded export is stored.
 
 ## 8. Client Billing & Statements
 
@@ -323,6 +324,15 @@ Expenses are submitted weekly (work Tue–Sat, sometimes Sun; submit by Sunday n
 
 Each client has its own product catalogue and its own billing rates, created and maintained by the admin. Bundle/triple-play pricing, where applicable, is configured per client.
 
+### 8.3 Numbering, Immutability, Reconciliation & Export (confirmed)
+
+- **Gapless sequential numbering (accounting requirement).** Statements and invoices receive gapless, sequential numbers (`STMT-00001` / `INV-00001`), one sequence per document type across all clients (the issuer-side register). Numbers are minted atomically when a document is **issued** (not on preview), so they never gap even under concurrent generation.
+- **Immutable once issued.** An issued statement/invoice is never edited. A correction produces a **new numbered document**; the prior one is marked *superseded* and retained unchanged (preserves the audit trail + gapless integrity).
+- **Preview before issue.** The user previews the one-line-per-customer rows (combined total, no tax) before generating; generating then issues and renders the Excel.
+- **Reconciliation / tie-out (integrity safety net).** Finance can verify: each statement total = the sum of its customer lines = the sum of the underlying sales’ billing amounts; each pay-run total = the sum of its lines. Discrepancies are flagged clearly (e.g. a statement that has gone stale because sales changed after issue).
+- **QuickBooks-friendly export.** Because tax lives in QuickBooks, statements/invoices export as a CSV that maps cleanly into QuickBooks (no tax column), stored as a recorded artifact.
+- **Single currency: CAD (confirmed).** All clients, including US/CTI, are billed in **CAD** — there is no multi-currency or FX handling. Money is exact-decimal, formatted by one central rounding rule (2 dp, half-up) so a CAD figure is identical on screen, in the statement, the invoice, and every export.
+
 ## 9. Dashboards, Leaderboard & Notifications
 
 ### 9.1 Rep Dashboard & Leaderboard
@@ -333,9 +343,18 @@ Each client has its own product catalogue and its own billing rates, created and
 
 ### 9.2 Admin / Partner Analytics
 
-- Company revenue (client billings), total rep payout, net estimate, by client / rep / product / period.
+- Company revenue (client billings), total rep payout, net margin ($ and %), by client / rep / product / period.
 
-- Kept separate from the rep leaderboard and gated to Super Admin / permitted roles.
+- A full period KPI set: holdback liability (held / scheduled / released), clawback total + rate, expenses
+  (KM vs other), activation volumes (by product, by client, greenfield), the validation funnel, the rep tier
+  distribution, client mix, and period-over-period growth — plus **cross-period trend charts** (revenue/payout/
+  margin, activations by product, revenue by client, tier distribution over time).
+
+- All figures are READ from the frozen ledger (commissions are never recomputed). Kept separate from the rep
+  leaderboard and gated to Super Admin (`reports:business`) / permitted roles.
+
+- **Sales targets** (per rep per period) drive the rep "target progress" widget and the manager
+  "target-vs-actual"; a manager sees roster aggregates always but per-rep earnings only with `hrm:edit`.
 
 ### 9.3 Notifications
 
@@ -343,9 +362,15 @@ Each client has its own product catalogue and its own billing rates, created and
 
 - **Lean and batched.** No per-sale email spam. Notifications cover actionable events (e.g. expense awaiting approval, statement ready).
 
+- **Super-Admin-managed event catalogue.** Every actionable event (sale validated, expense submitted/approved/rejected/sent-back, signature requested/signed/declined, document completed, pay run finalized, holdback released, clawback applied, profile change requested/decided, statement ready, rate change, import committed) is a catalogue entry the Super Admin manages. Per event the Super Admin can: enable/disable it, choose the channel (in-app and/or email), and edit the **title and body templates** (with documented `{variable}` placeholders; a blank template falls back to the built-in wording). **Recipients are intrinsic to each event** (e.g. a sale's notification goes to that sale's rep) and are shown read-only — they are not freely re-targeted, so an automatic event is never silently redirected. Adding a genuinely **new** automatic trigger still requires a code change (a new emit call); the Super Admin manages the catalogue, not the trigger logic.
+
+- **Manual broadcast.** The Super Admin can also compose a one-off **broadcast** (title + body) to a chosen audience — everyone, a role, or specific users — fanned out as in-app notifications (and email where the broadcast channel is on). This is the only path that targets recipients freely; it is gated by a dedicated `notifications:broadcast` permission (Super Admin only).
+
+- **Notification Center + unread badge.** Users have a full Notification Center (read/unread, mark-all, bulk actions, filter, search) and a live unread-count badge on the bell that refreshes on a poll interval and on window focus. Clicking a notification opens the related record and marks it read.
+
 ### 9.4 Rate-Change Mechanism
 
-Rate/tier/threshold changes are entered by the Super Admin with a custom effective date. A later change supersedes/overwrites a pending one (e.g. if partners reverse a decision before it takes effect). The 14-day notice required by Schedule C is handled by Redwave manually outside the system.
+Rate/tier/threshold changes are entered by the Super Admin with an effective date that is **selected as a pay period**, not a free calendar date: the admin picks the pay period the change takes effect in (`Period N · start–end`) and the system stores that period's boundary date (the start date for *effective from*, the end date for *effective to*). This keeps every rate window aligned to pay-period boundaries and avoids mid-period changes. The effective date must be today's period or later — **back-dating is rejected** (closed/in-progress periods are never altered). A later change supersedes/overwrites a pending one (e.g. if partners reverse a decision before it takes effect). The 14-day notice required by Schedule C is handled by Redwave manually outside the system.
 
 ### 9.5 AI Chatbot (Integrated)
 

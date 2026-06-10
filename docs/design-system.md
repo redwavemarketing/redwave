@@ -168,6 +168,8 @@ Two families. A characterful humanist sans for all UI text, and a tabular monosp
 
 --radius-sm=6 --radius-md=10 --radius-lg=14. Cards and inputs use md; pills/badges use full. Elevation is restrained: --shadow-1 (subtle, cards), --shadow-2 (dropdowns/popovers), --shadow-3 (modals). Avoid heavy drop shadows — borders carry most separation.
 
+**Z-index ladder (the ONE source of truth — `styles/theme.css`).** A single ordered scale so floating layers never collide: `--z-sticky 100 < --z-overlay 1100 (modal/drawer scrim) < --z-modal 1200 (modal/drawer content) < --z-dropdown 1300 = --z-popover 1300 (dropdown/select/popover menus — ABOVE modal so a menu opened inside a modal isn't clipped behind it) < --z-toast 1400 < --z-tooltip 1500`. Menus are portaled to `<body>` and capped to the available height (`max-height: var(--radix-*-content-available-height)` + scroll), so a long list (e.g. 13 pay periods) scrolls instead of rendering off-screen.
+
 ### 5.4 Motion
 
 - **Fast and purposeful:** 120–180ms for hovers/toggles, 200–260ms for panels/modals, with an ease-out curve. Motion confirms an action or guides attention — never decorative delay.
@@ -240,6 +242,8 @@ Tables are the most-used surface (sales, expenses, clawbacks, ledger, imports). 
 
 - **Empty, loading, error states:** skeleton rows while loading; a helpful empty state with a primary action; a clear retry on error.
 
+> **Implemented as `<DataTable>` (the shared list surface).** One component over the Table primitives delivers all of the above plus: **server-side** pagination/sort/filter/free-text search (the `?page=&limit=&sort=&search=` → `{ data, meta }` contract; lists never load whole tables client-side), controlled bulk-select + a contextual action bar (RBAC-gated), per-row view/edit/delete actions, and a dedicated **forbidden** state (a restricted role sees a friendly panel, never "Failed to load"). Adopted on Clients, Products, and Sales as the reference. Date inputs are the controlled token-styled **DatePicker** (always `YYYY-MM-DD`); effective-dated config uses a **pay-period selector** (§ BRD 9.4). Lists export to CSV/Excel/PDF + Print, respecting the active filters/selection.
+
 ### 6.5 Containers & overlays
 
 | **Component**         | **Use**                                                                                                                                                      |
@@ -294,6 +298,8 @@ Built mobile-first in behaviour even though primary use is desktop, so the futur
 | Tablet (640–1024px) | Collapsible icon sidebar; two-column forms; tables scroll with pinned column.                                                                                                                 |
 | Desktop (\>1024px)  | Full sidebar + multi-column dashboards and dense tables; the primary working environment.                                                                                                     |
 
+> **Implemented (app shell).** Breakpoints are `--bp-mobile: 640px` / `--bp-tablet: 1024px` (read in JS via `lib/useMediaQuery`). The shell is responsive: **>1024px** full sidebar (user-collapsible); **640–1024px** auto-collapsed icon rail; **<640px** the sidebar is hidden and the top-bar hamburger opens it as an off-canvas drawer (focus-trapped, scrim, Esc) that auto-closes on navigation; data tables get horizontal scroll. Resolves the prior sidebar-overlaps-content defect at narrow widths.
+
 - **Touch targets ≥ 44px on mobile;** hover-only affordances always have a tap equivalent.
 
 - **The rep flows** (enter sale, submit expense with receipt photo, view dashboard, sign a document) are fully usable on a phone — these are the field-use cases.
@@ -335,17 +341,17 @@ How the system and components compose into the highest-traffic screens. These ar
 
 - **Finalize:** confirmation dialog restating totals and the irreversible snapshot-freeze; idempotent on the server.
 
-### 10.4 Expenses
+### 10.4 Expenses (item-first)
 
-- **Submission:** category picker → per-category form (km log with map stops + single/round toggle; meals/hotel/flight/rental/gas/other with amount + mandatory receipt upload); weekly grouping.
+- **Add expense:** category picker → per-category form (km log with Places-autocomplete map stops + auto distance + single/round toggle; meals/hotel/flight/rental/gas/other with amount + mandatory receipt **upload**). “Add another item” captures **several items at once** — no weekly report to fill in first. Sensible defaults (date = today, rep = self). Where no Maps key is set, the km form falls back to manual address + total-km entry.
 
-- **List & approval:** filterable list (default current cycle), pending-approval queue with approve/send-back, export action that records the export.
+- **List, group & approval:** a paginated **DataTable** of items (default current cycle) with filters (status/category/rep/client/date/search) and a **grouping** control (daily/weekly/monthly/custom) that drives an at-a-glance summary strip + the export. Approvers get row-select → a **bulk** approve/reject/send-back bar (and a per-item Approvals queue); per-row View/Edit/Delete via a kebab (edit-gating EXP-007). Export to PDF/Excel/CSV (per-item or grouped buckets) plus a server-recorded export for the per-rep KM-log client submission. Money is right-aligned mono; the KM amount is server-authoritative (the on-form preview is indicative only).
 
 ### 10.5 Data import & documents
 
 - **Import:** upload → mapping → staging preview table (matched/unmatched/error counts + per-row issues) → reconciliation → guarded commit with the reconcile check. A wizard-style stepper.
 
-- **Documents/e-sign:** document list with status; share/request dialog (one or many recipients); a clean signing view; per-signer status with audit metadata.
+- **Documents/e-sign:** document list with status; PDF upload; an **in-browser PDF preview** (pdf.js, lazy-loaded) of the original + signed copies, with download. The share/request dialog (one or many recipients) lets the sender **place fields** (signature/initial/date/text) per recipient on the document (drag to move, corner to resize). A clean **in-system signing view** previews the document with the signer's fields highlighted and applies a signature (a saved one, drawn on a signature pad, or typed) — or uploads an externally-signed file. Per-signer status with audit metadata; a fully-signed copy on completion. Saved reusable signatures are managed under **My Account → Signatures**.
 
 ### 10.6 Settings, My Account & profile review
 

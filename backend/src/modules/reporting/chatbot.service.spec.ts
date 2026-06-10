@@ -14,9 +14,9 @@ const user = (over: Partial<AuthUser> = {}): AuthUser => ({
   ...over,
 });
 
-function make(tool: ChatTool, scopeLevel: 'all' | 'roster' | 'self' = 'self') {
+function make(tool: ChatTool, scopeLevel: 'all' | 'roster' | 'self' = 'self', cfg: Record<string, string> = {}) {
   const prisma = {
-    chatbotConversation: { create: jest.fn().mockResolvedValue({ id: 'conv-1' }) },
+    chatbotConversation: { create: jest.fn().mockResolvedValue({ id: 'conv-1' }), count: jest.fn().mockResolvedValue(0) },
     chatbotMessage: { createMany: jest.fn().mockResolvedValue({ count: 2 }) },
   };
   const scope = { getRepScope: jest.fn().mockResolvedValue(scopeLevel === 'all' ? { level: 'all' } : { level: scopeLevel, repIds: ['rep-1'] }) };
@@ -25,9 +25,10 @@ function make(tool: ChatTool, scopeLevel: 'all' | 'roster' | 'self' = 'self') {
     manager: jest.fn().mockResolvedValue({ team_internet_activations: 40, pending_validations: 3 }),
     business: jest.fn().mockResolvedValue({ revenue: '1000.00', rep_payout: '600.00', net_margin: '400.00' }),
   };
+  const config = { get: jest.fn((k: string) => cfg[k]) };
   const llm = { resolveIntent: jest.fn().mockResolvedValue({ tool }) };
-  const service = new ChatbotService(prisma as never, scope as never, dashboards as never, llm as never);
-  return { service, prisma, scope, dashboards, llm };
+  const service = new ChatbotService(prisma as never, scope as never, dashboards as never, config as never, llm as never);
+  return { service, prisma, scope, dashboards, llm, config };
 }
 
 describe('ChatbotService scoping (RPT-011 — cannot leak across scope)', () => {
@@ -68,5 +69,33 @@ describe('ChatbotService scoping (RPT-011 — cannot leak across scope)', () => 
     expect(prisma.chatbotConversation.create).toHaveBeenCalled();
     const msgs = (prisma.chatbotMessage.createMany.mock.calls[0][0] as { data: { role: string }[] }).data;
     expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant']);
+  });
+});
+
+describe('ChatbotService rate-limit / cost cap (graceful 200, not an error)', () => {
+  it('caps at CHATBOT_RPM messages/minute with a friendly answer (no LLM call, no persist)', async () => {
+    const { service, llm, prisma } = make('my_commission', 'self', { CHATBOT_RPM: '2' });
+    const u = user();
+    await service.query({ prompt: 'a' }, u); // 1
+    await service.query({ prompt: 'b' }, u); // 2
+    const capped = await service.query({ prompt: 'c' }, u); // 3 → capped
+    expect(capped.intent).toBe('rate_limited');
+    expect(capped.answer).toMatch(/try again/i);
+    expect(llm.resolveIntent).toHaveBeenCalledTimes(2); // the capped one never reached the LLM
+    expect(prisma.chatbotConversation.create).toHaveBeenCalledTimes(2); // nor was it persisted
+  });
+
+  it('caps at the daily limit (persisted count) with a friendly answer', async () => {
+    const { service, prisma } = make('my_commission', 'self', { CHATBOT_DAILY_CAP: '5' });
+    prisma.chatbotConversation.count.mockResolvedValue(5); // already used today
+    const capped = await service.query({ prompt: 'hi' }, user());
+    expect(capped.intent).toBe('rate_limited');
+    expect(capped.answer).toMatch(/limit/i);
+  });
+
+  it('allows the request when under both limits', async () => {
+    const { service } = make('my_commission', 'self', { CHATBOT_RPM: '10', CHATBOT_DAILY_CAP: '100' });
+    const result = await service.query({ prompt: 'my commission' }, user());
+    expect(result.intent).toBe('my_commission');
   });
 });

@@ -4,9 +4,11 @@
  * with their screens. Pages are code-split with React.lazy (§13 performance budget).
  */
 import { lazy, Suspense, type ReactNode } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
 import { RequireAuth } from '../auth/RequireAuth';
+import { RequirePasswordChange } from '../auth/RequirePasswordChange';
+import { RequireMfaEnrollment } from '../auth/RequireMfaEnrollment';
 import { LoadingSpinner } from '../components/ui';
 
 const LoginPage = lazy(() => import('../pages/login/LoginPage'));
@@ -34,19 +36,33 @@ const ExpenseDetailPage = lazy(() => import('../features/expenses/pages/ExpenseD
 const ExpenseApprovalsPage = lazy(() => import('../features/expenses/pages/ExpenseApprovalsPage'));
 const ClientsPage = lazy(() => import('../features/clients/pages/ClientsPage'));
 const ClientDetailPage = lazy(() => import('../features/clients/pages/ClientDetailPage'));
+const ProductsListPage = lazy(() => import('../features/products/pages/ProductsListPage'));
 const CommissionConfigPage = lazy(() => import('../features/commission/pages/CommissionConfigPage'));
+const ProductTypesPage = lazy(() => import('../features/productTypes/pages/ProductTypesPage'));
 const PayRunListPage = lazy(() => import('../features/payrun/pages/PayRunListPage'));
 const PayRunDetailPage = lazy(() => import('../features/payrun/pages/PayRunDetailPage'));
 const ClawbackListPage = lazy(() => import('../features/clawback/pages/ClawbackListPage'));
 const ClawbackEntryPage = lazy(() => import('../features/clawback/pages/ClawbackEntryPage'));
 const BillingListPage = lazy(() => import('../features/billing/pages/BillingListPage'));
 const StatementDetailPage = lazy(() => import('../features/billing/pages/StatementDetailPage'));
+const ReconciliationPage = lazy(() => import('../features/reconciliation/pages/ReconciliationPage'));
 const DocumentsListPage = lazy(() => import('../features/documents/pages/DocumentsListPage'));
 const DocumentDetailPage = lazy(() => import('../features/documents/pages/DocumentDetailPage'));
 const ImportListPage = lazy(() => import('../features/import/pages/ImportListPage'));
 const NewImportPage = lazy(() => import('../features/import/pages/NewImportPage'));
 const ImportDetailPage = lazy(() => import('../features/import/pages/ImportDetailPage'));
 const ChatbotPage = lazy(() => import('../features/chatbot/pages/ChatbotPage'));
+const NotificationCenterPage = lazy(() => import('../features/notifications/pages/NotificationCenterPage'));
+const BroadcastPage = lazy(() => import('../features/notifications/pages/BroadcastPage'));
+const RepsListPage = lazy(() => import('../features/reps/pages/RepsListPage'));
+const ReportsLandingPage = lazy(() => import('../features/reports/pages/ReportsLandingPage'));
+const ForgotPasswordPage = lazy(() => import('../features/auth/pages/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('../features/auth/pages/ResetPasswordPage'));
+const ChangePasswordRequiredPage = lazy(() => import('../features/auth/pages/ChangePasswordRequiredPage'));
+const SetupMfaPage = lazy(() => import('../features/auth/pages/SetupMfaPage'));
+const SecuritySettingsPage = lazy(() => import('../features/admin/pages/SecuritySettingsPage'));
+const AuditLogPage = lazy(() => import('../features/audit/pages/AuditLogPage'));
+const NotFoundPage = lazy(() => import('../pages/NotFoundPage'));
 
 const fallback = (
   <div style={{ display: 'flex', justifyContent: 'center', padding: 'var(--space-7)' }}>
@@ -60,9 +76,21 @@ export const router = createBrowserRouter([
     path: '/login',
     element: lazyEl(<LoginPage />),
   },
+  { path: '/forgot-password', element: lazyEl(<ForgotPasswordPage />) },
+  { path: '/reset-password', element: lazyEl(<ResetPasswordPage />) },
+  { path: '/set-password', element: lazyEl(<ResetPasswordPage flavor="invite" />) },
   {
     element: <RequireAuth />,
     children: [
+      // Authed but OUTSIDE the must-change / MFA-enrolment guards, so a flagged user can actually reach them.
+      { path: '/change-password', element: lazyEl(<ChangePasswordRequiredPage />) },
+      { path: '/setup-mfa', element: lazyEl(<SetupMfaPage />) },
+      {
+        element: <RequirePasswordChange />,
+        children: [
+      {
+        element: <RequireMfaEnrollment />,
+        children: [
       {
         path: '/',
         element: <AppShell />,
@@ -94,6 +122,7 @@ export const router = createBrowserRouter([
           { path: 'import/new', element: lazyEl(<NewImportPage />) },
           { path: 'import/:id', element: lazyEl(<ImportDetailPage />) },
           { path: 'chatbot', element: lazyEl(<ChatbotPage />) },
+          { path: 'notifications', element: lazyEl(<NotificationCenterPage />) },
           { path: 'account', element: lazyEl(<AccountPage />) },
           { path: 'admin', element: lazyEl(<AdminHomePage />) },
           { path: 'admin/profile-review', element: lazyEl(<ProfileReviewPage />) },
@@ -102,9 +131,26 @@ export const router = createBrowserRouter([
           { path: 'admin/roles/new', element: lazyEl(<RoleEditorPage />) },
           { path: 'admin/roles/:id', element: lazyEl(<RoleEditorPage />) },
           { path: 'admin/notifications', element: lazyEl(<NotificationSettingsPage />) },
+          { path: 'admin/broadcast', element: lazyEl(<BroadcastPage />) },
+          { path: 'admin/reps', element: lazyEl(<RepsListPage />) },
+          { path: 'reports', element: lazyEl(<ReportsLandingPage />) },
           { path: 'admin/clients', element: lazyEl(<ClientsPage />) },
           { path: 'admin/clients/:id', element: lazyEl(<ClientDetailPage />) },
+          { path: 'admin/products', element: lazyEl(<ProductsListPage />) },
           { path: 'admin/commission', element: lazyEl(<CommissionConfigPage />) },
+          { path: 'admin/product-types', element: lazyEl(<ProductTypesPage />) },
+          { path: 'admin/security', element: lazyEl(<SecuritySettingsPage />) },
+          { path: 'admin/audit', element: lazyEl(<AuditLogPage />) },
+          { path: 'admin/reconciliation', element: lazyEl(<ReconciliationPage />) },
+          // Convenience redirects for legacy/short paths that previously dead-ended on a blank RR-404.
+          { path: 'users', element: <Navigate to="/admin/users" replace /> },
+          { path: 'reps', element: <Navigate to="/admin/reps" replace /> },
+          // Friendly catch-all so no unknown path is ever a blank screen.
+          { path: '*', element: lazyEl(<NotFoundPage />) },
+        ],
+      },
+        ],
+      },
         ],
       },
     ],

@@ -19,7 +19,8 @@ import { AuditService } from '../../common/audit/audit.service';
 import { AuthUser } from '../../common/rbac/auth-user.type';
 import { permissionKey } from '../../common/rbac/permissions.util';
 import { BUILTIN_ROLES } from '../../common/rbac/rbac.constants';
-import { CreateRepDto, ListRepsQuery, UpdateRepDto } from './dto/rep.dto';
+import { buildPage, resolveOrderBy, toSkipTake } from '../../common/pagination/paginate';
+import { BulkAssignManagerDto, CreateRepDto, ListRepsQuery, UpdateRepDto } from './dto/rep.dto';
 
 const dateOnly = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
 
@@ -49,6 +50,9 @@ function isUniqueViolation(error: unknown): boolean {
 
 @Injectable()
 export class RepsService {
+  /** Columns a client may sort the list on (allowlist — the orderBy-injection guard). */
+  private static readonly SORTABLE = ['rep_code', 'full_name', 'status', 'hire_date', 'created_at'] as const;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -67,9 +71,19 @@ export class RepsService {
           }
         : {}),
     };
-    const reps = await this.prisma.rep.findMany({ where, orderBy: { created_at: 'asc' } });
+    const { skip, take, page, limit } = toSkipTake(query);
+    const orderBy = resolveOrderBy(query.sort, RepsService.SORTABLE, { created_at: 'asc' });
+    const [reps, total] = await Promise.all([
+      this.prisma.rep.findMany({ where, orderBy, skip, take }),
+      this.prisma.rep.count({ where }),
+    ]);
     const canSee = canSeeSensitive(user);
-    return reps.map((rep) => redactRep(rep, canSee));
+    return buildPage(
+      reps.map((rep) => redactRep(rep, canSee)),
+      total,
+      page,
+      limit,
+    );
   }
 
   async findOne(id: string, user: AuthUser) {
@@ -171,6 +185,30 @@ export class RepsService {
       after: this.auditView(updated),
     });
     return updated;
+  }
+
+  /**
+   * (Re)assign one or more reps to a field manager in one transaction. The roster scope (ScopeService) +
+   * manager-scoped dashboards/queues read `field_manager_id`, so this drives team management. — HRM-002
+   */
+  async bulkAssignManager(dto: BulkAssignManagerDto, actorId: string) {
+    await this.assertValidFieldManager(dto.field_manager_id);
+    const repIds = [...new Set(dto.rep_ids)];
+    const found = await this.prisma.rep.findMany({ where: { id: { in: repIds } }, select: { id: true } });
+    if (found.length !== repIds.length) {
+      throw new NotFoundException('one or more reps were not found');
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.rep.updateMany({ where: { id: { in: repIds } }, data: { field_manager_id: dto.field_manager_id } });
+    });
+    await this.audit.log({
+      actorId,
+      entityType: 'reps',
+      entityId: dto.field_manager_id,
+      action: 'reassign_manager',
+      after: { field_manager_id: dto.field_manager_id, rep_ids: repIds, count: repIds.length },
+    });
+    return { success: true, count: repIds.length };
   }
 
   private async assertValidFieldManager(userId: string): Promise<void> {

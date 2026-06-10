@@ -9,10 +9,9 @@
  */
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
+import { TokenService } from '../../modules/auth/token.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { AuthUser } from '../rbac/auth-user.type';
 import { buildEffectivePermissions } from '../rbac/permissions.util';
@@ -22,8 +21,7 @@ import { BUILTIN_ROLES } from '../rbac/rbac.constants';
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    private readonly jwt: JwtService,
-    private readonly config: ConfigService,
+    private readonly tokens: TokenService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -43,13 +41,20 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     let sub: string;
+    let sid: string | null = null;
     try {
-      const payload = await this.jwt.verifyAsync<{ sub: string }>(token, {
-        secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-      });
+      const payload = await this.tokens.verifyAccess(token);
+      if (payload.type !== 'access') throw new Error('Wrong token type');
       sub = payload.sub;
+      sid = payload.sid ?? null;
     } catch {
       throw new UnauthorizedException('Invalid or expired token');
+    }
+
+    // Immediate revocation: an access token whose refresh-session was revoked/expired is rejected at once —
+    // this is what makes self-logout and SA force-logout take effect before the 15-minute access TTL. — arch §security
+    if (sid && !(await this.isSessionActive(sid))) {
+      throw new UnauthorizedException('Session revoked');
     }
 
     const user = await this.loadAuthUser(sub);
@@ -61,8 +66,17 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Account is inactive');
     }
 
+    user.sid = sid;
     request.user = user;
     return true;
+  }
+
+  private async isSessionActive(sid: string): Promise<boolean> {
+    const s = await this.prisma.refreshSession.findUnique({
+      where: { id: sid },
+      select: { revoked_at: true, expires_at: true },
+    });
+    return !!s && !s.revoked_at && s.expires_at.getTime() >= Date.now();
   }
 
   private extractBearerToken(request: Request): string | null {
@@ -116,6 +130,7 @@ export class JwtAuthGuard implements CanActivate {
       isSuperAdmin: roleNames.includes(BUILTIN_ROLES.SUPER_ADMIN),
       permissions: buildEffectivePermissions(roles),
       repId: user.rep_login?.id ?? null,
+      sid: null, // set by canActivate from the access token
     };
   }
 }

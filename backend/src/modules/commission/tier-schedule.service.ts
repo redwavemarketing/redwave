@@ -3,14 +3,15 @@
  * CommissionTier bracket rows). Reuses the shared effective-dating supersession. This module only
  * STORES the schedule; the engine performs tier determination at runtime (#5). — SRS COMM-001, §7.2
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { DomainError } from '../../common/errors/domain-error';
-import { deriveStatus, planSupersession, toUtcDateOnly } from '../../common/effective-dating';
+import { deriveStatus, planSupersession, previousDay, toUtcDateOnly } from '../../common/effective-dating';
 import { validateTierBrackets } from './tier-schedule.logic';
 import { parseEffectiveWindow } from './effective-dates.util';
-import { CreateTierScheduleDto } from './dto/tier.dto';
+import { assertPending, resolveEditWindow } from './effective-edit.util';
+import { CreateTierScheduleDto, TierBracketDto, UpdateTierScheduleDto } from './dto/tier.dto';
 
 @Injectable()
 export class TierScheduleService {
@@ -102,5 +103,88 @@ export class TierScheduleService {
       },
     });
     return { ...created, status: deriveStatus(created, today) };
+  }
+
+  /**
+   * Edit a PENDING schedule: its effective window and/or the full bracket set (re-validated, replaced).
+   * A current/past schedule is immutable (supersede instead). — #10
+   */
+  async update(id: string, dto: UpdateTierScheduleDto, actorId: string) {
+    const row = await this.prisma.commissionTierConfig.findUnique({ where: { id } });
+    if (!row) {
+      throw new NotFoundException('Tier schedule not found');
+    }
+    assertPending(row);
+    if (dto.tiers) {
+      this.assertValidBrackets(dto.tiers);
+    }
+    const { from, to, today } = resolveEditWindow(row, dto);
+
+    const others = await this.prisma.commissionTierConfig.findMany({
+      where: { id: { not: id } },
+      select: { id: true, effective_from: true, effective_to: true },
+    });
+    const plan = planSupersession(others, from, today);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (plan.deletePendingIds.length > 0) {
+        await tx.commissionTier.deleteMany({ where: { tier_config_id: { in: plan.deletePendingIds } } });
+        await tx.commissionTierConfig.deleteMany({ where: { id: { in: plan.deletePendingIds } } });
+      }
+      if (plan.boundCurrent) {
+        await tx.commissionTierConfig.update({
+          where: { id: plan.boundCurrent.id },
+          data: { effective_to: plan.boundCurrent.effectiveTo },
+        });
+      }
+      if (dto.tiers) {
+        // Replace the bracket set (no cascade — delete children first).
+        await tx.commissionTier.deleteMany({ where: { tier_config_id: id } });
+        await tx.commissionTier.createMany({
+          data: dto.tiers.map((t) => ({
+            tier_config_id: id,
+            tier_number: t.tier_number,
+            min_count: t.min_count,
+            max_count: t.max_count ?? null,
+            rate_per_activation: t.rate_per_activation,
+          })),
+        });
+      }
+      return tx.commissionTierConfig.update({
+        where: { id },
+        data: { effective_from: from, effective_to: to },
+        include: { tiers: { orderBy: { tier_number: 'desc' } } },
+      });
+    });
+
+    await this.audit.log({ actorId, entityType: 'commission_tier_configs', entityId: id, action: 'update', before: row, after: updated });
+    return { ...updated, status: deriveStatus(updated, today) };
+  }
+
+  /** Delete a PENDING schedule (+ its bracket rows); re-open any predecessor it had bounded. — #10 */
+  async remove(id: string, actorId: string) {
+    const row = await this.prisma.commissionTierConfig.findUnique({ where: { id } });
+    if (!row) {
+      throw new NotFoundException('Tier schedule not found');
+    }
+    assertPending(row);
+    const predecessorEnd = previousDay(row.effective_from);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.commissionTier.deleteMany({ where: { tier_config_id: id } });
+      await tx.commissionTierConfig.delete({ where: { id } });
+      await tx.commissionTierConfig.updateMany({ where: { effective_to: predecessorEnd }, data: { effective_to: null } });
+    });
+    await this.audit.log({ actorId, entityType: 'commission_tier_configs', entityId: id, action: 'delete', before: row });
+  }
+
+  /** Validate the bracket set (contiguous, one open top bracket); wrap the pure throw as a 422 DomainError. */
+  private assertValidBrackets(tiers: TierBracketDto[]): void {
+    try {
+      validateTierBrackets(
+        tiers.map((t) => ({ tier_number: t.tier_number, min_count: t.min_count, max_count: t.max_count ?? null })),
+      );
+    } catch (e) {
+      throw new DomainError('TIER_SCHEDULE_INVALID', (e as Error).message);
+    }
   }
 }

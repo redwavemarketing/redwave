@@ -1,54 +1,79 @@
 /**
- * ImportService — the generic STAGE → RECONCILE → COMMIT pipeline. Nothing is written to live tables
- * until a fully reconciled batch is committed, and the COMMIT is ONE `prisma.$transaction` (atomic,
- * idempotent — #8) exactly like Pay Run finalize. File upload is stubbed (rows fed in the request);
- * the parse/mapping/matching logic is real (pure modules). Drives Sales' `validateWithinTx` for bulk
- * validation; writes back-dated rates (#10) and opening holdback balances (IMP-007) directly via the
- * transaction. Owns import_batches / import_rows / import_field_mappings. — SRS §15, arch §6.11
+ * ImportService — the generic STAGE → RECONCILE → COMMIT pipeline. A real Excel/CSV file is uploaded,
+ * parsed (ParserService), auto-mapped (suggestMapping) + cleaned (cleanMappedRow), classified, and staged;
+ * nothing touches live tables until a fully reconciled batch is committed, and the COMMIT is ONE
+ * `prisma.$transaction` (atomic, idempotent — #8) exactly like Pay Run finalize. Drives Sales'
+ * `validateWithinTx` for bulk validation; writes back-dated rates (#10), opening holdback (IMP-007), and
+ * the go-live master/HISTORICAL data directly via the transaction. Owns import_batches / import_rows /
+ * import_field_mappings. — SRS §15, arch §6.11
  */
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import {
-  ImportSourceType,
-  ImportType,
-  MatchStatus,
-  Prisma,
-} from '@prisma/client';
+import { ImportSourceType, ImportType, MatchStatus, Prisma } from '@prisma/client';
 import { Decimal } from 'decimal.js';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { AuthUser } from '../../common/rbac/auth-user.type';
+import { StorageService, UploadedFile } from '../../common/storage/storage.service';
 import { SalesService } from '../sales/sales.service';
+import { NOTIFICATION_EMITTER, NotificationEmitter } from '../../common/notifications/notification-emitter';
 import { applyMapping, RawRow } from './mapping.logic';
+import { cleanMappedRow } from './clean.logic';
+import { suggestMapping } from './suggest-mapping.logic';
+import { fieldTypesFor, TARGET_FIELDS, targetKey } from './target-fields';
+import { ParserService } from './parsing/parser.service';
 import {
   Classification,
+  classifyBillingRateRow,
+  classifyClientRow,
+  classifyHistoricalSaleRow,
   classifyHoldbackRow,
-  classifyRateRow,
+  classifyProductRow,
+  classifyRepRow,
   classifySalesRow,
 } from './matching.logic';
 import { evaluateGate } from './reconcile-gate.logic';
 import { applyBulkValidation } from './handlers/bulk-validation.handler';
 import { applyBillingRate } from './handlers/billing-rate.handler';
 import { applyHoldback } from './handlers/holdback.handler';
+import { applyClient, applyHistoricalSale, applyProduct, applyRep } from './handlers/master.handlers';
 import { CreateImportDto } from './dto/create-import.dto';
 import { ReconcileAction, ReconcileDto } from './dto/reconcile.dto';
+import { RemapDto } from './dto/remap.dto';
 import { ListImportsQuery } from './dto/list-imports.query';
 
-type Kind = 'bulk_validation' | 'billing_rate' | 'opening_holdback';
+type Kind =
+  | 'bulk_validation'
+  | 'historical_sales'
+  | 'create_clients'
+  | 'create_products'
+  | 'billing_rate'
+  | 'create_reps'
+  | 'opening_holdback';
+
 const str = (row: RawRow, key: string): string | null => {
   const v = row[key];
   return v === undefined || v === null || v === '' ? null : String(v);
 };
+const up = (s: string | null): string => (s ?? '').toUpperCase();
+const uniqCodes = (rows: RawRow[], key: string): string[] => [
+  ...new Set(rows.map((r) => str(r, key)).filter((v): v is string => !!v)),
+];
 
-/** The only source_type × import_type pairings supported this session (others → 422). */
+/** Supported source_type × import_type pairings → the internal target kind (others → 422). */
 function pairingKind(source: ImportSourceType, type: ImportType): Kind | null {
   if (source === 'client_report' && type === 'sales') return 'bulk_validation';
-  if (source === 'master_migration' && type === 'clients') return 'billing_rate';
+  if (source === 'master_migration' && type === 'sales') return 'historical_sales';
+  if (source === 'master_migration' && type === 'clients') return 'create_clients';
+  if (source === 'master_migration' && type === 'products') return 'create_products';
+  if (source === 'master_migration' && type === 'billing_rates') return 'billing_rate';
+  if (source === 'master_migration' && type === 'reps') return 'create_reps';
   if (source === 'balance_migration' && type === 'holdback') return 'opening_holdback';
   return null;
 }
@@ -61,44 +86,48 @@ export class ImportService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly sales: SalesService,
+    private readonly parser: ParserService,
+    private readonly storage: StorageService,
+    @Inject(NOTIFICATION_EMITTER) private readonly emitter: NotificationEmitter,
   ) {}
 
-  // ── Stage ───────────────────────────────────────────────────────────────────────
-  async stage(dto: CreateImportDto, user: AuthUser) {
+  // ── Stage (real file → parse → map → clean → classify → stage) ──────────────────────
+  async stage(file: UploadedFile, dto: CreateImportDto, user: AuthUser) {
     const kind = pairingKind(dto.source_type, dto.import_type);
     if (!kind) {
-      throw new UnprocessableEntityException(
-        `unsupported import: ${dto.source_type} + ${dto.import_type} (historical sales load & mixed are deferred)`,
-      );
+      throw new UnprocessableEntityException(`unsupported import: ${dto.source_type} + ${dto.import_type}`);
     }
     if (kind === 'bulk_validation' && !dto.client_id) {
       throw new UnprocessableEntityException('client_id is required for a client_report import');
     }
 
-    const mappingJson = await this.loadMapping(dto.field_mapping_id, dto.source_type);
-    const mappedRows = dto.rows.map((raw) => applyMapping(raw, mappingJson));
+    const parsed = await this.parser.parse(file);
+    const fields = TARGET_FIELDS[targetKey(dto.source_type, dto.import_type)] ?? [];
+    const saved = await this.loadMapping(dto.field_mapping_id, dto.source_type);
+    const mapping = (saved as Record<string, string> | null) ?? suggestMapping(parsed.headers, fields);
+    const types = fieldTypesFor(dto.source_type, dto.import_type);
+
+    const rawRows = parsed.rows;
+    const mappedRows = rawRows.map((raw) => cleanMappedRow(applyMapping(raw, mapping), types));
     const classifications = await this.classifyAll(kind, mappedRows, dto.client_id ?? null);
 
-    const matched = classifications.filter((c) => c.match_status === 'matched').length;
-    const errors = classifications.filter((c) => c.match_status === 'error').length;
-    const summary = this.summarise(classifications);
-
+    const stored = await this.storage.upload('imports', file); // real source file (or local:// fallback)
     const batch = await this.prisma.importBatch.create({
       data: {
-        source_file_url: `s3://redwave-imports/${dto.source_type}.xlsx`, // stub (real upload deferred)
+        source_file_url: stored.path,
         source_type: dto.source_type,
         import_type: dto.import_type,
         client_id: dto.client_id ?? null,
         field_mapping_id: dto.field_mapping_id ?? null,
         status: 'staged',
-        total_rows: dto.rows.length,
-        matched_rows: matched,
-        error_rows: errors,
-        reconcile_total: dto.reconcile_total ?? null, // operator-provided source total (IMP-007)
-        error_summary: summary,
+        total_rows: rawRows.length,
+        matched_rows: classifications.filter((c) => c.match_status === 'matched').length,
+        error_rows: classifications.filter((c) => c.match_status === 'error').length,
+        reconcile_total: dto.reconcile_total ?? null,
+        error_summary: this.summarise(classifications),
         run_by: user.id,
         import_rows: {
-          create: dto.rows.map((raw, i) => ({
+          create: rawRows.map((raw, i) => ({
             row_number: i + 1,
             raw_data: raw as Prisma.InputJsonValue,
             mapped_data: mappedRows[i] as Prisma.InputJsonValue,
@@ -116,9 +145,43 @@ export class ImportService {
       entityType: 'import_batches',
       entityId: batch.id,
       action: 'create',
-      after: { source_type: dto.source_type, import_type: dto.import_type, ...summary },
+      after: { source_type: dto.source_type, import_type: dto.import_type, ...this.summarise(classifications) },
     });
-    return batch;
+    // The applied mapping + parsed headers are returned (transient) so the FE can show + adjust the mapping.
+    return { ...batch, source_headers: parsed.headers, applied_mapping: mapping };
+  }
+
+  // ── Remap (re-apply a new mapping to the stored raw_data — no re-upload) ─────────────
+  async remap(id: string, dto: RemapDto, user: AuthUser) {
+    const batch = await this.findOne(id);
+    if (batch.status !== 'staged') {
+      throw new ConflictException('only a staged batch can be remapped');
+    }
+    const kind = pairingKind(batch.source_type, batch.import_type)!;
+    const types = fieldTypesFor(batch.source_type, batch.import_type);
+    const mappedRows = batch.import_rows.map((r) => cleanMappedRow(applyMapping(r.raw_data as RawRow, dto.mapping_json), types));
+    const classifications = await this.classifyAll(kind, mappedRows, batch.client_id);
+
+    await this.prisma.$transaction(async (tx) => {
+      for (let i = 0; i < batch.import_rows.length; i++) {
+        const row = batch.import_rows[i];
+        const c = classifications[i];
+        await tx.importRow.update({
+          where: { id: row.id },
+          data: {
+            mapped_data: mappedRows[i] as Prisma.InputJsonValue,
+            match_status: c.match_status,
+            matched_entity_id: c.matched_entity_id ?? null,
+            issue: c.issue,
+          },
+        });
+      }
+      await this.recountBatch(tx, id);
+    });
+
+    const updated = await this.findOne(id);
+    await this.audit.log({ actorId: user.id, entityType: 'import_batches', entityId: id, action: 'reconcile', after: { remap: true, ...this.summarise(updated.import_rows) } });
+    return { ...updated, applied_mapping: dto.mapping_json };
   }
 
   // ── Reads ─────────────────────────────────────────────────────────────────────────
@@ -141,6 +204,19 @@ export class ImportService {
     return batch;
   }
 
+  /** A CSV of the rows that still need attention (unmatched/duplicate/error) for hand-cleaning. */
+  async errorReport(id: string): Promise<string> {
+    const batch = await this.findOne(id);
+    const rows = batch.import_rows.filter((r) => ['unmatched', 'duplicate', 'error'].includes(r.match_status));
+    const header = ['row_number', 'match_status', 'issue', 'data'];
+    const lines = [header.join(',')];
+    for (const r of rows) {
+      const cells = [String(r.row_number), r.match_status, r.issue ?? '', JSON.stringify(r.mapped_data ?? r.raw_data)];
+      lines.push(cells.map(csvCell).join(','));
+    }
+    return lines.join('\r\n');
+  }
+
   // ── Reconcile ───────────────────────────────────────────────────────────────────────
   async reconcile(id: string, dto: ReconcileDto, user: AuthUser) {
     const batch = await this.findOne(id);
@@ -148,6 +224,8 @@ export class ImportService {
       throw new ConflictException('only a staged batch can be reconciled');
     }
     const rowsById = new Map(batch.import_rows.map((r) => [r.id, r]));
+    const kind = pairingKind(batch.source_type, batch.import_type)!;
+    const types = fieldTypesFor(batch.source_type, batch.import_type);
 
     await this.prisma.$transaction(async (tx) => {
       for (const res of dto.resolutions) {
@@ -156,31 +234,19 @@ export class ImportService {
           throw new UnprocessableEntityException(`row ${res.row_id} is not in this batch`);
         }
         if (res.action === ReconcileAction.ignore) {
-          await tx.importRow.update({
-            where: { id: row.id },
-            data: { match_status: 'ignored', resolved_by: user.id },
-          });
+          await tx.importRow.update({ where: { id: row.id }, data: { match_status: 'ignored', resolved_by: user.id } });
         } else if (res.action === ReconcileAction.match) {
           if (!res.matched_entity_id) {
             throw new UnprocessableEntityException("action 'match' requires matched_entity_id");
           }
           await tx.importRow.update({
             where: { id: row.id },
-            data: {
-              match_status: 'matched',
-              matched_entity_id: res.matched_entity_id,
-              issue: null,
-              resolved_by: user.id,
-            },
+            data: { match_status: 'matched', matched_entity_id: res.matched_entity_id, issue: null, resolved_by: user.id },
           });
         } else {
-          // edit: replace mapped_data and re-classify this single row against fresh context.
-          const mapped = (res.mapped_data ?? (row.mapped_data as RawRow)) as RawRow;
-          const [c] = await this.classifyAll(
-            pairingKind(batch.source_type, batch.import_type)!,
-            [mapped],
-            batch.client_id,
-          );
+          // edit: replace mapped_data, re-clean, and re-classify this single row against fresh context.
+          const mapped = cleanMappedRow((res.mapped_data ?? (row.mapped_data as RawRow)) as RawRow, types);
+          const [c] = await this.classifyAll(kind, [mapped], batch.client_id);
           await tx.importRow.update({
             where: { id: row.id },
             data: {
@@ -217,8 +283,6 @@ export class ImportService {
       throw new ConflictException(`cannot commit a ${batch.status} batch`);
     }
 
-    // RECONCILE-BEFORE-COMMIT GATE — block while any row is unresolved; balance migrations must
-    // also reconcile to the operator's source total (IMP-007).
     const financial =
       batch.import_type === 'holdback'
         ? {
@@ -234,33 +298,17 @@ export class ImportService {
     const kind = pairingKind(batch.source_type, batch.import_type)!;
     const commitCtx = await this.buildCommitContext(kind);
 
-    // ATOMIC: every row applied in ONE transaction — any throw rolls the entire batch back (#8).
+    // ATOMIC: every matched row applied in ONE transaction — any throw rolls the entire batch back (#8).
     await this.prisma.$transaction(async (tx) => {
       for (const row of batch.import_rows) {
         if (row.match_status !== 'matched') continue; // ignored rows are skipped
         const mapped = row.mapped_data as RawRow;
-        let entityId: string;
-        if (kind === 'bulk_validation') {
-          entityId = await applyBulkValidation(tx, row.matched_entity_id!, user, this.sales);
-        } else if (kind === 'billing_rate') {
-          entityId = await applyBillingRate(tx, mapped, user.id);
-        } else {
-          const originId = String(mapped.origin_pay_period_id);
-          const originPeriod = commitCtx.periodsById.get(originId)!;
-          entityId = await applyHoldback(tx, mapped, {
-            originPeriod,
-            allPeriods: commitCtx.allPeriods,
-            releaseRule: commitCtx.releaseRule,
-          });
-        }
+        const entityId = await this.applyRow(tx, kind, row.matched_entity_id, mapped, user, id, commitCtx);
         if (row.matched_entity_id !== entityId) {
           await tx.importRow.update({ where: { id: row.id }, data: { matched_entity_id: entityId } });
         }
       }
-      await tx.importBatch.update({
-        where: { id },
-        data: { status: 'committed', committed_at: new Date() },
-      });
+      await tx.importBatch.update({ where: { id }, data: { status: 'committed', committed_at: new Date() } });
     });
 
     const committed = await this.findOne(id);
@@ -269,19 +317,96 @@ export class ImportService {
       entityType: 'import_batches',
       entityId: id,
       action: 'commit',
-      after: { import_type: batch.import_type, applied: batch.matched_rows },
+      after: { import_type: batch.import_type, ...this.summarise(committed.import_rows) },
     });
+    const importEvent = {
+      eventType: 'import_committed' as const,
+      title: 'Import committed',
+      body: `An ${batch.import_type} import was committed (${batch.matched_rows} rows).`,
+      relatedEntityType: 'import_batches',
+      relatedEntityId: id,
+      variables: { import_type: batch.import_type, committed_count: String(batch.matched_rows) },
+    };
+    await this.emitter.emitRole('Admin', importEvent);
+    await this.emitter.emitRole('Super Admin', importEvent);
     return committed;
   }
 
-  // ── internals ─────────────────────────────────────────────────────────────────────
-  private async loadMapping(
-    fieldMappingId: string | undefined,
-    sourceType: ImportSourceType,
-  ): Promise<unknown> {
-    if (!fieldMappingId) {
-      return null; // identity mapping — rows already in system-field shape
+  /** Dispatch one matched row to its commit handler. */
+  private async applyRow(
+    tx: Prisma.TransactionClient,
+    kind: Kind,
+    matchedEntityId: string | null,
+    mapped: RawRow,
+    user: AuthUser,
+    batchId: string,
+    ctx: CommitContext,
+  ): Promise<string> {
+    switch (kind) {
+      case 'bulk_validation':
+        return applyBulkValidation(tx, matchedEntityId!, user, this.sales);
+      case 'billing_rate':
+        return applyBillingRate(tx, mapped, user.id);
+      case 'create_clients':
+        return applyClient(tx, mapped);
+      case 'create_products':
+        return applyProduct(tx, mapped, user.id);
+      case 'create_reps':
+        return applyRep(tx, mapped, user.id);
+      case 'historical_sales':
+        return applyHistoricalSale(tx, mapped, batchId);
+      case 'opening_holdback': {
+        const originId = String(mapped.origin_pay_period_id);
+        const originPeriod = ctx.periodsById.get(originId)!;
+        return applyHoldback(tx, mapped, { originPeriod, allPeriods: ctx.allPeriods, releaseRule: ctx.releaseRule });
+      }
     }
+  }
+
+  // ── Saved field mappings (IMP-002) ──────────────────────────────────────────────────
+  listMappings(query: { source_type?: ImportSourceType; client_id?: string }) {
+    return this.prisma.importFieldMapping.findMany({
+      where: { ...(query.source_type ? { source_type: query.source_type } : {}), ...(query.client_id ? { client_id: query.client_id } : {}) },
+      orderBy: { name: 'asc' },
+    });
+  }
+
+  async createMapping(dto: { name: string; source_type: ImportSourceType; client_id?: string; mapping_json: Record<string, string> }, user: AuthUser) {
+    const mapping = await this.prisma.importFieldMapping.create({
+      data: { name: dto.name, source_type: dto.source_type, client_id: dto.client_id ?? null, mapping_json: dto.mapping_json, created_by: user.id },
+    });
+    await this.audit.log({ actorId: user.id, entityType: 'import_field_mappings', entityId: mapping.id, action: 'create', after: { name: dto.name, source_type: dto.source_type } });
+    return mapping;
+  }
+
+  async updateMapping(id: string, dto: { name?: string; mapping_json?: Record<string, string> }, user: AuthUser) {
+    await this.getMapping(id);
+    const mapping = await this.prisma.importFieldMapping.update({
+      where: { id },
+      data: { ...(dto.name !== undefined ? { name: dto.name } : {}), ...(dto.mapping_json !== undefined ? { mapping_json: dto.mapping_json } : {}) },
+    });
+    await this.audit.log({ actorId: user.id, entityType: 'import_field_mappings', entityId: id, action: 'edit' });
+    return mapping;
+  }
+
+  async removeMapping(id: string, user: AuthUser) {
+    await this.getMapping(id);
+    await this.prisma.importFieldMapping.delete({ where: { id } });
+    await this.audit.log({ actorId: user.id, entityType: 'import_field_mappings', entityId: id, action: 'delete' });
+    return { success: true };
+  }
+
+  private async getMapping(id: string) {
+    const mapping = await this.prisma.importFieldMapping.findUnique({ where: { id } });
+    if (!mapping) {
+      throw new NotFoundException('Field mapping not found');
+    }
+    return mapping;
+  }
+
+  // ── internals ─────────────────────────────────────────────────────────────────────
+  private async loadMapping(fieldMappingId: string | undefined, sourceType: ImportSourceType): Promise<unknown> {
+    if (!fieldMappingId) return null;
     const mapping = await this.prisma.importFieldMapping.findUnique({ where: { id: fieldMappingId } });
     if (!mapping) {
       throw new NotFoundException('Field mapping not found');
@@ -293,34 +418,40 @@ export class ImportService {
   }
 
   /** Classify every mapped row for the batch kind, pre-fetching the DB context each classifier needs. */
-  private async classifyAll(
-    kind: Kind,
-    mappedRows: RawRow[],
-    clientId: string | null,
-  ): Promise<Classification[]> {
-    if (kind === 'bulk_validation') {
-      return this.classifySales(mappedRows, clientId);
+  private async classifyAll(kind: Kind, mappedRows: RawRow[], clientId: string | null): Promise<Classification[]> {
+    switch (kind) {
+      case 'bulk_validation':
+        return this.classifySales(mappedRows, clientId);
+      case 'billing_rate':
+        return this.classifyBillingRates(mappedRows);
+      case 'opening_holdback':
+        return this.classifyHoldbacks(mappedRows);
+      case 'create_clients':
+        return this.classifyClients(mappedRows);
+      case 'create_products':
+        return this.classifyProducts(mappedRows);
+      case 'create_reps':
+        return this.classifyReps(mappedRows);
+      case 'historical_sales':
+        return this.classifyHistoricalSales(mappedRows);
     }
-    if (kind === 'billing_rate') {
-      return this.classifyRates(mappedRows);
-    }
-    return this.classifyHoldbacks(mappedRows);
+  }
+
+  private async clientsByCode(codes: string[]): Promise<Map<string, string>> {
+    if (codes.length === 0) return new Map();
+    const rows = await this.prisma.client.findMany({ where: { client_code: { in: codes } }, select: { id: true, client_code: true } });
+    return new Map(rows.map((c) => [up(c.client_code), c.id]));
   }
 
   private async classifySales(mappedRows: RawRow[], clientId: string | null): Promise<Classification[]> {
-    const mpus = [...new Set(mappedRows.map((r) => str(r, 'mpu_id')).filter((v): v is string => !!v))];
+    const mpus = uniqCodes(mappedRows, 'mpu_id');
     const entered = mpus.length
-      ? await this.prisma.sale.findMany({
-          where: { client_id: clientId ?? undefined, status: 'entered', mpu_id: { in: mpus } },
-          select: { id: true, mpu_id: true },
-        })
+      ? await this.prisma.sale.findMany({ where: { client_id: clientId ?? undefined, status: 'entered', mpu_id: { in: mpus } }, select: { id: true, mpu_id: true } })
       : [];
     const byMpu = new Map<string, string[]>();
     for (const s of entered) {
       if (!s.mpu_id) continue;
-      const bucket = byMpu.get(s.mpu_id);
-      if (bucket) bucket.push(s.id);
-      else byMpu.set(s.mpu_id, [s.id]);
+      (byMpu.get(s.mpu_id) ?? byMpu.set(s.mpu_id, []).get(s.mpu_id)!).push(s.id);
     }
     return mappedRows.map((r) => {
       const mpu = str(r, 'mpu_id');
@@ -328,41 +459,77 @@ export class ImportService {
     });
   }
 
-  private async classifyRates(mappedRows: RawRow[]): Promise<Classification[]> {
-    const clientIds = [...new Set(mappedRows.map((r) => str(r, 'client_id')).filter((v): v is string => !!v))];
-    const productIds = [...new Set(mappedRows.map((r) => str(r, 'product_id')).filter((v): v is string => !!v))];
-    const clients = new Set(
-      (await this.prisma.client.findMany({ where: { id: { in: clientIds } }, select: { id: true } })).map((c) => c.id),
+  private async classifyClients(mappedRows: RawRow[]): Promise<Classification[]> {
+    const byCode = await this.clientsByCode(uniqCodes(mappedRows, 'client_code'));
+    return mappedRows.map((r) => classifyClientRow(r, { existingClientId: byCode.get(up(str(r, 'client_code'))) ?? null }));
+  }
+
+  private async classifyProducts(mappedRows: RawRow[]): Promise<Classification[]> {
+    const byCode = await this.clientsByCode(uniqCodes(mappedRows, 'client_code'));
+    const types = new Set((await this.prisma.productTypeCatalogue.findMany({ select: { key: true } })).map((t) => t.key));
+    return mappedRows.map((r) =>
+      classifyProductRow(r, {
+        clientExists: byCode.has(up(str(r, 'client_code'))),
+        productTypeExists: types.has(str(r, 'product_type') ?? ''),
+      }),
     );
-    const products = new Map(
-      (await this.prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, client_id: true } })).map(
-        (p) => [p.id, p.client_id],
-      ),
-    );
+  }
+
+  private async classifyBillingRates(mappedRows: RawRow[]): Promise<Classification[]> {
+    const byCode = await this.clientsByCode(uniqCodes(mappedRows, 'client_code'));
+    const names = uniqCodes(mappedRows, 'product_name');
+    const clientIds = [...byCode.values()];
+    const products =
+      clientIds.length && names.length
+        ? await this.prisma.product.findMany({ where: { client_id: { in: clientIds }, name: { in: names } }, select: { client_id: true, name: true } })
+        : [];
+    const prodKey = new Set(products.map((p) => `${p.client_id}|${p.name}`));
     return mappedRows.map((r) => {
-      const base = classifyRateRow(r);
-      if (base.match_status !== 'matched') return base;
-      const clientId = str(r, 'client_id')!;
-      if (!clients.has(clientId)) return { match_status: 'error', issue: 'client not found' };
-      const productId = str(r, 'product_id');
-      if (productId && products.get(productId) !== clientId) {
-        return { match_status: 'error', issue: 'product not found or not owned by this client' };
-      }
-      return base;
+      const cid = byCode.get(up(str(r, 'client_code')));
+      const name = str(r, 'product_name');
+      return classifyBillingRateRow(r, { clientExists: !!cid, productExists: !!(cid && name && prodKey.has(`${cid}|${name}`)) });
+    });
+  }
+
+  private async classifyReps(mappedRows: RawRow[]): Promise<Classification[]> {
+    const codes = uniqCodes(mappedRows, 'rep_code');
+    const existing = new Set(
+      (await this.prisma.rep.findMany({ where: { rep_code: { in: codes } }, select: { rep_code: true } })).map((r) => up(r.rep_code)),
+    );
+    return mappedRows.map((r) => classifyRepRow(r, { codeExists: existing.has(up(str(r, 'rep_code'))) }));
+  }
+
+  private async classifyHistoricalSales(mappedRows: RawRow[]): Promise<Classification[]> {
+    const byCode = await this.clientsByCode(uniqCodes(mappedRows, 'client_code'));
+    const repCodes = uniqCodes(mappedRows, 'rep_code');
+    const repExists = new Set(
+      (await this.prisma.rep.findMany({ where: { rep_code: { in: repCodes } }, select: { rep_code: true } })).map((r) => up(r.rep_code)),
+    );
+    const clientIds = [...byCode.values()];
+    const products = clientIds.length
+      ? await this.prisma.product.findMany({ where: { client_id: { in: clientIds }, is_active: true }, select: { client_id: true, product_type: true } })
+      : [];
+    const prodKey = new Set(products.map((p) => `${p.client_id}|${p.product_type}`));
+    return mappedRows.map((r) => {
+      const cid = byCode.get(up(str(r, 'client_code')));
+      return classifyHistoricalSaleRow(r, {
+        clientExists: !!cid,
+        repExists: repExists.has(up(str(r, 'rep_code'))),
+        productExists: !!(cid && prodKey.has(`${cid}|${str(r, 'product_type')}`)),
+      });
     });
   }
 
   private async classifyHoldbacks(mappedRows: RawRow[]): Promise<Classification[]> {
-    const repIds = [...new Set(mappedRows.map((r) => str(r, 'rep_id')).filter((v): v is string => !!v))];
-    const periodIds = [...new Set(mappedRows.map((r) => str(r, 'origin_pay_period_id')).filter((v): v is string => !!v))];
-    const reps = new Set(
-      (await this.prisma.rep.findMany({ where: { id: { in: repIds } }, select: { id: true } })).map((r) => r.id),
+    const repCodes = uniqCodes(mappedRows, 'rep_code');
+    const periodIds = uniqCodes(mappedRows, 'origin_pay_period_id');
+    const reps = new Map(
+      (await this.prisma.rep.findMany({ where: { rep_code: { in: repCodes } }, select: { id: true, rep_code: true } })).map((r) => [up(r.rep_code), r.id]),
     );
     const periods = new Map(
-      (await this.prisma.payPeriod.findMany({ where: { id: { in: periodIds } }, select: { id: true, status: true } })).map(
-        (p) => [p.id, p.status],
-      ),
+      (await this.prisma.payPeriod.findMany({ where: { id: { in: periodIds } }, select: { id: true, status: true } })).map((p) => [p.id, p.status]),
     );
+    const repIds = [...reps.values()];
     const existing = new Set(
       (
         await this.prisma.holdbackLedger.findMany({
@@ -372,29 +539,23 @@ export class ImportService {
       ).map((h) => `${h.rep_id}|${h.origin_pay_period_id}`),
     );
     return mappedRows.map((r) => {
-      const repId = str(r, 'rep_id');
+      const repId = reps.get(up(str(r, 'rep_code')));
       const origin = str(r, 'origin_pay_period_id');
       return classifyHoldbackRow(r, {
-        repExists: repId ? reps.has(repId) : false,
+        repExists: !!repId,
         originPeriodStatus: origin ? (periods.get(origin) ?? null) : null,
         ledgerExists: repId && origin ? existing.has(`${repId}|${origin}`) : false,
       });
     });
   }
 
-  private async buildCommitContext(kind: Kind) {
+  private async buildCommitContext(kind: Kind): Promise<CommitContext> {
     if (kind !== 'opening_holdback') {
       return { allPeriods: [], periodsById: new Map(), releaseRule: '' };
     }
-    const allPeriods = await this.prisma.payPeriod.findMany({
-      select: { id: true, start_date: true, payday: true },
-    });
+    const allPeriods = await this.prisma.payPeriod.findMany({ select: { id: true, start_date: true, payday: true } });
     const setting = await this.prisma.holdbackReleaseSetting.findFirst({ orderBy: { effective_from: 'desc' } });
-    return {
-      allPeriods,
-      periodsById: new Map(allPeriods.map((p) => [p.id, p])),
-      releaseRule: setting?.release_rule ?? 'next_cycle_after_30_days',
-    };
+    return { allPeriods, periodsById: new Map(allPeriods.map((p) => [p.id, p])), releaseRule: setting?.release_rule ?? 'next_cycle_after_30_days' };
   }
 
   private sumMatchedAmounts(rows: { match_status: MatchStatus; mapped_data: Prisma.JsonValue }[], key: string): Decimal {
@@ -423,4 +584,15 @@ export class ImportService {
     for (const r of rows) counts[r.match_status] += 1;
     return counts;
   }
+}
+
+interface CommitContext {
+  allPeriods: { id: string; start_date: Date; payday: Date }[];
+  periodsById: Map<string, { id: string; start_date: Date; payday: Date }>;
+  releaseRule: string;
+}
+
+/** Minimal CSV-cell escaping for the error report. */
+function csvCell(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }

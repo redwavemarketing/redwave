@@ -16,6 +16,7 @@ import { HealthModule } from './health/health.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AuditModule } from './common/audit/audit.module';
 import { ScopeModule } from './common/scope/scope.module';
+import { EmailModule } from './common/email/email.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { RolesModule } from './modules/roles/roles.module';
@@ -31,6 +32,9 @@ import { BillingModule } from './modules/billing/billing.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { ImportModule } from './modules/import/import.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
+import { SearchModule } from './modules/search/search.module';
+import { AuditLogModule } from './modules/audit/audit.module';
+import { ReconciliationModule } from './modules/reconciliation/reconciliation.module';
 
 @Module({
   imports: [
@@ -39,6 +43,7 @@ import { ReportingModule } from './modules/reporting/reporting.module';
     HealthModule,
     AuditModule,
     ScopeModule,
+    EmailModule,
     AuthModule,
     UsersModule,
     RolesModule,
@@ -54,6 +59,9 @@ import { ReportingModule } from './modules/reporting/reporting.module';
     DocumentsModule,
     ImportModule,
     ReportingModule,
+    SearchModule,
+    AuditLogModule,
+    ReconciliationModule,
   ],
   // Global exception filter — normalises every error to the contract envelope (arch §5.1) and masks 500s.
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],

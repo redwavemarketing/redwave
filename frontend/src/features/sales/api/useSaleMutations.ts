@@ -59,3 +59,21 @@ export function useDeleteSale() {
     onSuccess: () => qc.invalidateQueries({ queryKey: salesKeys.all }),
   });
 }
+
+/**
+ * Bulk soft-delete — there's no bulk endpoint, so fan out the per-sale soft-delete and report
+ * deleted/failed counts (the server is the real gate; a non-deletable row just fails). One invalidate.
+ */
+export function useBulkDeleteSales() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => unwrap<unknown>(api.DELETE('/v1/sales/{id}', { params: { path: { id } } }))),
+      );
+      const deleted = results.filter((r) => r.status === 'fulfilled').length;
+      return { deleted, failed: results.length - deleted };
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: salesKeys.all }),
+  });
+}

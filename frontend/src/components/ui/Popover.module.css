@@ -6,6 +6,10 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-2);
   z-index: var(--z-popover);
+
+  /* Long popover bodies (e.g. a multi-select option list) scroll instead of overflowing. */
+  max-height: var(--radix-popover-content-available-height);
+  overflow-y: auto;
   animation: popover-in var(--motion-fast) var(--ease-out);
 }
 

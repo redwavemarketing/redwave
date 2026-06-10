@@ -1,9 +1,10 @@
 /** Query-key factories for the clients feature (mirrors the playbook). */
-import type { BillingRateFilters, StatusFilter } from '../clients.types';
+import type { BillingRateFilters, ClientsListParams, StatusFilter } from '../clients.types';
 
 export const clientsKeys = {
   all: ['clients'] as const,
   list: (status: StatusFilter) => ['clients', 'list', status] as const,
+  page: (params: ClientsListParams) => ['clients', 'page', params] as const,
   detail: (id: string) => ['clients', 'detail', id] as const,
 };
 

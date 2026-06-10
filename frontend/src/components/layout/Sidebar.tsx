@@ -10,12 +10,16 @@ import {
   FileSignature,
   FileText,
   LayoutDashboard,
+  Megaphone,
   Receipt,
+  Scale,
+  ScrollText,
   Settings,
   ShieldCheck,
   ShoppingBag,
   ShoppingCart,
   SlidersHorizontal,
+  Tags,
   Sparkles,
   Trophy,
   Undo2,
@@ -62,7 +66,7 @@ const statusOf = (search: string) => new URLSearchParams(search).get('status');
 const canReport = (a: NavAccess) => a.permissions.has('reports:view');
 const isAdmin = (a: NavAccess) => a.isSuperAdmin || a.roles.includes('Admin');
 // Permissions that reveal at least one Administration hub card (so the nav item isn't a dead-end).
-const ADMIN_CARD_PERMS = ['profile:approve', 'users:view', 'roles:view', 'settings:view', 'commission:edit', 'clients:view', 'expenses:edit'];
+const ADMIN_CARD_PERMS = ['profile:approve', 'users:view', 'roles:view', 'settings:view', 'notifications:broadcast', 'commission:edit', 'clients:view', 'expenses:edit', 'audit:view', 'billing:view'];
 const hasAnyAdmin = (a: NavAccess) => isAdmin(a) || ADMIN_CARD_PERMS.some((p) => a.permissions.has(p));
 
 const NAV: NavGroup[] = [
@@ -138,12 +142,18 @@ const NAV: NavGroup[] = [
         match: (l) => l.pathname.startsWith('/billing'),
         show: (a) => a.permissions.has('billing:view'),
       },
+      {
+        label: 'Reconciliation',
+        icon: Scale,
+        to: '/admin/reconciliation',
+        show: (a) => a.permissions.has('billing:view'),
+      },
     ],
   },
   {
     heading: 'People',
     items: [
-      { label: 'Reps', icon: Users },
+      { label: 'Reps', icon: Users, to: '/admin/reps', show: (a) => a.permissions.has('hrm:view') },
       {
         label: 'Documents',
         icon: FileSignature,
@@ -172,11 +182,21 @@ const NAV: NavGroup[] = [
         show: (a) => a.permissions.has('roles:view'),
       },
       { label: 'Notifications', icon: Bell, to: '/admin/notifications', show: (a) => a.permissions.has('settings:view') },
+      { label: 'Security', icon: ShieldCheck, to: '/admin/security', show: (a) => a.permissions.has('settings:view') },
+      { label: 'Audit log', icon: ScrollText, to: '/admin/audit', show: (a) => a.permissions.has('audit:view') },
+      { label: 'Broadcast', icon: Megaphone, to: '/admin/broadcast', show: (a) => a.permissions.has('notifications:broadcast') },
       {
-        label: 'Clients & Products',
+        label: 'Clients',
         icon: ShoppingBag,
         to: '/admin/clients',
         match: (l) => l.pathname.startsWith('/admin/clients'),
+        show: (a) => a.permissions.has('clients:view'),
+      },
+      {
+        label: 'Products',
+        icon: ShoppingCart,
+        to: '/admin/products',
+        match: (l) => l.pathname.startsWith('/admin/products'),
         show: (a) => a.permissions.has('clients:view'),
       },
       {
@@ -187,13 +207,20 @@ const NAV: NavGroup[] = [
         show: (a) => a.permissions.has('commission:view'),
       },
       {
+        label: 'Product Types',
+        icon: Tags,
+        to: '/admin/product-types',
+        match: (l) => l.pathname.startsWith('/admin/product-types'),
+        show: (a) => a.permissions.has('commission:edit'),
+      },
+      {
         label: 'Import',
         icon: Upload,
         to: '/import',
         match: (l) => l.pathname.startsWith('/import'),
         show: (a) => a.permissions.has('import:view'),
       },
-      { label: 'Reports', icon: BarChart3 },
+      { label: 'Reports', icon: BarChart3, to: '/reports', match: (l) => l.pathname.startsWith('/reports'), show: canReport },
     ],
   },
   {

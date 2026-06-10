@@ -13,6 +13,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -24,6 +25,8 @@ import { ScopeService } from '../../common/scope/scope.service';
 import { AuthUser } from '../../common/rbac/auth-user.type';
 import { USER_PUBLIC_SELECT } from '../../common/util/user-public';
 import { ChangePasswordDto, ProfileChangeRequestDto, SetThemeDto } from './dto/account.dto';
+import { assertPasswordPolicy } from '../auth/password-policy';
+import { NOTIFICATION_EMITTER, NotificationEmitter } from '../../common/notifications/notification-emitter';
 
 /** The only HR fields a profile-change request may touch. */
 const PROFILE_FIELDS = ['full_name', 'phone', 'avatar_url'] as const;
@@ -47,6 +50,7 @@ export class AccountService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly scope: ScopeService,
+    @Inject(NOTIFICATION_EMITTER) private readonly emitter: NotificationEmitter,
   ) {}
 
   /** Own profile + a flag/details if a change is pending review. */
@@ -74,8 +78,13 @@ export class AccountService {
     if (!record || !(await bcrypt.compare(dto.current_password, record.password_hash))) {
       throw new BadRequestException('Current password is incorrect');
     }
+    assertPasswordPolicy(dto.new_password); // enforce the strength policy (→ 422 if weak)
     const password_hash = await bcrypt.hash(dto.new_password, BCRYPT_ROUNDS);
-    await this.prisma.user.update({ where: { id: user.id }, data: { password_hash } });
+    // Changing the password clears the must-change flag + any residual lockout.
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { password_hash, must_change_password: false, failed_login_attempts: 0, locked_until: null },
+    });
     // Never log the password or hash — record only that it changed.
     await this.audit.log({
       actorId: user.id,
@@ -117,6 +126,16 @@ export class AccountService {
       entityId: request.id,
       action: 'create',
       after: proposed,
+    });
+    // Best-effort: notify the reviewer(s) there's a request to review. — profile_change_requested
+    const reviewers = await this.scope.reviewerUserIds(user.id);
+    await this.emitter.emitMany(reviewers, {
+      eventType: 'profile_change_requested',
+      title: 'Profile change to review',
+      body: `${user.full_name} requested a profile change.`,
+      relatedEntityType: 'profile_change_requests',
+      relatedEntityId: request.id,
+      variables: { subject_name: user.full_name },
     });
     return request;
   }
@@ -172,9 +191,6 @@ export class AccountService {
         where: { id: requestId },
         data: { status: 'approved', reviewed_by: reviewer.id, reviewed_at: new Date() },
       });
-      await tx.notification.create({
-        data: this.notification(request.user_id, requestId, 'approved'),
-      });
     });
 
     await this.audit.log({
@@ -185,6 +201,7 @@ export class AccountService {
       before,
       after: proposed,
     });
+    await this.notifyDecided(request.user_id, requestId, 'approved');
     return this.findRequest(requestId);
   }
 
@@ -195,9 +212,6 @@ export class AccountService {
         where: { id: requestId },
         data: { status: 'rejected', reviewed_by: reviewer.id, reviewed_at: new Date() },
       });
-      await tx.notification.create({
-        data: this.notification(request.user_id, requestId, 'rejected'),
-      });
     });
     await this.audit.log({
       actorId: reviewer.id,
@@ -205,6 +219,7 @@ export class AccountService {
       entityId: requestId,
       action: 'reject',
     });
+    await this.notifyDecided(request.user_id, requestId, 'rejected');
     return this.findRequest(requestId);
   }
 
@@ -248,23 +263,19 @@ export class AccountService {
     });
   }
 
-  private notification(
-    userId: string,
-    requestId: string,
-    outcome: 'approved' | 'rejected',
-  ): Prisma.NotificationCreateInput {
-    return {
-      user: { connect: { id: userId } },
-      type: `profile_change_${outcome}`,
-      channel: 'in_app',
+  /** Best-effort: notify the subject of the decision (post-commit, via the event catalogue). — profile_change_decided */
+  private async notifyDecided(userId: string, requestId: string, outcome: 'approved' | 'rejected'): Promise<void> {
+    await this.emitter.emit({
+      eventType: 'profile_change_decided',
+      userId,
       title: `Profile change ${outcome}`,
       body:
         outcome === 'approved'
           ? 'Your requested profile change has been approved and applied.'
           : 'Your requested profile change was rejected; no changes were made.',
-      related_entity_type: 'profile_change_requests',
-      related_entity_id: requestId,
-      is_read: false,
-    };
+      relatedEntityType: 'profile_change_requests',
+      relatedEntityId: requestId,
+      variables: { outcome },
+    });
   }
 }

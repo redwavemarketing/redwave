@@ -10,20 +10,33 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { CsrfGuard } from '../../common/security/csrf.guard';
 import { AuthController } from './auth.controller';
+import { MfaController } from './mfa.controller';
+import { SessionsController } from './sessions.controller';
+import { SecuritySettingsController } from './security-settings.controller';
 import { AuthService } from './auth.service';
 import { TokenService } from './token.service';
+import { RefreshSessionService } from './refresh-session.service';
+import { MfaService } from './mfa.service';
+import { SecuritySettingsService } from './security-settings.service';
+import { PasswordResetService } from './password-reset.service';
 
 @Module({
   imports: [JwtModule.register({})],
-  controllers: [AuthController],
+  controllers: [AuthController, MfaController, SessionsController, SecuritySettingsController],
   providers: [
     AuthService,
     TokenService,
-    // Order matters: authenticate before authorizing.
+    RefreshSessionService,
+    MfaService,
+    SecuritySettingsService,
+    PasswordResetService,
+    // Order matters: authenticate, then authorize, then CSRF-check mutating requests.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    { provide: APP_GUARD, useClass: CsrfGuard },
   ],
-  exports: [TokenService],
+  exports: [TokenService, RefreshSessionService, MfaService, PasswordResetService],
 })
 export class AuthModule {}

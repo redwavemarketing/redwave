@@ -7,13 +7,10 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, RepEquipment } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { winnipegDateOnly } from '../../common/timezone';
 import { CreateRepEquipmentDto, UpdateRepEquipmentDto } from './dto/rep-equipment.dto';
 
 const dateOnly = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
-const todayUtc = (): Date => {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-};
 const iso = (date: Date): string => date.toISOString().slice(0, 10);
 
 @Injectable()
@@ -66,7 +63,7 @@ export class RepEquipmentService {
     }
     if (dto.status === 'returned') {
       // Returning sets the returned date (provided, or default today).
-      data.returned_date = dto.returned_date ? dateOnly(dto.returned_date) : todayUtc();
+      data.returned_date = dto.returned_date ? dateOnly(dto.returned_date) : winnipegDateOnly();
     } else if (dto.returned_date !== undefined) {
       data.returned_date = dto.returned_date ? dateOnly(dto.returned_date) : null;
     }

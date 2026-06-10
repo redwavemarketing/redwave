@@ -24,6 +24,12 @@
   border-color: var(--accent-600);
 }
 
+/* Green "on" state — used for the greenfield toggle (grey off / green on). */
+.trackSuccess[data-state='checked'] {
+  background-color: var(--success);
+  border-color: var(--success);
+}
+
 .track:disabled {
   cursor: not-allowed;
   opacity: 0.5;

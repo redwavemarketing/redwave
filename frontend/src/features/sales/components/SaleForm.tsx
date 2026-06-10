@@ -13,11 +13,12 @@ import {
   Banner,
   Button,
   Card,
-  Checkbox,
+  DatePicker,
   FormField,
   Input,
   MultiSelect,
   Select,
+  Switch,
   useToast,
 } from '../../../components/ui';
 import { useAuth } from '../../../auth/useAuth';
@@ -182,9 +183,21 @@ export function SaleForm() {
         </div>
 
         <div className={styles.grid3}>
-          <FormField label="Sale date" required error={errors.sale_date?.message} help="Governs the pay period.">
-            <Input type="date" {...register('sale_date')} />
-          </FormField>
+          <Controller
+            control={control}
+            name="sale_date"
+            render={({ field }) => (
+              <FormField label="Sale date" required error={errors.sale_date?.message} help="Governs the pay period.">
+                <DatePicker
+                  value={field.value ?? ''}
+                  onChange={field.onChange}
+                  invalid={!!errors.sale_date}
+                  aria-label="Sale date"
+                />
+              </FormField>
+            )}
+          />
+
           <FormField label="MPU ID" error={errors.mpu_id?.message} help="Where the client supplies one.">
             <Input {...register('mpu_id')} placeholder="optional" />
           </FormField>
@@ -212,7 +225,8 @@ export function SaleForm() {
           control={control}
           name="is_greenfield"
           render={({ field }) => (
-            <Checkbox
+            <Switch
+              tone="success"
               label="Greenfield request (an admin confirms at validation)"
               checked={!!field.value}
               onCheckedChange={(c) => field.onChange(c === true)}

@@ -1,9 +1,10 @@
 /**
  * EffectiveDatedTable — the SHARED, domain-agnostic effective-dating table (CLAUDE #10). Renders any rows
  * carrying `{ effective_from, effective_to, status }` plus caller-supplied leading columns, then the
- * effective window + a RateStatusBadge. Rows are READ-ONLY: the only change path is superseding (adding a
- * new future-dated row) — you never edit a current/pending/past row. Reused by Clients billing rates and
- * Commission Config (tiers/flats/holdback). Tokens only.
+ * effective window + a RateStatusBadge. The primary change path is superseding (adding a new future-dated
+ * row); current/past rows are immutable. An optional `rowActions` slot lets the caller offer edit/delete on
+ * PENDING rows only (the server also enforces this). Reused by Clients billing rates and Commission Config
+ * (tiers/flats/holdback). Tokens only.
  */
 import type { ReactNode } from 'react';
 import { displayDate } from '../../lib/format/date';
@@ -26,9 +27,12 @@ export interface EffectiveColumn<T> {
 export function EffectiveDatedTable<T extends EffectiveDatedRow>({
   rows,
   columns,
+  rowActions,
 }: {
   rows: T[];
   columns: EffectiveColumn<T>[];
+  /** Optional per-row actions (e.g. edit/delete a pending row). Adds a trailing Actions column. */
+  rowActions?: (row: T) => ReactNode;
 }) {
   return (
     <Table density="comfortable">
@@ -42,6 +46,7 @@ export function EffectiveDatedTable<T extends EffectiveDatedRow>({
           <TH>Effective from</TH>
           <TH>Effective to</TH>
           <TH>Status</TH>
+          {rowActions && <TH align="right">Actions</TH>}
         </TR>
       </THead>
       <TBody>
@@ -57,6 +62,7 @@ export function EffectiveDatedTable<T extends EffectiveDatedRow>({
             <TD>
               <RateStatusBadge status={row.status} />
             </TD>
+            {rowActions && <TD align="right">{rowActions(row)}</TD>}
           </TR>
         ))}
       </TBody>

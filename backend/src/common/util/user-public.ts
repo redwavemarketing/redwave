@@ -12,6 +12,7 @@ export const USER_PUBLIC_SELECT = {
   avatar_url: true,
   theme_preference: true,
   status: true,
+  must_change_password: true,
   created_at: true,
   updated_at: true,
 } satisfies Prisma.UserSelect;

@@ -10,12 +10,16 @@
  * One line per SALE (= one customer/household; its items are the products) — SRS BILL-001. Money is
  * exact Decimal, never float (#1). No GST anywhere (BILL-004). Owns client_statements + _lines.
  */
-import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Decimal } from 'decimal.js';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { NOTIFICATION_EMITTER, NotificationEmitter } from '../../common/notifications/notification-emitter';
 import { selectEffectiveRate } from '../../common/effective-dating';
+import { formatMoney } from '../../common/money/money';
+import { SequenceService } from '../../common/sequence/sequence.service';
+import { statementNo } from './doc-number';
 import { buildStatement, SaleInput, StatementDraft } from './statement.logic';
 
 /** Prisma.Decimal → decimal.js (billing stream only; never the commission engine's path, #3). */
@@ -42,6 +46,8 @@ export class StatementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly sequence: SequenceService,
+    @Inject(NOTIFICATION_EMITTER) private readonly emitter: NotificationEmitter,
   ) {}
 
   /**
@@ -133,49 +139,72 @@ export class StatementService {
     return { client, period, draft: buildStatement(saleInputs) };
   }
 
+  /**
+   * PREVIEW the one-line-per-customer draft WITHOUT persisting (no number is minted). Lets the UI show the
+   * combined-total rows before issuing. Same pricing + 422-on-unpriced as generate. — BILL (preview)
+   */
+  async preview(clientId: string, payPeriodId: string): Promise<{
+    client_id: string;
+    pay_period_id: string;
+    lines: { sale_id: string; customer_name: string; products_summary: string; line_total: string }[];
+    total_amount: string;
+  }> {
+    const { draft } = await this.priceClientPeriod(clientId, payPeriodId);
+    return {
+      client_id: clientId,
+      pay_period_id: payPeriodId,
+      lines: draft.lines.map((l) => ({
+        sale_id: l.sale_id,
+        customer_name: l.customer_name,
+        products_summary: l.products_summary,
+        line_total: formatMoney(l.line_total),
+      })),
+      total_amount: formatMoney(draft.total_amount),
+    };
+  }
+
+  /**
+   * ISSUE a statement: mint a gapless number + CREATE a new IMMUTABLE version; the prior current version for
+   * the (client, period) is marked `superseded` (metadata only — its number/total/lines are never mutated).
+   * A correction is just another generate → a NEW numbered document. Gapless under concurrency: the number
+   * is minted inside the SAME transaction (sequence row lock). — BRD §8 (numbering + immutability)
+   */
   async generate(clientId: string, payPeriodId: string, actorId: string) {
     const { client, period, draft } = await this.priceClientPeriod(clientId, payPeriodId);
-    const fileUrl = `s3://redwave-exports/statements/${client.client_code}-P${period.period_number}.xlsx`;
 
     const lineData = draft.lines.map((l) => ({
       sale_id: l.sale_id,
       customer_name: l.customer_name,
       products_summary: l.products_summary,
-      line_total: l.line_total.toFixed(2),
+      line_total: formatMoney(l.line_total),
     }));
 
-    // Replace-in-place per (client, period) — no @@unique, so regeneration is enforced here in a
-    // transaction (delete lines + update header + recreate), never a silent duplicate.
     const statement = await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.clientStatement.findFirst({
-        where: { client_id: clientId, pay_period_id: payPeriodId },
-        select: { id: true },
-      });
-      if (existing) {
-        await tx.clientStatementLine.deleteMany({ where: { statement_id: existing.id } });
-        return tx.clientStatement.update({
-          where: { id: existing.id },
-          data: {
-            total_amount: draft.total_amount.toFixed(2),
-            generated_by: actorId,
-            generated_at: new Date(),
-            file_url: fileUrl,
-            lines: { create: lineData },
-          },
-          include: STATEMENT_INCLUDE,
-        });
-      }
-      return tx.clientStatement.create({
+      const statement_number = await this.sequence.next(tx, 'statement'); // gapless, row-locked
+      const created = await tx.clientStatement.create({
         data: {
+          statement_number,
+          status: 'issued',
           client_id: clientId,
           pay_period_id: payPeriodId,
-          total_amount: draft.total_amount.toFixed(2),
-          file_url: fileUrl,
+          total_amount: formatMoney(draft.total_amount),
           generated_by: actorId,
           lines: { create: lineData },
         },
         include: STATEMENT_INCLUDE,
       });
+      // Supersede the prior CURRENT version (if any) — metadata only; the old document is never mutated.
+      const prior = await tx.clientStatement.findFirst({
+        where: { client_id: clientId, pay_period_id: payPeriodId, status: 'issued', id: { not: created.id } },
+        select: { id: true },
+      });
+      if (prior) {
+        await tx.clientStatement.update({
+          where: { id: prior.id },
+          data: { status: 'superseded', superseded_by_id: created.id },
+        });
+      }
+      return created;
     });
 
     await this.audit.log({
@@ -184,12 +213,24 @@ export class StatementService {
       entityId: statement.id,
       action: 'create',
       after: {
+        statement_number: statement.statement_number,
         client_id: clientId,
         pay_period_id: payPeriodId,
-        total_amount: draft.total_amount.toFixed(2),
+        total_amount: formatMoney(draft.total_amount),
         line_count: statement.lines.length,
       },
     });
+    // Best-effort: notify Admins/Super Admins a statement is available. — statement_ready
+    const statementEvent = {
+      eventType: 'statement_ready' as const,
+      title: 'A statement is ready',
+      body: `Statement ${statementNo(statement.statement_number)} for ${client.client_code} period ${period.period_number} is available.`,
+      relatedEntityType: 'client_statements',
+      relatedEntityId: statement.id,
+      variables: { period_number: String(period.period_number) },
+    };
+    await this.emitter.emitRole('Admin', statementEvent);
+    await this.emitter.emitRole('Super Admin', statementEvent);
     return statement;
   }
 
@@ -199,7 +240,7 @@ export class StatementService {
         ...(query.client_id ? { client_id: query.client_id } : {}),
         ...(query.pay_period_id ? { pay_period_id: query.pay_period_id } : {}),
       },
-      orderBy: { generated_at: 'desc' },
+      orderBy: { statement_number: 'desc' }, // newest issued numbers first; every version is shown (audit trail)
     });
   }
 

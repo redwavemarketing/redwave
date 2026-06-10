@@ -50,3 +50,27 @@ export function useSetUserRoles() {
     onSuccess: () => qc.invalidateQueries({ queryKey: usersKeys.all }),
   });
 }
+
+/** Admin-assisted reset — emails the user a reset LINK or a forced-change TEMP password (never shown to the admin). */
+export function useResetUserPassword() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, mode }: { id: string; mode: 'link' | 'temp' }) =>
+      unwrap<{ success: true }>(api.POST('/v1/users/{id}/reset-password', { params: { path: { id } }, body: { mode } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: usersKeys.all }),
+  });
+}
+
+/** SA force-logout — revoke every one of the user's sessions (all devices). — arch §security */
+export function useForceLogout() {
+  return useMutation({
+    mutationFn: (id: string) => unwrap<{ success: true }>(api.POST('/v1/users/{id}/revoke-sessions', { params: { path: { id } } })),
+  });
+}
+
+/** SA disables a user's MFA (lost-device recovery). — arch §security */
+export function useDisableUserMfa() {
+  return useMutation({
+    mutationFn: (id: string) => unwrap<{ success: true }>(api.POST('/v1/users/{id}/disable-mfa', { params: { path: { id } } })),
+  });
+}

@@ -1,19 +1,20 @@
 import { Module } from '@nestjs/common';
-import { NotificationsModule } from '../reporting/notifications.module';
+import { StorageModule } from '../../common/storage/storage.module';
 import { DocumentsController } from './documents.controller';
-import { SignatureRequestsController } from './signature-requests.controller';
+import { SignatureRequestsController, SignaturesController } from './signature-requests.controller';
 import { DocumentsService } from './documents.service';
 import { SignaturesService } from './signatures.service';
+import { StampService } from './stamp.service';
 
 /**
- * DocumentsModule — document upload/share + the e-signature workflow (per-signer status + audit).
- * Binary upload + e-sign provider are STUBBED (file references only). No migration. Imports
- * NotificationsModule to satisfy the `NOTIFICATION_EMITTER` seam, so signature events become in-app
- * notifications (DOC-006/RPT-009) without coupling Documents to the Reporting feature code.
+ * DocumentsModule — real document upload/preview (Supabase storage), the field-placement + e-signature
+ * workflow (per-signer status + audit), and server-side pdf-lib stamping (per-signer + final copies). The
+ * status rollup/audit/notifications are unchanged. The `NOTIFICATION_EMITTER` seam (signature events →
+ * in-app notifications, DOC-006/RPT-009) is supplied by the @Global NotificationsModule — no import here.
  */
 @Module({
-  imports: [NotificationsModule],
-  controllers: [DocumentsController, SignatureRequestsController],
-  providers: [DocumentsService, SignaturesService],
+  imports: [StorageModule],
+  controllers: [DocumentsController, SignatureRequestsController, SignaturesController],
+  providers: [DocumentsService, SignaturesService, StampService],
 })
 export class DocumentsModule {}

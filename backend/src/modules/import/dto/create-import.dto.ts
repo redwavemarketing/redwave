@@ -1,14 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ImportSourceType, ImportType } from '@prisma/client';
-import { ArrayMinSize, IsArray, IsEnum, IsObject, IsOptional, IsUUID, Matches } from 'class-validator';
+import { IsEnum, IsOptional, IsUUID, Matches } from 'class-validator';
 
 const MONEY = /^\d+(\.\d{1,2})?$/;
 
 /**
- * Create a staged import batch. — SRS §15 (IMP-003)
- * The binary file upload is STUBBED: rows are fed directly as raw JSON objects (the parse/mapping
- * logic is real + tested). `reconcile_total` is the OPERATOR-PROVIDED source total used to gate a
- * balance migration (IMP-007).
+ * Create a staged import batch from an uploaded file. — SRS §15 (IMP-003/011)
+ * Multipart: the Excel/CSV `file` + these metadata form fields. The server parses, cleans, auto-maps
+ * (or applies `field_mapping_id`), classifies, and stages — nothing touches live tables until commit.
+ * `reconcile_total` is the OPERATOR-PROVIDED source total used to gate a balance migration (IMP-007).
  */
 export class CreateImportDto {
   @ApiProperty({ enum: ImportSourceType, example: 'client_report' })
@@ -24,7 +24,7 @@ export class CreateImportDto {
   @IsUUID()
   client_id?: string;
 
-  @ApiPropertyOptional({ description: 'A saved field mapping to apply to each row.' })
+  @ApiPropertyOptional({ description: 'A saved field mapping to apply (else the server auto-suggests one).' })
   @IsOptional()
   @IsUUID()
   field_mapping_id?: string;
@@ -36,16 +36,4 @@ export class CreateImportDto {
   @IsOptional()
   @Matches(MONEY, { message: 'reconcile_total must be a decimal string with up to 2 decimal places' })
   reconcile_total?: string;
-
-  // Explicit array-of-free-form-object schema so swagger does NOT degrade `rows` to `Record<string,never>`
-  // (the documented quirk) — lets the frontend use the generated request DTO directly. — Batch A #2
-  @ApiProperty({
-    type: 'array',
-    items: { type: 'object', additionalProperties: true },
-    description: 'Raw source rows (file upload stubbed). Each is an arbitrary key→value object.',
-  })
-  @IsArray()
-  @ArrayMinSize(1)
-  @IsObject({ each: true })
-  rows!: Record<string, unknown>[];
 }

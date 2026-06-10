@@ -7,7 +7,7 @@
  * effective-dated configs carry a server-derived `status` (current|pending|past).
  */
 import { ApiProperty } from '@nestjs/swagger';
-import { IncentiveStatus, IncentiveTargetType, ProductType } from '@prisma/client';
+import { IncentiveStatus, IncentiveTargetType } from '@prisma/client';
 
 /** The status the server derives for an effective-dated row (mirrors the FE `RateStatus`). */
 const RATE_STATUS = ['current', 'pending', 'past'] as const;
@@ -57,8 +57,8 @@ export class FlatRateResponse {
   @ApiProperty()
   id!: string;
 
-  @ApiProperty({ enum: ProductType })
-  product_type!: ProductType;
+  @ApiProperty({ type: String, example: 'tv', description: 'Product-type catalogue key.' })
+  product_type!: string;
 
   @ApiProperty({ type: String, example: '100.00', description: 'Decimal string — the flat rate.' })
   amount!: string;
@@ -121,13 +121,13 @@ export class IncentiveResponse {
   @ApiProperty({ type: String, nullable: true, description: 'null = all clients.' })
   scope_client_id!: string | null;
 
-  @ApiProperty({ enum: ProductType, nullable: true, description: 'null = all product types.' })
-  scope_product_type!: ProductType | null;
+  @ApiProperty({ type: String, nullable: true, description: 'Catalogue key; null = all product types.' })
+  scope_product_type!: string | null;
 
   @ApiProperty({ enum: IncentiveTargetType })
   target_type!: IncentiveTargetType;
 
-  @ApiProperty({ type: Number, nullable: true, description: 'Required for target_based (DEFERRED).' })
+  @ApiProperty({ type: Number, nullable: true, description: 'The threshold: per_activation pays beyond it; one_time reaches it (required for one_time).' })
   target_count!: number | null;
 
   @ApiProperty({ type: String, format: 'date-time' })

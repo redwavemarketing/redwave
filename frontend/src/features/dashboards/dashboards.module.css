@@ -18,6 +18,93 @@
   gap: var(--space-4);
 }
 
+/* Roster lists (top performers / target-vs-actual) — a name, a value, an optional badge. */
+.rosterList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.rosterRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.rosterRow:last-child {
+  border-bottom: none;
+}
+
+.rosterName {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.rosterValue {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Set-targets modal — a name + number input per rep. */
+.targetForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.targetRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.targetName {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+
+.targetFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+/* Responsive chart grid (two-up on wide screens, one-up on narrow). */
+.chartGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--space-4);
+}
+
+/* Validation funnel — equal steps, value above a status badge. */
+.funnel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+}
+
+.funnelStep {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.funnelValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Two-column content region (chart + side panel); collapses on narrow widths. */
 .cols {
   display: grid;

@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(sed -n '1,60p' src/lib/export/exportRows.ts)",
+      "Bash(sed -n '1,50p' src/components/data/ExportMenu.tsx)",
+      "Bash(npx eslint *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(cd /g/RedWave/backend/src/modules/account)",
+      "Bash(cat account.module.ts)",
+      "Bash(head -60 account.controller.ts)",
+      "Bash(npm install *)",
+      "Bash(node -e \"console.log\\('pdf-lib:', require\\('./package.json'\\).dependencies['pdf-lib']\\)\")",
+      "Bash(echo \"eslint exit: $?\")",
+      "Bash(cd /g/RedWave/frontend/src/features/documents && echo \"═══ TREE ═══\" && find . -type f | sort && echo \"═══ documents.types.ts ═══\" && cat documents.types.ts && echo \"═══ api/useDocumentMutations.ts ═══\" && cat api/useDocumentMutations.ts)",
+      "Read(//g/g/RedWave/frontend/src/features/**)",
+      "Bash(sed -n '78,112p' src/features/expenses/api/useExpenseMutations.ts)",
+      "Bash(node -e \"const d=require\\('./package.json'\\).dependencies; console.log\\('pdfjs-dist:', d['pdfjs-dist']||'NO'\\); console.log\\('signature_pad:', d['signature_pad']||'NO'\\); console.log\\('@react-google-maps/api:', d['@react-google-maps/api']||'NO'\\)\")",
+      "Bash(node -e \"const d=require\\('./package.json'\\).dependencies; console.log\\('pdfjs-dist:', d['pdfjs-dist']\\); console.log\\('signature_pad:', d['signature_pad']\\)\")",
+      "Bash(npx stylelint *)",
+      "Bash(echo \"stylelint exit: $?\")",
+      "Bash(git mv *)",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(grep -n \"My Account = foundation \\\\`Tabs\\\\`\\\\|Profile · Security\\\\|change-password RHF\" CLAUDE.md)",
+      "Bash(node -e \"const d=require\\('./package.json'\\).dependencies;console.log\\('exceljs',d.exceljs,'| papaparse',d.papaparse\\)\")",
+      "Bash(cd /g/RedWave/frontend && grep -c \"StagedImportResponse\\\\|ImportFieldMappingResponse\\\\|CreateMappingDto\\\\|RemapDto\" src/api/generated/schema.d.ts)",
+      "Read(//g/g/RedWave/frontend/src/api/generated/**)",
+      "Bash(echo \"tsc: $?\")",
+      "Bash(echo \"stylelint: $?\")",
+      "Bash(echo \"eslint: $?\")",
+      "Bash(Get-ChildItem -Path \"g:\\\\RedWave\\\\backend\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Get-ChildItem -Path \"g:\\\\RedWave\\\\backend\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(grep -E \"\\\\.\\(ts|js\\)$\")"
+    ]
+  }
+}
