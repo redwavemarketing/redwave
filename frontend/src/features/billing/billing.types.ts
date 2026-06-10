@@ -11,6 +11,12 @@ export type ClientStatementLine = components['schemas']['ClientStatementLineResp
 
 export type ClientStatement = components['schemas']['ClientStatementResponse'];
 
+/** A NON-PERSISTED preview of the one-line-per-customer draft (no number minted). */
+export type StatementPreview = components['schemas']['StatementPreviewResponse'];
+
+/** issued = current; superseded = an earlier immutable version. */
+export type BillingDocStatus = ClientStatement['status'];
+
 /** The one-line commission invoice — total_commission == the statement total (billing stream only, #3). */
 export type ClientInvoice = components['schemas']['ClientInvoiceResponse'];
 
@@ -29,9 +35,7 @@ export interface BillingFilters {
   pay_period_id?: string;
 }
 
-/** The export action's response (stub file_url; the audit row is the record). */
-export type BillingExportResult = components['schemas']['BillingExportResultResponse'];
-
 // Request bodies — typed from the generated schema.
 export type GenerateBillingBody = components['schemas']['GenerateBillingDto'];
-export type BillingExportBody = components['schemas']['BillingExportDto'];
+/** Statement export format — `excel` (the client workbook) | `quickbooks` (a QB-mappable CSV, no tax). */
+export type StatementExportFormat = components['schemas']['StatementExportDto']['format'];

@@ -45,6 +45,7 @@ const ClawbackListPage = lazy(() => import('../features/clawback/pages/ClawbackL
 const ClawbackEntryPage = lazy(() => import('../features/clawback/pages/ClawbackEntryPage'));
 const BillingListPage = lazy(() => import('../features/billing/pages/BillingListPage'));
 const StatementDetailPage = lazy(() => import('../features/billing/pages/StatementDetailPage'));
+const ReconciliationPage = lazy(() => import('../features/reconciliation/pages/ReconciliationPage'));
 const DocumentsListPage = lazy(() => import('../features/documents/pages/DocumentsListPage'));
 const DocumentDetailPage = lazy(() => import('../features/documents/pages/DocumentDetailPage'));
 const ImportListPage = lazy(() => import('../features/import/pages/ImportListPage'));
@@ -140,6 +141,7 @@ export const router = createBrowserRouter([
           { path: 'admin/product-types', element: lazyEl(<ProductTypesPage />) },
           { path: 'admin/security', element: lazyEl(<SecuritySettingsPage />) },
           { path: 'admin/audit', element: lazyEl(<AuditLogPage />) },
+          { path: 'admin/reconciliation', element: lazyEl(<ReconciliationPage />) },
           // Convenience redirects for legacy/short paths that previously dead-ended on a blank RR-404.
           { path: 'users', element: <Navigate to="/admin/users" replace /> },
           { path: 'reps', element: <Navigate to="/admin/reps" replace /> },

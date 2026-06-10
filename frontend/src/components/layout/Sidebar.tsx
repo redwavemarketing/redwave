@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   Megaphone,
   Receipt,
+  Scale,
   ScrollText,
   Settings,
   ShieldCheck,
@@ -65,7 +66,7 @@ const statusOf = (search: string) => new URLSearchParams(search).get('status');
 const canReport = (a: NavAccess) => a.permissions.has('reports:view');
 const isAdmin = (a: NavAccess) => a.isSuperAdmin || a.roles.includes('Admin');
 // Permissions that reveal at least one Administration hub card (so the nav item isn't a dead-end).
-const ADMIN_CARD_PERMS = ['profile:approve', 'users:view', 'roles:view', 'settings:view', 'notifications:broadcast', 'commission:edit', 'clients:view', 'expenses:edit', 'audit:view'];
+const ADMIN_CARD_PERMS = ['profile:approve', 'users:view', 'roles:view', 'settings:view', 'notifications:broadcast', 'commission:edit', 'clients:view', 'expenses:edit', 'audit:view', 'billing:view'];
 const hasAnyAdmin = (a: NavAccess) => isAdmin(a) || ADMIN_CARD_PERMS.some((p) => a.permissions.has(p));
 
 const NAV: NavGroup[] = [
@@ -139,6 +140,12 @@ const NAV: NavGroup[] = [
         icon: FileText,
         to: '/billing',
         match: (l) => l.pathname.startsWith('/billing'),
+        show: (a) => a.permissions.has('billing:view'),
+      },
+      {
+        label: 'Reconciliation',
+        icon: Scale,
+        to: '/admin/reconciliation',
         show: (a) => a.permissions.has('billing:view'),
       },
     ],

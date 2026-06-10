@@ -1,30 +1,42 @@
 /**
  * InvoiceCard — the one-line commission invoice for a client+period. `total_commission` is the BILLING-STREAM
- * statement total (server-computed; #3) — NOT the rep payout. If no invoice exists yet, offer to generate it
- * (the generate flow normally creates it alongside the statement). Export is billing:export-gated. Tokens only.
+ * statement total (server-computed; #3) — NOT the rep payout. Shows the gapless number + status; Download
+ * re-renders the PDF from the frozen record (billing:view). If no invoice exists yet, offer to generate it.
+ * CAD, no GST. Tokens only.
  */
 import { FileDown, Receipt } from 'lucide-react';
-import { Button, Card } from '../../../components/ui';
+import { Badge, Button, Card } from '../../../components/ui';
 import { money } from '../../../lib/format/money';
+import { invoiceNo } from '../billing.logic';
 import styles from './billing.module.css';
 import type { ClientInvoice } from '../billing.types';
 
 interface Props {
   invoice: ClientInvoice | null;
-  canExport: boolean;
-  onExport: () => void;
+  canView: boolean;
+  onDownload: () => void;
+  downloading?: boolean;
   onGenerate?: () => void;
   canGenerate?: boolean;
 }
 
-export function InvoiceCard({ invoice, canExport, onExport, onGenerate, canGenerate }: Props) {
+export function InvoiceCard({ invoice, canView, onDownload, downloading, onGenerate, canGenerate }: Props) {
   return (
     <Card
-      title="Commission invoice"
+      title={
+        invoice ? (
+          <span>
+            Commission invoice · <span className="mono">{invoiceNo(invoice.invoice_number)}</span>{' '}
+            <Badge tone={invoice.status === 'issued' ? 'success' : 'neutral'}>{invoice.status}</Badge>
+          </span>
+        ) : (
+          'Commission invoice'
+        )
+      }
       actions={
-        invoice && canExport ? (
-          <Button variant="secondary" size="sm" leftIcon={<FileDown size={15} />} onClick={onExport}>
-            Export
+        invoice && canView ? (
+          <Button variant="secondary" size="sm" leftIcon={<FileDown size={15} />} loading={downloading} onClick={onDownload}>
+            Download PDF
           </Button>
         ) : undefined
       }
@@ -32,7 +44,7 @@ export function InvoiceCard({ invoice, canExport, onExport, onGenerate, canGener
       {invoice ? (
         <div className={styles.invoiceTotal}>
           <span className={styles.invoiceAmount}>{money(invoice.total_commission)}</span>
-          <span className={styles.note}>One-line total — the billing-stream statement total (not the rep payout).</span>
+          <span className={styles.note}>One-line total (CAD) — the billing-stream statement total (not the rep payout). No GST.</span>
         </div>
       ) : (
         <div className={styles.invoiceTotal}>

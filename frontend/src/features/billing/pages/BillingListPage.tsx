@@ -1,29 +1,34 @@
 /**
- * BillingListPage — /billing. The BILLING-stream surface: list generated client statements (filter by client
- * + period) and trigger generation. The UI prices nothing and shows NO commission data (#3); every amount is
- * the server's `total_amount` via money(). `billing:view` to see; `billing:create` to generate. 403 →
- * AccessDenied; the server is the real gate (§5).
+ * BillingListPage — /billing. The BILLING-stream surface: list generated client statements (every version,
+ * filter by client + period) and trigger generation. The UI prices nothing and shows NO commission data
+ * (#3); every amount is the server's via money(). Re-download renders the file from the frozen record.
+ * `billing:view` to see; `billing:create` to generate. 403 → AccessDenied; the server is the real gate (§5).
  */
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { FileText } from 'lucide-react';
-import { Button, PageHeader, Table, TBody, TD, TH, THead, TR } from '../../../components/ui';
+import { Download, FileText } from 'lucide-react';
+import { Badge, Button, IconButton, PageHeader, useToast } from '../../../components/ui';
+import { DataTable, type DataColumn } from '../../../components/data/DataTable';
 import { useCan } from '../../../auth/useCan';
-import { DataState } from '../../../components/data/DataState';
-import { isForbidden } from '../../../lib/api/apiError';
+import { isForbidden, useApiErrorToast } from '../../../lib/api/apiError';
 import { money } from '../../../lib/format/money';
 import { displayDate } from '../../../lib/format/date';
 import { AccessDenied } from '../../dashboards/components/AccessDenied';
 import { useClients } from '../../clients/api/useClients';
 import { usePayPeriods } from '../../payrun/api/usePayRun';
 import { useStatements } from '../api/useBilling';
+import { downloadStatementExcel } from '../billing.download';
+import { statementNo } from '../billing.logic';
 import { ClientPeriodPicker } from '../components/ClientPeriodPicker';
 import { GenerateBillingModal } from '../components/GenerateBillingModal';
+import type { ClientStatement } from '../billing.types';
 import styles from '../components/billing.module.css';
 
 export default function BillingListPage() {
   const canView = useCan('billing:view');
   const canCreate = useCan('billing:create');
+  const { toast } = useToast();
+  const onError = useApiErrorToast();
   const [clientId, setClientId] = useState<string | undefined>();
   const [periodId, setPeriodId] = useState<string | undefined>();
   const [generateOpen, setGenerateOpen] = useState(false);
@@ -47,11 +52,23 @@ export default function BillingListPage() {
 
   const rows = q.data ?? [];
 
+  const download = (id: string) =>
+    downloadStatementExcel(id).then(() => toast({ title: 'Statement downloaded', tone: 'success' })).catch(onError);
+
+  const columns: DataColumn<ClientStatement>[] = [
+    { id: 'number', header: 'Statement', render: (s) => <span className="mono">{statementNo(s.statement_number)}</span> },
+    { id: 'client', header: 'Client', render: (s) => clientName(s.client_id) },
+    { id: 'period', header: 'Period', render: (s) => <span className="mono">{periodLabel(s.pay_period_id)}</span> },
+    { id: 'status', header: 'Status', render: (s) => <Badge tone={s.status === 'issued' ? 'success' : 'neutral'}>{s.status}</Badge> },
+    { id: 'total', header: 'Total (CAD)', align: 'right', numeric: true, render: (s) => money(s.total_amount) },
+    { id: 'generated', header: 'Generated', render: (s) => <span className="mono">{displayDate(s.generated_at)}</span> },
+  ];
+
   return (
     <div className={styles.page}>
       <PageHeader
         title="Billing & Statements"
-        subtitle="Generate and view what Redwave bills each program partner. Priced by the server from client billing rates — this screen computes nothing."
+        subtitle="Generate and view what Redwave bills each program partner (CAD, no GST). Priced by the server from client billing rates — this screen computes nothing."
         actions={
           canCreate ? (
             <Button variant="primary" leftIcon={<FileText size={16} />} onClick={() => setGenerateOpen(true)}>
@@ -71,42 +88,28 @@ export default function BillingListPage() {
         allowAll
       />
 
-      <DataState
+      <DataTable<ClientStatement>
+        columns={columns}
+        rows={rows}
+        getRowId={(s) => s.id}
+        page={1}
+        pageCount={1}
+        total={rows.length}
+        limit={Math.max(rows.length, 1)}
+        onPageChange={() => {}}
+        rowActions={(s) => (
+          <span style={{ display: 'inline-flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+            <Link to={`/billing/statements/${s.id}`}>View</Link>
+            <IconButton label="Download Excel" icon={<Download size={15} />} onClick={() => download(s.id)} />
+          </span>
+        )}
         isLoading={q.isLoading}
         isError={q.isError}
-        isEmpty={rows.length === 0}
+        error={q.error}
         onRetry={() => q.refetch()}
         emptyNode={<p className="mono">No statements generated for this filter.</p>}
-      >
-        <Table>
-          <THead>
-            <TR>
-              <TH>Client</TH>
-              <TH>Period</TH>
-              <TH align="right">Total</TH>
-              <TH>Generated</TH>
-              <TH align="right" aria-label="View" />
-            </TR>
-          </THead>
-          <TBody>
-            {rows.map((s) => (
-              <TR key={s.id}>
-                <TD>{clientName(s.client_id)}</TD>
-                <TD>
-                  <span className="mono">{periodLabel(s.pay_period_id)}</span>
-                </TD>
-                <TD numeric>{money(s.total_amount)}</TD>
-                <TD>
-                  <span className="mono">{displayDate(s.generated_at)}</span>
-                </TD>
-                <TD align="right">
-                  <Link to={`/billing/statements/${s.id}`}>View</Link>
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
-      </DataState>
+        aria-label="Statements"
+      />
 
       <GenerateBillingModal
         open={generateOpen}
