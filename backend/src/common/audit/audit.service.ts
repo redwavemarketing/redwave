@@ -9,6 +9,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { currentIp } from './request-context';
 
 export interface AuditEntry {
   /** The acting user's id (audit_log.user_id). */
@@ -39,6 +40,7 @@ export class AuditService {
         action: entry.action,
         before_json: toJson(entry.before),
         after_json: toJson(entry.after),
+        ip_address: currentIp() ?? null, // actor IP from the request context (null for jobs/seeds)
       },
     });
   }

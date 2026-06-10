@@ -41,6 +41,7 @@ const MODULE_NAMES: Record<ModuleKey, string> = {
   reports: 'Reporting & Dashboards',
   settings: 'System Settings',
   notifications: 'Notifications',
+  audit: 'Audit Trail',
 };
 
 type Grant = [ModuleKey, PermissionAction];

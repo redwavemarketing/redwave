@@ -14,6 +14,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { buildOpenApiConfig } from './openapi';
 import { ErrorEnvelopeDto } from './common/errors/error-envelope.dto';
+import { ipOfRequest, runWithRequestContext } from './common/audit/request-context';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
@@ -46,6 +47,11 @@ async function bootstrap(): Promise<void> {
 
   // Parse cookies (the httpOnly refresh cookie + the readable CSRF cookie). — arch §security
   app.use(cookieParser());
+
+  // Open a per-request context carrying the client IP so audit rows can stamp it. — arch §security (audit)
+  app.use((req: Request, _res: Response, next: NextFunction) =>
+    runWithRequestContext({ ip: ipOfRequest(req) }, () => next()),
+  );
 
   // All API routes are served under /v1 (arch §5.1). Health stays version-neutral.
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });

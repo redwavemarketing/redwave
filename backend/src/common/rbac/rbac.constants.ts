@@ -24,6 +24,7 @@ export const MODULE_KEYS = [
   'reports',
   'settings',
   'notifications', // gates the manual broadcast (notifications:broadcast); per-user reads stay self-scoped
+  'audit', // the append-only audit trail — audit:view/export gate the SA audit log; Super Admin only by default
 ] as const;
 
 export type ModuleKey = (typeof MODULE_KEYS)[number];
