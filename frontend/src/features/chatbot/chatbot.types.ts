@@ -44,4 +44,5 @@ export const INTENT_LABELS: Record<ChatTool, string> = {
   roster_summary: 'Roster',
   business_summary: 'Business',
   unknown: 'Not understood',
+  rate_limited: 'Slow down', // a graceful "try again shortly" cap — rendered as a normal assistant bubble
 };

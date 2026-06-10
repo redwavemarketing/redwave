@@ -78,4 +78,7 @@ export class MeResponse {
 
   @ApiProperty({ type: [String], description: 'Union of the user roles’ permission keys (moduleKey:action).' })
   effective_permissions!: string[];
+
+  @ApiProperty({ description: 'When true, policy requires this user to enrol in MFA before continuing.' })
+  mfa_enrollment_required!: boolean;
 }

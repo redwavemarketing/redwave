@@ -6841,12 +6841,17 @@ components:
           type: array
           items:
             type: string
+        mfa_enrollment_required:
+          type: boolean
+          description: When true, policy requires this user to enrol in MFA before
+            continuing.
       required:
         - user
         - roles
         - is_super_admin
         - rep_id
         - effective_permissions
+        - mfa_enrollment_required
     MfaStatusResponse:
       type: object
       properties:

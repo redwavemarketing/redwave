@@ -5,14 +5,22 @@
  * ApiError so callers' error toasts work uniformly.
  */
 import { getAccessToken } from '../../api/auth-store';
+import { getCsrfToken } from '../../auth/session';
 import { ApiError } from './apiError';
 
 export async function multipartPost<T>(path: string, form: FormData): Promise<T> {
   const base = import.meta.env.VITE_API_BASE_URL?.trim() || '';
   const token = getAccessToken();
+  // A mutating POST → carry the session cookie + the double-submit CSRF header (the global CSRF guard
+  // checks it), plus the bearer access token. — arch §security
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const csrf = getCsrfToken();
+  if (csrf) headers['X-CSRF-Token'] = csrf;
   const res = await fetch(`${base}${path}`, {
     method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    credentials: 'include',
+    headers,
     body: form,
   });
   if (!res.ok) {

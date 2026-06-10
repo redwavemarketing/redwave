@@ -162,17 +162,19 @@ export class AuthService {
     is_super_admin: boolean;
     rep_id: string | null;
     effective_permissions: string[];
+    mfa_enrollment_required: boolean;
   }> {
-    const profile = await this.prisma.user.findUnique({
-      where: { id: user.id },
-      select: USER_PUBLIC_SELECT,
-    });
+    const [profile, gate] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: user.id }, select: USER_PUBLIC_SELECT }),
+      this.mfa.loginGate(user.id), // 'enrollment_required' = policy requires MFA and the user hasn't enrolled
+    ]);
     return {
       user: profile,
       roles: user.roleNames,
       is_super_admin: user.isSuperAdmin,
       rep_id: user.repId,
       effective_permissions: [...user.permissions].sort(),
+      mfa_enrollment_required: gate === 'enrollment_required',
     };
   }
 }

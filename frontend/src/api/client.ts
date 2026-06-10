@@ -19,7 +19,7 @@
 import createClient, { type Middleware } from 'openapi-fetch';
 import type { paths } from './generated/schema';
 import { getAccessToken } from './auth-store';
-import { notifySessionExpired, refreshAccessToken } from '../auth/session';
+import { getCsrfToken, notifySessionExpired, refreshAccessToken } from '../auth/session';
 
 const AUTH_PATHS = ['/v1/auth/login', '/v1/auth/refresh', '/v1/auth/logout'];
 const isAuthRequest = (url: string) => AUTH_PATHS.some((p) => url.includes(p));
@@ -30,6 +30,12 @@ const authMiddleware: Middleware = {
     const token = getAccessToken();
     if (token) {
       request.headers.set('Authorization', `Bearer ${token}`);
+    }
+    // Double-submit CSRF: echo the readable rw_csrf cookie on every request (the server checks it on
+    // mutating cookie-session requests; harmless on GETs and on the exempt pre-auth routes). — arch §security
+    const csrf = getCsrfToken();
+    if (csrf) {
+      request.headers.set('X-CSRF-Token', csrf);
     }
     return request;
   },
@@ -59,5 +65,7 @@ const authMiddleware: Middleware = {
 // `/v1` or a trailing slash — see the header note above.
 const baseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || undefined;
 
-export const api = createClient<paths>(baseUrl ? { baseUrl } : {});
+// `credentials: 'include'` so the httpOnly refresh cookie + readable CSRF cookie ride every request
+// (cross-subdomain in prod, same-origin in dev). The backend CORS allowlist must echo the FE origin. — arch §security
+export const api = createClient<paths>({ ...(baseUrl ? { baseUrl } : {}), credentials: 'include' });
 api.use(authMiddleware);
