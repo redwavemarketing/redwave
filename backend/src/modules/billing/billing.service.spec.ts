@@ -24,18 +24,23 @@ const rate = (productId: string, from: string, to: string | null, amount: string
   amount: { toString: () => amount },
 });
 
+/** Sequence stub — mints 1, 2, 3 … (the real one row-locks document_sequences inside the tx). */
+const seqStub = () => {
+  let n = 0;
+  return { next: jest.fn(async () => (n += 1)) };
+};
+
 function make(opts: {
   sales: ReturnType<typeof sale>[];
   rates: ReturnType<typeof rate>[];
-  existingStatementId?: string | null;
+  priorStatementId?: string | null;
 }) {
   const tx = {
     clientStatement: {
-      findFirst: jest
-        .fn()
-        .mockResolvedValue(opts.existingStatementId ? { id: opts.existingStatementId } : null),
-      update: jest.fn().mockImplementation(({ data }) => ({ id: 'stmt-x', lines: data.lines.create })),
-      create: jest.fn().mockImplementation(({ data }) => ({ id: 'stmt-new', lines: data.lines.create })),
+      create: jest.fn().mockImplementation(({ data }) => ({ id: 'stmt-new', statement_number: data.statement_number, lines: data.lines.create })),
+      // The prior CURRENT version (if any) found AFTER create, to be superseded.
+      findFirst: jest.fn().mockResolvedValue(opts.priorStatementId ? { id: opts.priorStatementId } : null),
+      update: jest.fn().mockImplementation(({ data }) => ({ id: 'stmt-prior', ...data })),
     },
     clientStatementLine: { deleteMany: jest.fn() },
   };
@@ -54,11 +59,14 @@ function make(opts: {
     $transaction: jest.fn().mockImplementation(async (cb: (t: typeof tx) => unknown) => cb(tx)),
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const service = new StatementService(prisma as never, audit as never, { emit: jest.fn(), emitMany: jest.fn(), emitRole: jest.fn() } as never);
+  const service = new StatementService(prisma as never, audit as never, seqStub() as never, { emit: jest.fn(), emitMany: jest.fn(), emitRole: jest.fn() } as never);
   return { service, prisma, tx, audit };
 }
 
-describe('StatementService.generate (SRS §12)', () => {
+const createData = (tx: ReturnType<typeof make>['tx']) =>
+  (tx.clientStatement.create.mock.calls[0][0] as { data: { total_amount: string; statement_number: number; lines: { create: { line_total: string; products_summary?: string }[] } } }).data;
+
+describe('StatementService.generate (SRS §12 — immutable, gapless)', () => {
   it('prices each sale from client_billing_rates effective on its OWN sale_date (rate change mid-period)', async () => {
     const { service, tx } = make({
       sales: [
@@ -71,9 +79,18 @@ describe('StatementService.generate (SRS §12)', () => {
       ],
     });
     await service.generate('c1', 'P1', 'admin');
-    const created = (tx.clientStatement.create.mock.calls[0][0] as { data: { total_amount: string; lines: { create: { line_total: string }[] } } }).data;
-    expect(created.lines.create.map((l) => l.line_total)).toEqual(['50.00', '60.00']);
-    expect(created.total_amount).toBe('110.00'); // exact Decimal, #10 effective-dating
+    const data = createData(tx);
+    expect(data.lines.create.map((l) => l.line_total)).toEqual(['50.00', '60.00']);
+    expect(data.total_amount).toBe('110.00'); // exact Decimal, #10 effective-dating
+  });
+
+  it('mints a gapless statement_number on issue', async () => {
+    const { service, tx } = make({
+      sales: [sale('s1', 'Jane', '2026-01-10', [{ product_id: 'p', name: 'Internet' }])],
+      rates: [rate('p', '2026-01-01', null, '60.00')],
+    });
+    await service.generate('c1', 'P1', 'admin');
+    expect(createData(tx).statement_number).toBe(1);
   });
 
   it('one line per sale aggregating all its products; NO tax/GST field on output (#BILL-004)', async () => {
@@ -92,13 +109,12 @@ describe('StatementService.generate (SRS §12)', () => {
       ],
     });
     await service.generate('c1', 'P1', 'admin');
-    const created = (tx.clientStatement.create.mock.calls[0][0] as { data: { lines: { create: Record<string, unknown>[] } } }).data;
-    expect(created.lines.create).toHaveLength(1);
-    const line = created.lines.create[0];
+    const data = createData(tx);
+    expect(data.lines.create).toHaveLength(1);
+    const line = data.lines.create[0];
     expect(line.products_summary).toBe('Internet, TV, Home Phone');
     expect(line.line_total).toBe('100.00');
-    // No GST anywhere: the persisted shapes carry no tax/gst key.
-    const keys = Object.keys(line).join(',') + ',' + Object.keys(created).join(',');
+    const keys = Object.keys(line).join(',') + ',' + Object.keys(data).join(',');
     expect(keys.toLowerCase()).not.toMatch(/tax|gst|pst|vat/);
   });
 
@@ -107,36 +123,47 @@ describe('StatementService.generate (SRS §12)', () => {
       sales: [sale('s1', 'Jane', '2026-01-10', [{ product_id: 'no-rate', name: 'Internet' }])],
       rates: [],
     });
-    await expect(service.generate('c1', 'P1', 'admin')).rejects.toBeInstanceOf(
-      UnprocessableEntityException,
-    );
+    await expect(service.generate('c1', 'P1', 'admin')).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 
-  it('regeneration replaces in place (deletes old lines, updates header — no duplicate)', async () => {
+  it('IMMUTABLE: regeneration CREATES a new version + supersedes the prior (never deletes/mutates lines)', async () => {
     const { service, tx } = make({
       sales: [sale('s1', 'Jane', '2026-01-10', [{ product_id: 'p', name: 'Internet' }])],
       rates: [rate('p', '2026-01-01', null, '60.00')],
-      existingStatementId: 'stmt-existing',
+      priorStatementId: 'stmt-prior',
     });
     await service.generate('c1', 'P1', 'admin');
-    expect(tx.clientStatementLine.deleteMany).toHaveBeenCalledWith({
-      where: { statement_id: 'stmt-existing' },
+    // A NEW version was created…
+    expect(tx.clientStatement.create).toHaveBeenCalledTimes(1);
+    // …and the prior current version was marked superseded (metadata only — pointer to the new one).
+    expect(tx.clientStatement.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'stmt-prior' },
+        data: expect.objectContaining({ status: 'superseded', superseded_by_id: 'stmt-new' }),
+      }),
+    );
+    // Lines are NEVER deleted (the issued document is immutable).
+    expect(tx.clientStatementLine.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('first issue (no prior) supersedes nothing', async () => {
+    const { service, tx } = make({
+      sales: [sale('s1', 'Jane', '2026-01-10', [{ product_id: 'p', name: 'Internet' }])],
+      rates: [rate('p', '2026-01-01', null, '60.00')],
     });
-    expect(tx.clientStatement.update).toHaveBeenCalled();
-    expect(tx.clientStatement.create).not.toHaveBeenCalled();
+    await service.generate('c1', 'P1', 'admin');
+    expect(tx.clientStatement.update).not.toHaveBeenCalled();
   });
 
   it('excludes clawed-back items; a sale with no remaining items contributes no line', async () => {
     const { service, tx } = make({
-      // sale_items already filtered by the service's where-clause; an empty items array models
-      // "all items clawed back" → the sale should not produce a line.
       sales: [sale('s-empty', 'Gone', '2026-01-10', [])],
       rates: [],
     });
     await service.generate('c1', 'P1', 'admin');
-    const created = (tx.clientStatement.create.mock.calls[0][0] as { data: { total_amount: string; lines: { create: unknown[] } } }).data;
-    expect(created.lines.create).toHaveLength(0);
-    expect(created.total_amount).toBe('0.00');
+    const data = createData(tx);
+    expect(data.lines.create).toHaveLength(0);
+    expect(data.total_amount).toBe('0.00');
   });
 
   it('unknown client / period → 404', async () => {

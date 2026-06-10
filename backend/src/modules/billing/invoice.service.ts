@@ -9,6 +9,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { formatMoney } from '../../common/money/money';
+import { SequenceService } from '../../common/sequence/sequence.service';
 import { StatementService } from './statement.service';
 
 @Injectable()
@@ -16,43 +18,50 @@ export class InvoiceService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly sequence: SequenceService,
     private readonly statements: StatementService,
   ) {}
 
+  /**
+   * ISSUE a commission invoice — a NEW gapless-numbered IMMUTABLE version; the prior current version is
+   * marked `superseded` (metadata only). `total_commission` = the billing-stream statement total (#3).
+   */
   async generate(clientId: string, payPeriodId: string, actorId: string) {
     // Same billing-stream total as the statement (structurally identical — never re-derived). (#3)
-    const { client, period, draft } = await this.statements.priceClientPeriod(clientId, payPeriodId);
-    const total = draft.total_amount.toFixed(2);
-    const fileUrl = `s3://redwave-exports/invoices/${client.client_code}-P${period.period_number}.pdf`;
+    const { draft } = await this.statements.priceClientPeriod(clientId, payPeriodId);
+    const total = formatMoney(draft.total_amount);
 
     const invoice = await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.clientInvoice.findFirst({
-        where: { client_id: clientId, pay_period_id: payPeriodId },
-        select: { id: true },
-      });
-      if (existing) {
-        return tx.clientInvoice.update({
-          where: { id: existing.id },
-          data: { total_commission: total, file_url: fileUrl, generated_at: new Date() },
-        });
-      }
-      return tx.clientInvoice.create({
+      const invoice_number = await this.sequence.next(tx, 'invoice'); // gapless, row-locked
+      const created = await tx.clientInvoice.create({
         data: {
+          invoice_number,
+          status: 'issued',
           client_id: clientId,
           pay_period_id: payPeriodId,
           total_commission: total,
-          file_url: fileUrl,
+          generated_by: actorId,
         },
       });
+      const prior = await tx.clientInvoice.findFirst({
+        where: { client_id: clientId, pay_period_id: payPeriodId, status: 'issued', id: { not: created.id } },
+        select: { id: true },
+      });
+      if (prior) {
+        await tx.clientInvoice.update({
+          where: { id: prior.id },
+          data: { status: 'superseded', superseded_by_id: created.id },
+        });
+      }
+      return created;
     });
 
-    // ClientInvoice has no generated_by column — the actor is captured in the audit row instead.
     await this.audit.log({
       actorId,
       entityType: 'client_invoices',
       entityId: invoice.id,
       action: 'create',
-      after: { client_id: clientId, pay_period_id: payPeriodId, total_commission: total },
+      after: { invoice_number: invoice.invoice_number, client_id: clientId, pay_period_id: payPeriodId, total_commission: total },
     });
     return invoice;
   }
@@ -63,7 +72,7 @@ export class InvoiceService {
         ...(query.client_id ? { client_id: query.client_id } : {}),
         ...(query.pay_period_id ? { pay_period_id: query.pay_period_id } : {}),
       },
-      orderBy: { generated_at: 'desc' },
+      orderBy: { invoice_number: 'desc' },
     });
   }
 

@@ -6,7 +6,6 @@
  * rep payout). Money is a decimal STRING (#1). No GST anywhere. One line per customer.
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ExportFormat } from '@prisma/client';
 
 /** One line per customer/household (the backend aggregates a sale's products into one line). */
 export class ClientStatementLineResponse {
@@ -25,7 +24,7 @@ export class ClientStatementLineResponse {
   @ApiProperty({ example: 'Internet, TV, Home Phone' })
   products_summary!: string;
 
-  @ApiProperty({ type: String, example: '90.00', description: 'Decimal string. Server-priced line total.' })
+  @ApiProperty({ type: String, example: '90.00', description: 'Decimal string. Server-priced line total (CAD).' })
   line_total!: string;
 }
 
@@ -33,23 +32,32 @@ export class ClientStatementResponse {
   @ApiProperty()
   id!: string;
 
+  @ApiProperty({ type: Number, nullable: true, example: 1, description: 'Gapless sequential number (STMT-00001), minted on issue.' })
+  statement_number!: number | null;
+
+  @ApiProperty({ enum: ['issued', 'superseded'], description: 'issued = current; superseded = an earlier version (immutable).' })
+  status!: 'issued' | 'superseded';
+
   @ApiProperty()
   client_id!: string;
 
   @ApiProperty()
   pay_period_id!: string;
 
-  @ApiProperty({ type: String, example: '140.00', description: 'Decimal string. Server-computed statement total (no GST).' })
+  @ApiProperty({ type: String, example: '140.00', description: 'Decimal string. Server-computed statement total (CAD, no GST).' })
   total_amount!: string;
 
-  @ApiProperty()
-  file_url!: string;
+  @ApiProperty({ type: String, nullable: true, description: 'Storage object path of a rendered artifact (or null — rendered on demand).' })
+  file_url!: string | null;
 
   @ApiProperty()
   generated_by!: string;
 
   @ApiProperty({ type: String, format: 'date-time' })
   generated_at!: string;
+
+  @ApiProperty({ type: String, nullable: true, description: 'The newer version that superseded this one (null if current).' })
+  superseded_by_id!: string | null;
 
   @ApiPropertyOptional({
     type: () => [ClientStatementLineResponse],
@@ -62,23 +70,64 @@ export class ClientInvoiceResponse {
   @ApiProperty()
   id!: string;
 
+  @ApiProperty({ type: Number, nullable: true, example: 1, description: 'Gapless sequential number (INV-00001), minted on issue.' })
+  invoice_number!: number | null;
+
+  @ApiProperty({ enum: ['issued', 'superseded'] })
+  status!: 'issued' | 'superseded';
+
   @ApiProperty()
   client_id!: string;
 
   @ApiProperty()
   pay_period_id!: string;
 
-  @ApiProperty({ type: String, example: '140.00', description: 'Decimal string = the billing-stream statement total (#3).' })
+  @ApiProperty({ type: String, example: '140.00', description: 'Decimal string = the billing-stream statement total (CAD, #3).' })
   total_commission!: string;
 
-  @ApiProperty()
-  file_url!: string;
+  @ApiProperty({ type: String, nullable: true })
+  file_url!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  generated_by!: string | null;
 
   @ApiProperty({ type: String, format: 'date-time' })
   generated_at!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  superseded_by_id!: string | null;
 }
 
-/** The export action's response (stub file_url; the audit row is the persisted record). */
+/** A statement PREVIEW — the one-line-per-customer draft, NOT persisted (no number is minted). */
+export class StatementPreviewLineResponse {
+  @ApiProperty()
+  sale_id!: string;
+
+  @ApiProperty()
+  customer_name!: string;
+
+  @ApiProperty({ example: 'Internet, TV, Home Phone' })
+  products_summary!: string;
+
+  @ApiProperty({ type: String, example: '90.00', description: 'Decimal string (CAD).' })
+  line_total!: string;
+}
+
+export class StatementPreviewResponse {
+  @ApiProperty()
+  client_id!: string;
+
+  @ApiProperty()
+  pay_period_id!: string;
+
+  @ApiProperty({ type: () => [StatementPreviewLineResponse], description: 'One line per customer (combined product total, no GST).' })
+  lines!: StatementPreviewLineResponse[];
+
+  @ApiProperty({ type: String, example: '140.00', description: 'Decimal string. Draft total (CAD).' })
+  total_amount!: string;
+}
+
+/** The export action's response — the rendered file is recorded (file_path) + downloadable. */
 export class BillingExportResultResponse {
   @ApiPropertyOptional({ type: String, description: 'Set when exporting a statement.' })
   statement_id?: string;
@@ -86,12 +135,9 @@ export class BillingExportResultResponse {
   @ApiPropertyOptional({ type: String, description: 'Set when exporting an invoice.' })
   invoice_id?: string;
 
-  @ApiProperty({ enum: ExportFormat })
-  format!: ExportFormat;
+  @ApiProperty({ enum: ['excel', 'pdf', 'quickbooks'] })
+  format!: 'excel' | 'pdf' | 'quickbooks';
 
-  @ApiProperty()
-  file_url!: string;
-
-  @ApiProperty({ type: String, description: 'The serialized row payload (real render deferred).' })
-  content!: string;
+  @ApiProperty({ type: String, nullable: true, description: 'Storage object path (null when storage is unconfigured — the file still downloads on demand).' })
+  file_path!: string | null;
 }

@@ -2,15 +2,15 @@
  * BillingGenerationController — nested generation under /v1/clients/{id}. — arch §6.9
  * Generating a statement/invoice requires billing:create; the global guard enforces it server-side.
  */
-import { Body, Controller, Param, ParseUUIDPipe, Post } from '@nestjs/common';
-import { ApiBearerAuth, ApiCreatedResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrorResponses } from '../../common/errors/api-error-responses.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { StatementService } from './statement.service';
 import { InvoiceService } from './invoice.service';
 import { GenerateBillingDto } from './dto/generate.dto';
-import { ClientInvoiceResponse, ClientStatementResponse } from './dto/billing.response';
+import { ClientInvoiceResponse, ClientStatementResponse, StatementPreviewResponse } from './dto/billing.response';
 
 @ApiTags('Billing & Statements')
 @ApiBearerAuth()
@@ -22,13 +22,30 @@ export class BillingGenerationController {
     private readonly invoices: InvoiceService,
   ) {}
 
+  @Post(':id/statements/preview')
+  @HttpCode(200)
+  @RequirePermission('billing', 'create')
+  @ApiOperation({
+    summary: 'Preview a statement (NOT persisted; no number minted)',
+    description:
+      'Requires billing:create. Returns the one-line-per-customer rows + total (CAD, no GST), priced ' +
+      'from client_billing_rates. An unpriced product → 422 with unpriced[]. Use before generating.',
+  })
+  @ApiOkResponse({ type: StatementPreviewResponse })
+  previewStatement(
+    @Param('id', ParseUUIDPipe) clientId: string,
+    @Body() dto: GenerateBillingDto,
+  ) {
+    return this.statements.preview(clientId, dto.pay_period_id);
+  }
+
   @Post(':id/statements')
   @RequirePermission('billing', 'create')
   @ApiOperation({
-    summary: 'Generate a client statement (one line per customer)',
+    summary: 'Issue a client statement (one line per customer)',
     description:
       'Requires billing:create. Priced solely from client_billing_rates effective on each sale_date; ' +
-      'no GST. Regenerating replaces the existing statement for the client+period (no duplicate).',
+      'no GST. ISSUES a NEW gapless-numbered immutable version; any prior version is marked superseded.',
   })
   @ApiCreatedResponse({ type: ClientStatementResponse })
   generateStatement(

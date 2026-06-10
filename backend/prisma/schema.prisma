@@ -309,6 +309,8 @@ model User {
   expense_field_configs_created ExpenseFieldConfig[]       @relation("ExpenseFieldConfigCreatedBy")
   expense_exports_generated     ExpenseExport[]            @relation("ExpenseExportGeneratedBy")
   statements_generated          ClientStatement[]          @relation("StatementGeneratedBy")
+  invoices_generated            ClientInvoice[]            @relation("InvoiceGeneratedBy")
+  billing_exports_generated     BillingExport[]            @relation("BillingExportGeneratedBy")
   documents_owned               Document[]                 @relation("DocumentOwner")
   signature_requests_sent       SignatureRequest[]         @relation("SignatureRequestedBy")
   document_signatures           DocumentSignature[]        @relation("SignatureRecipient")
@@ -1034,20 +1036,35 @@ model ExpenseExport {
 // MODULE 9 — Billing & Statements
 // ════════════════════════════════════════════════════════════════════════════════
 
+// Issued billing documents are IMMUTABLE + gapless-numbered. A re-generation creates a NEW numbered
+// `issued` version and marks the prior one `superseded` (metadata only — number/total/lines are frozen).
+// — BRD §8, arch §6.9
+enum BillingDocStatus {
+  issued
+  superseded
+}
+
 model ClientStatement {
-  id            String    @id @default(uuid()) @db.Uuid
-  client_id     String    @db.Uuid
-  client        Client    @relation(fields: [client_id], references: [id])
-  pay_period_id String    @db.Uuid
-  pay_period    PayPeriod @relation(fields: [pay_period_id], references: [id])
-  total_amount  Decimal   @db.Decimal(12, 2)
-  file_url      String
-  generated_by  String    @db.Uuid
-  generator     User      @relation("StatementGeneratedBy", fields: [generated_by], references: [id])
-  generated_at  DateTime  @default(now())
+  id               String           @id @default(uuid()) @db.Uuid
+  statement_number Int?             @unique // gapless, global per type; minted on issue (null only on legacy rows)
+  status           BillingDocStatus @default(issued)
+  client_id        String           @db.Uuid
+  client           Client           @relation(fields: [client_id], references: [id])
+  pay_period_id    String           @db.Uuid
+  pay_period       PayPeriod        @relation(fields: [pay_period_id], references: [id])
+  total_amount     Decimal          @db.Decimal(12, 2)
+  file_url         String? // optional — the Excel artifact is rendered on demand (download) / recorded in billing_exports
+  generated_by     String           @db.Uuid
+  generator        User             @relation("StatementGeneratedBy", fields: [generated_by], references: [id])
+  generated_at     DateTime         @default(now())
+  superseded_by_id String?          @db.Uuid
+  superseded_by    ClientStatement? @relation("StatementSupersede", fields: [superseded_by_id], references: [id])
 
-  lines ClientStatementLine[]
+  lines       ClientStatementLine[]
+  supersedes  ClientStatement[]     @relation("StatementSupersede")
+  exports     BillingExport[]
 
+  @@index([client_id, pay_period_id, status])
   @@map("client_statements")
 }
 
@@ -1065,16 +1082,58 @@ model ClientStatementLine {
 }
 
 model ClientInvoice {
-  id               String    @id @default(uuid()) @db.Uuid
-  client_id        String    @db.Uuid
-  client           Client    @relation(fields: [client_id], references: [id])
-  pay_period_id    String    @db.Uuid
-  pay_period       PayPeriod @relation(fields: [pay_period_id], references: [id])
-  total_commission Decimal   @db.Decimal(12, 2)
-  file_url         String
-  generated_at     DateTime  @default(now())
+  id               String           @id @default(uuid()) @db.Uuid
+  invoice_number   Int?             @unique // gapless, global per type; minted on issue (null only on legacy rows)
+  status           BillingDocStatus @default(issued)
+  client_id        String           @db.Uuid
+  client           Client           @relation(fields: [client_id], references: [id])
+  pay_period_id    String           @db.Uuid
+  pay_period       PayPeriod        @relation(fields: [pay_period_id], references: [id])
+  total_commission Decimal          @db.Decimal(12, 2)
+  file_url         String? // optional — the PDF is rendered on demand / recorded in billing_exports
+  generated_by     String?          @db.Uuid
+  generator        User?            @relation("InvoiceGeneratedBy", fields: [generated_by], references: [id])
+  generated_at     DateTime         @default(now())
+  superseded_by_id String?          @db.Uuid
+  superseded_by    ClientInvoice?   @relation("InvoiceSupersede", fields: [superseded_by_id], references: [id])
 
+  supersedes ClientInvoice[] @relation("InvoiceSupersede")
+  exports    BillingExport[]
+
+  @@index([client_id, pay_period_id, status])
   @@map("client_invoices")
+}
+
+// A monotonic counter per document type ('statement' | 'invoice'). Incremented atomically INSIDE the issue
+// transaction (row lock) so numbers are gapless under concurrency. — BRD §8 (gapless numbering)
+model DocumentSequence {
+  key           String @id // 'statement' | 'invoice'
+  current_value Int    @default(0) // highest number issued so far; next() atomically +1 and returns the new value
+
+  @@map("document_sequences")
+}
+
+// A recorded export artifact (Excel / PDF / QuickBooks CSV / financial summary), stored in object storage by
+// path — like expense_exports. The download endpoints render on demand; configured storage also persists +
+// records here. — arch §6.9
+model BillingExport {
+  id            String           @id @default(uuid()) @db.Uuid
+  kind          String // statement | invoice | summary | quickbooks
+  format        String // excel | pdf | csv
+  statement_id  String?          @db.Uuid
+  statement     ClientStatement? @relation(fields: [statement_id], references: [id])
+  invoice_id    String?          @db.Uuid
+  invoice       ClientInvoice?   @relation(fields: [invoice_id], references: [id])
+  client_id     String?          @db.Uuid
+  pay_period_id String?          @db.Uuid
+  file_path     String
+  generated_by  String           @db.Uuid
+  generator     User             @relation("BillingExportGeneratedBy", fields: [generated_by], references: [id])
+  generated_at  DateTime         @default(now())
+
+  @@index([statement_id])
+  @@index([invoice_id])
+  @@map("billing_exports")
 }
 
 // ════════════════════════════════════════════════════════════════════════════════
