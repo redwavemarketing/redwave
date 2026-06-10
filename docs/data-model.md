@@ -64,8 +64,25 @@ Identity, roles, and granular module/action permissions. A Role is a bag of (mod
 | **avatar_url**       | varchar   | —       | Profile photo (editable via review workflow).                    |
 | **theme_preference** | enum      | —       | light / dark / system. Personal; applies immediately, no review. |
 | **status**           | enum      | —       | active / inactive.                                               |
+| **must_change_password** | bool  | —       | Set on invite / admin reset — forces a change at next login (AUTH-002). |
+| **failed_login_attempts** | int  | —       | Brute-force counter; reset on success.                          |
+| **locked_until**     | timestamp | —       | Lockout expiry; null = not locked.                              |
 | **created_at**       | timestamp | —       |                                                                  |
 | **updated_at**       | timestamp | —       |                                                                  |
+
+#### `password_reset_tokens`
+
+*Single-use, expiring tokens for the invite (first set-password) + forgot-password flows. Only the token HASH is stored. — AUTH-002*
+
+| **Field**     | **Type**  | **Key** | **Notes**                                  |
+|---------------|-----------|---------|--------------------------------------------|
+| **id**        | uuid      | **PK**  |                                            |
+| **user_id**   | uuid      | **FK**  | -> users.id                                |
+| **token_hash**| varchar   | **UQ**  | SHA-256 of the secret (plaintext only in the emailed link). |
+| **purpose**   | enum      | —       | invite / reset.                            |
+| **expires_at**| timestamp | —       | Reset ~1h, invite ~7d (env-tunable).       |
+| **used_at**   | timestamp | —       | Null until consumed (single-use).          |
+| **created_at**| timestamp | —       |                                            |
 
 #### `roles`
 
@@ -330,7 +347,7 @@ REP commission rules (Schedule C v2): the tier table, flat rates, holdback split
 | **Field**          | **Type**  | **Key** | **Notes**                                 |
 |--------------------|-----------|---------|-------------------------------------------|
 | **id**             | uuid      | **PK**  |                                           |
-| **release_rule**   | varchar   | —       | Which cycle a period's 30% releases into. |
+| **release_rule**   | varchar   | —       | Structured sticky rule: `cycles:N` or `days:N` (read by Pay Run at finalize, §17.1). |
 | **set_by**         | uuid      | **FK**  | -> users.id                              |
 | **effective_from** | timestamp | —       | Sticky until changed.                     |
 
@@ -344,7 +361,7 @@ REP commission rules (Schedule C v2): the tier table, flat rates, holdback split
 | **name**               | varchar  | —       |                                   |
 | **scope_client_id**    | uuid     | **FK**  | -> clients.id (nullable = all).  |
 | **scope_product_type** | varchar  | **FK**  | -> product_type_catalogue.key. Nullable = all. |
-| **target_type**        | enum     | —       | per_activation / target_based.    |
+| **target_type**        | enum     | —       | per_activation / one_time (both applied by the engine, threshold-relative). |
 | **target_count**       | int      | —       | Nullable (e.g. 5 sales in 1 day). |
 | **window_start**       | date     | —       |                                   |
 | **window_end**         | date     | —       |                                   |

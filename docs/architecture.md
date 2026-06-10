@@ -118,11 +118,14 @@ Representative endpoints per module (not exhaustive; the OpenAPI spec is authori
 
 | **Verb**  | **Path**                   | **Purpose**                      | **Permission** |
 |-----------|----------------------------|----------------------------------|----------------|
-| **POST**  | /v1/auth/login             | Authenticate, return JWT.        | public         |
+| **POST**  | /v1/auth/login             | Authenticate, return JWT (+ must_change_password). | public |
+| **POST**  | /v1/auth/forgot-password   | Request a reset email (non-enumerating). | public  |
+| **POST**  | /v1/auth/reset-password    | Set a new password from a token. | public         |
 | **POST**  | /v1/auth/logout            | Invalidate session.              | any            |
 | **GET**   | /v1/users                  | List users.                      | users:view     |
-| **POST**  | /v1/users                  | Create user, assign roles.       | users:create   |
+| **POST**  | /v1/users                  | Create user / INVITE (omit password → emailed link). | users:create |
 | **PATCH** | /v1/users/{id}             | Edit / deactivate user.          | users:edit     |
+| **POST**  | /v1/users/{id}/reset-password | Trigger reset: link or temp password (admin never sees it). | users:edit |
 | **GET**   | /v1/roles                  | List roles.                      | roles:view     |
 | **POST**  | /v1/roles                  | Create custom role.              | roles:create   |
 | **PATCH** | /v1/roles/{id}/permissions | Set role's module×action grants. | roles:edit     |
@@ -133,6 +136,7 @@ Representative endpoints per module (not exhaustive; the OpenAPI spec is authori
 |-----------|-------------------------|-------------------------------------------|----------------|
 | **GET**   | /v1/reps                | List/filter reps.                         | hrm:view       |
 | **POST**  | /v1/reps                | Create rep (code validated unused).       | hrm:create     |
+| **POST**  | /v1/reps/bulk-assign-manager | Reassign reps to a field manager (bulk). | hrm:edit   |
 | **PATCH** | /v1/reps/{id}           | Edit rep / set field manager / terminate. | hrm:edit       |
 | **POST**  | /v1/reps/{id}/documents | Upload rep document.                      | hrm:edit       |
 | **POST**  | /v1/reps/{id}/equipment | Assign equipment + deposit.               | hrm:edit       |

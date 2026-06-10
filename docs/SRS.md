@@ -115,7 +115,7 @@ Identity, authentication, and modular role-based access. A role is a set of (mod
 | **ID**       | **Requirement**                                                                                                                                                                                                                                                                                          | **Pri** |
 |--------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|
 | **AUTH-001** | Users authenticate with email and password over an encrypted connection; sessions expire after inactivity.                                                                                                                                                                                               | **M**   |
-| **AUTH-002** | Users can reset a forgotten password via a secure flow.                                                                                                                                                                                                                                                  | **S**   |
+| **AUTH-002** | **User provisioning + password recovery (BUILT).** Admin INVITE (emailed set-password link), self-service forgot-password (emailed expiring link, non-enumerating), and admin-assisted reset (email a link or a forced-change temp password — the admin never sees the password). Passwords meet a strength policy (≥8 + upper+lower+digit); brute-force lockout after N failed logins. Email via Resend. | **M**   |
 | **AUTH-003** | The Super Admin can create, rename, and deactivate custom roles; built-in roles cannot be deleted.                                                                                                                                                                                                       | **M**   |
 | **AUTH-004** | The Super Admin can grant a role any combination of (module, action) permissions, where action is view / create / edit / approve / delete / export. One additional dedicated action exists outside the grid: **`notifications:broadcast`** (the right to send a manual broadcast), granted to the **Super Admin only** (see RPT-013).                                                                                                                                                      | **M**   |
 | **AUTH-005** | The Super Admin can assign one or more roles to a user; effective permissions are the union of the user's roles.                                                                                                                                                                                         | **M**   |
@@ -260,8 +260,8 @@ Rep-side commission rules (Schedule C v2): the tier schedule, flat rates, holdba
 | **COMM-001** | The Super Admin can configure the tier schedule: four tiers with count thresholds and a per-activation rate each, effective-dated.                                                                                    | **M**   |
 | **COMM-002** | The Super Admin can configure flat rates per **non-tiered product type** (greenfield internet, TV, home phone, and any SA-added standard add-on), effective-dated. A tiered type (internet) is rejected (it's priced by the tier schedule). | **M**   |
 | **COMM-003** | The Super Admin can configure the advance/holdback split (default 70% / 30%), effective-dated.                                                                                                                        | **M**   |
-| **COMM-004** | **Holdback release setting (bulk, sticky).** The Super Admin sets which pay cycle a period's 30% holdback releases into; the setting applies in bulk and persists until changed. *[PROPOSED — confirm rule in §17]* | **M**   |
-| **COMM-005** | The Super Admin can create incentives/spiffs: scope (client/product/all), target type (per-activation or target-based), target count, date window, and amount.                                                        | **M**   |
+| **COMM-004** | **Holdback release setting (bulk, sticky).** The Super Admin sets the release rule (`cycles:N` or `days:N`); it applies in bulk and persists until changed (future holds only). Read by Pay Run at finalize (§17.1). | **M**   |
+| **COMM-005** | The Super Admin can create incentives/spiffs: scope (client/product/all), **mode (`per_activation` or `one_time`)**, threshold (`target_count`), date window, and amount. BOTH modes are applied by the engine (per_activation pays beyond the threshold; one_time pays a single bonus at it). | **M**   |
 | **COMM-006** | A later configuration change with a future effective date supersedes a pending change; changes apply prospectively only and never recompute a closed period.                                                          | **M**   |
 | **COMM-007** | Rate changes generate a system notification; email is sent only if enabled for the rate_change event (default off).                                                                                                   | **S**   |
 | **COMM-008** | **Consistent effective-dated CRUD.** Tier schedules, flat rates, and the holdback split support edit/delete of a **PENDING** (not-yet-effective) row; a current/past row is immutable (supersede instead). An incentive may be deleted only if never applied to a paid item (else it is ended). | **S**   |
@@ -346,7 +346,7 @@ Bi-weekly payroll: tier determination at close, the 70/30 split, holdback ledger
 | **PAY-001** | Pay periods (Sunday–Saturday with paydays) are pre-loaded from the schedule; admins select a cycle to run, not create cycles.                                                                        | **M**   |
 | **PAY-002** | **Tier determination.** At period close the system computes each rep's gross internet tally and assigns the highest tier reached; that tier rate applies to every internet activation in the period. | **M**   |
 | **PAY-003** | The 70% advance of total commission is computed per rep for the period; the 30% holdback is recorded in the holdback ledger.                                                                         | **M**   |
-| **PAY-004** | **Holdback release.** The 30% from an origin period is released in the pay cycle set by the Super-Admin bulk/sticky setting. *[PROPOSED — see §17]*                                                | **M**   |
+| **PAY-004** | **Holdback release.** The 30% from an origin period is released at finalize in the cycle set by the sticky rule (§17.1), with a clawback set-off reducing a due release first. | **M**   |
 | **PAY-005** | Approved expenses for the period are included in the same pay run as that period's commission.                                                                                                       | **M**   |
 | **PAY-006** | The Super Admin can add an ad-hoc bonus to a rep's pay-run line with a note.                                                                                                                         | **M**   |
 | **PAY-007** | **Clawback application.** Clawbacks are applied as a flat deduction from the rep's pay-run total (no 70/30 sequencing).                                                                              | **M**   |
@@ -646,12 +646,20 @@ The authoritative state model for a sale. Transitions not listed are invalid and
 
 The following behaviors are specified as the most logical interpretation consistent with all decisions to date, and are flagged for Redwave's explicit confirmation. Each is build-ready as written; confirmation only removes risk of a late change.
 
-### 17.1 Holdback Release Timing (COMM-004, PAY-004)
+### 17.1 Holdback Release Timing (COMM-004, PAY-004) — CONFIRMED & BUILT
 
-Proposed rule: the Super Admin sets, in bulk and stickily, the release cycle for the 30% holdback (e.g. “release each period's 30% in the cycle N periods later”, or a chosen target cycle). The setting persists until changed and applies to all holds going forward. The holdback ledger records, per hold, its scheduled release cycle and status.
+The Super Admin sets, once and stickily, the release rule for the 30% holdback in one of two modes:
+**`cycles:N`** (release each period's 30% in the **Nth pay cycle after** the origin) or **`days:N`** (release
+in the **first pay cycle whose payday is ≥ origin payday + N days**). The rule persists until changed; a later
+change affects only **future** holds (already-scheduled/released rows are never re-resolved). The Pay Run reads
+the rule at finalize and records each hold's scheduled release cycle + status on the holdback ledger.
 
-> **Worked example (proposed)**
-> Super Admin sets release to “the next regular cycle after 30 days.” A 30% hold of $993 created from Period A becomes Scheduled for the first cycle ≥ 30 days after Period A's payday, and is paid in that cycle's run unless reduced by a clawback set-off. Changing the setting later affects future holds, not those already released.
+> **Worked example**
+> Super Admin sets `days:30`. A 30% hold of $993 from Period A is Scheduled for the first cycle ≥ 30 days
+> after Period A's payday, and is released in that cycle's run. A pending **clawback sets off** against the
+> due release first (recorded as `clawback_applied`, lowering `amount_released`); only the uncovered remainder
+> deducts from net — so the clawback is recovered exactly once. Release happens inside finalize (atomic/
+> idempotent).
 
 ### 17.2 Greenfield Tally at Period Close (SALE-006)
 

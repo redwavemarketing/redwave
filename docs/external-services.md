@@ -27,12 +27,30 @@
   documents/e-signature, and rep documents are no longer stubs; the e-signature provider is now real
   in-system stamping via pdf-lib — no third-party e-sign vendor.)
 
-## 2. Email — REQUIRED for go-live
-- **For:** notification emails (the `EMAIL_DISPATCHER` is a noop today — Reporting/Notifications),
-  and unblocks the user invite / password-reset flow (AUTH-002).
-- **Provider options:** AWS SES · SendGrid · Postmark · Resend · Mailgun.
-- **Credentials (env):** `EMAIL_PROVIDER`, `EMAIL_API_KEY` (or SMTP host/user/pass), `EMAIL_FROM`.
-- **Code today:** CLAUDE.md §12 "Reporting deferrals — Email/SMS dispatch stubbed (EMAIL_DISPATCHER noop)".
+## 2. Email — WIRED → Resend (env-gated, graceful)
+- **For:** the user invite / password-reset flow (AUTH-002) + email-enabled notifications. The
+  `common/email` `MailerService` sends transactional mail (invite / reset / temp password) via Resend; the
+  notification `EMAIL_DISPATCHER` is rebound to Resend too. With no key it logs the intent (the build/flows
+  still work); sends are best-effort (never break a user-create / forgot flow).
+- **Credentials (env):** `RESEND_API_KEY`, `EMAIL_FROM` (a verified Resend sender on the domain below),
+  `APP_URL` (the frontend base used to build the links). Optional: `LOCKOUT_MAX_ATTEMPTS`/`LOCKOUT_MINUTES`,
+  `PASSWORD_RESET_TTL_MINUTES`/`INVITE_TOKEN_TTL_MINUTES`.
+- **DNS to add in Namecheap (Advanced DNS) for `app.redwavemarketing.ca`** — add the domain in the Resend
+  dashboard, then copy the EXACT values it generates (the DKIM public key is unique per domain — I cannot
+  generate it). The records have this shape (host = the part Namecheap prepends to the domain):
+
+  | Type  | Host (name)                  | Value (from the Resend dashboard)                          | Notes |
+  |-------|------------------------------|------------------------------------------------------------|-------|
+  | TXT   | `send.app`                   | `v=spf1 include:amazonses.com ~all`                        | SPF for the bounce subdomain |
+  | MX    | `send.app`                   | `feedback-smtp.<region>.amazonses.com` (priority `10`)     | bounce/complaint handling; region per Resend |
+  | TXT   | `resend._domainkey.app`      | `p=<long DKIM public key from Resend>`                     | DKIM — copy verbatim from Resend |
+  | TXT   | `_dmarc.app`                 | `v=DMARC1; p=none;`                                        | optional but recommended |
+
+  After the records propagate, verify the domain in Resend; once "Verified", set `EMAIL_FROM` to e.g.
+  `Redwave <noreply@app.redwavemarketing.ca>` and email delivers. Until then, Resend rejects sends (the app
+  still records the intent gracefully).
+- **Provider note:** chose Resend per the brief. The seam is abstracted (`EMAIL_DISPATCHER` + `MailerService`)
+  so the provider can be swapped without touching auth/notification logic.
 
 ## 3. SMS — OPTIONAL (confirm with Redwave whether they want SMS notifications at all)
 - **For:** SMS-channel notifications, if used. The notification model has channels but only
