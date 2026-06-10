@@ -106,8 +106,10 @@ paths:
         - Health
   /v1/auth/login:
     post:
-      description: Public. Returns { access_token, refresh_token }. Invalid
-        credentials → 401.
+      description: "Public. On success sets the rw_refresh (httpOnly) + rw_csrf
+        cookies and returns { access_token }. If the user has MFA enabled,
+        returns { mfa_required: true, mfa_token } instead — redeem it at
+        /auth/mfa/verify."
       operationId: AuthController_login_v1
       parameters: []
       requestBody:
@@ -162,17 +164,39 @@ paths:
       summary: Authenticate with email + password
       tags: &a10
         - Auth
-  /v1/auth/refresh:
+  /v1/auth/mfa/verify:
     post:
-      description: Public. Invalid/expired refresh token → 401.
-      operationId: AuthController_refresh_v1
+      description: Public. Exchanges the mfa_token + a TOTP/recovery code for a full
+        session (sets the cookies).
+      operationId: AuthController_verifyMfa_v1
       parameters: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RefreshDto"
+              $ref: "#/components/schemas/MfaVerifyDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400": *a4
+        "401": *a5
+        "403": *a6
+        "404": *a7
+        "409": *a8
+        "422": *a9
+      summary: Complete the MFA challenge
+      tags: *a10
+  /v1/auth/refresh:
+    post:
+      description: Public (cookie-authenticated). Reads the rw_refresh cookie, rotates
+        it, and returns a new access token. Invalid/expired/reused → 401.
+      operationId: AuthController_refresh_v1
+      parameters: []
       responses:
         "200":
           description: ""
@@ -186,7 +210,7 @@ paths:
         "404": *a7
         "409": *a8
         "422": *a9
-      summary: Exchange a refresh token for a new access token
+      summary: Rotate the refresh cookie for a new access token
       tags: *a10
   /v1/auth/forgot-password:
     post:
@@ -244,8 +268,8 @@ paths:
       tags: *a10
   /v1/auth/logout:
     post:
-      description: Requires authentication. The client discards its tokens; recorded
-        for audit.
+      description: Requires authentication. Revokes this device’s refresh session and
+        clears the cookies.
       operationId: AuthController_logout_v1
       parameters: []
       responses:
@@ -263,7 +287,7 @@ paths:
         "422": *a9
       security:
         - bearer: []
-      summary: Log out (stateless)
+      summary: Log out
       tags: *a10
   /v1/auth/me:
     get:
@@ -288,10 +312,9 @@ paths:
         - bearer: []
       summary: Current user + effective permissions
       tags: *a10
-  /v1/users:
+  /v1/auth/mfa/status:
     get:
-      description: Requires users:view.
-      operationId: UsersController_findAll_v1
+      operationId: MfaController_status_v1
       parameters: []
       responses:
         "200":
@@ -299,9 +322,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/AdminUserResponse"
+                $ref: "#/components/schemas/MfaStatusResponse"
         "400": &a11
           description: Bad Request — validation failed
           content:
@@ -340,52 +361,47 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a17
         - bearer: []
-      summary: List users
+      summary: Whether the caller has MFA enabled
       tags: &a18
-        - Users
+        - Auth
+  /v1/auth/mfa/setup:
     post:
-      description: Requires users:create.
-      operationId: UsersController_create_v1
+      operationId: MfaController_setup_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MfaSetupResponse"
+        "400": *a11
+        "401": *a12
+        "403": *a13
+        "404": *a14
+        "409": *a15
+        "422": *a16
+      security: *a17
+      summary: Begin enrollment — returns the otpauth URL + QR (unconfirmed until
+        /enable).
+      tags: *a18
+  /v1/auth/mfa/enable:
+    post:
+      operationId: MfaController_enable_v1
       parameters: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateUserDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AdminUserResponse"
-        "400": *a11
-        "401": *a12
-        "403": *a13
-        "404": *a14
-        "409": *a15
-        "422": *a16
-      security: *a17
-      summary: Create a user and assign roles
-      tags: *a18
-  /v1/users/{id}:
-    get:
-      description: Requires users:view.
-      operationId: UsersController_findOne_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
+              $ref: "#/components/schemas/MfaCodeDto"
       responses:
         "200":
           description: ""
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AdminUserResponse"
+                $ref: "#/components/schemas/MfaRecoveryCodesResponse"
         "400": *a11
         "401": *a12
         "403": *a13
@@ -393,89 +409,19 @@ paths:
         "409": *a15
         "422": *a16
       security: *a17
-      summary: Get a user
+      summary: Confirm enrollment with a first code → enable + return recovery codes
+        (once).
       tags: *a18
-    patch:
-      description: Requires users:edit. status=inactive revokes access immediately.
-      operationId: UsersController_update_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateUserDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AdminUserResponse"
-        "400": *a11
-        "401": *a12
-        "403": *a13
-        "404": *a14
-        "409": *a15
-        "422": *a16
-      security: *a17
-      summary: Edit / deactivate a user
-      tags: *a18
-  /v1/users/{id}/roles:
-    put:
-      description: Requires users:edit.
-      operationId: UsersController_setRoles_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetUserRolesDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AdminUserResponse"
-        "400": *a11
-        "401": *a12
-        "403": *a13
-        "404": *a14
-        "409": *a15
-        "422": *a16
-      security: *a17
-      summary: Set a user’s roles
-      tags: *a18
-  /v1/users/{id}/reset-password:
+  /v1/auth/mfa/disable:
     post:
-      description: Requires users:edit. mode=link emails a reset link; mode=temp
-        emails a forced-change temporary password. The admin cannot view the
-        password — only trigger a reset.
-      operationId: UsersController_resetPassword_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
+      operationId: MfaController_disable_v1
+      parameters: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AdminResetPasswordDto"
+              $ref: "#/components/schemas/MfaCodeDto"
       responses:
         "200":
           description: ""
@@ -490,12 +436,11 @@ paths:
         "409": *a15
         "422": *a16
       security: *a17
-      summary: Trigger a password reset for a user (admin never sees the password)
+      summary: Disable MFA (requires a current TOTP or recovery code).
       tags: *a18
-  /v1/roles:
+  /v1/auth/sessions:
     get:
-      description: Requires roles:view.
-      operationId: RolesController_findAll_v1
+      operationId: SessionsController_list_v1
       parameters: []
       responses:
         "200":
@@ -505,7 +450,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/RoleSummaryResponse"
+                  $ref: "#/components/schemas/SessionResponse"
         "400": &a19
           description: Bad Request — validation failed
           content:
@@ -544,95 +489,12 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a25
         - bearer: []
-      summary: List roles
+      summary: List the caller's active sessions (devices)
       tags: &a26
-        - Roles
-    post:
-      description: Requires roles:create.
-      operationId: RolesController_create_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateRoleDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RoleDetailResponse"
-        "400": *a19
-        "401": *a20
-        "403": *a21
-        "404": *a22
-        "409": *a23
-        "422": *a24
-      security: *a25
-      summary: Create a custom role
-      tags: *a26
-  /v1/roles/{id}:
-    get:
-      description: Requires roles:view.
-      operationId: RolesController_findOne_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RoleDetailResponse"
-        "400": *a19
-        "401": *a20
-        "403": *a21
-        "404": *a22
-        "409": *a23
-        "422": *a24
-      security: *a25
-      summary: Get a role + its granted permissions
-      tags: *a26
-    patch:
-      description: Requires roles:edit. Built-in roles cannot be renamed.
-      operationId: RolesController_update_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateRoleDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RoleDetailResponse"
-        "400": *a19
-        "401": *a20
-        "403": *a21
-        "404": *a22
-        "409": *a23
-        "422": *a24
-      security: *a25
-      summary: Rename / edit a role
-      tags: *a26
+        - Auth
+  /v1/auth/sessions/{id}:
     delete:
-      description: Requires roles:delete. Built-in roles → 409.
-      operationId: RolesController_remove_v1
+      operationId: SessionsController_revoke_v1
       parameters:
         - name: id
           required: true
@@ -641,39 +503,7 @@ paths:
             type: string
       responses:
         "204":
-          description: Role deleted.
-        "400": *a19
-        "401": *a20
-        "403": *a21
-        "404": *a22
-        "409": *a23
-        "422": *a24
-      security: *a25
-      summary: Delete a custom role
-      tags: *a26
-  /v1/roles/{id}/permissions:
-    put:
-      description: Requires roles:edit.
-      operationId: RolesController_setPermissions_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetRolePermissionsDto"
-      responses:
-        "200":
           description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RoleDetailResponse"
         "400": *a19
         "401": *a20
         "403": *a21
@@ -681,12 +511,11 @@ paths:
         "409": *a23
         "422": *a24
       security: *a25
-      summary: Set a role’s module×action grants
+      summary: Revoke one of the caller’s sessions (immediate logout of that device)
       tags: *a26
-  /v1/modules:
+  /v1/security-settings:
     get:
-      description: Requires roles:view.
-      operationId: RbacCatalogueController_listModules_v1
+      operationId: SecuritySettingsController_get_v1
       parameters: []
       responses:
         "200":
@@ -694,9 +523,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ModuleResponse"
+                $ref: "#/components/schemas/SecuritySettingsResponse"
         "400": &a27
           description: Bad Request — validation failed
           content:
@@ -735,13 +562,38 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a33
         - bearer: []
-      summary: List system modules
+      summary: Read the MFA-enforcement policy + per-role flags
       tags: &a34
-        - Roles
-  /v1/permissions:
+        - Security Settings
+    patch:
+      operationId: SecuritySettingsController_update_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSecuritySettingsDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecuritySettingsResponse"
+        "400": *a27
+        "401": *a28
+        "403": *a29
+        "404": *a30
+        "409": *a31
+        "422": *a32
+      security: *a33
+      summary: Update the MFA-enforcement switch and/or per-role mfa_required flags
+      tags: *a34
+  /v1/users:
     get:
-      description: Requires roles:view.
-      operationId: RbacCatalogueController_listPermissions_v1
+      description: Requires users:view.
+      operationId: UsersController_findAll_v1
       parameters: []
       responses:
         "200":
@@ -751,28 +603,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/PermissionResponse"
-        "400": *a27
-        "401": *a28
-        "403": *a29
-        "404": *a30
-        "409": *a31
-        "422": *a32
-      security: *a33
-      summary: List all (module, action) permissions
-      tags: *a34
-  /v1/account/profile:
-    get:
-      description: Authenticated. Flags any change pending review.
-      operationId: AccountController_getProfile_v1
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccountProfileResponse"
+                  $ref: "#/components/schemas/AdminUserResponse"
         "400": &a35
           description: Bad Request — validation failed
           content:
@@ -811,20 +642,142 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a41
         - bearer: []
-      summary: View my profile
+      summary: List users
       tags: &a42
-        - Account
-  /v1/account/change-password:
+        - Users
     post:
-      description: Authenticated. Verifies the current password.
-      operationId: AccountController_changePassword_v1
+      description: Requires users:create.
+      operationId: UsersController_create_v1
       parameters: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ChangePasswordDto"
+              $ref: "#/components/schemas/CreateUserDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserResponse"
+        "400": *a35
+        "401": *a36
+        "403": *a37
+        "404": *a38
+        "409": *a39
+        "422": *a40
+      security: *a41
+      summary: Create a user and assign roles
+      tags: *a42
+  /v1/users/{id}:
+    get:
+      description: Requires users:view.
+      operationId: UsersController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserResponse"
+        "400": *a35
+        "401": *a36
+        "403": *a37
+        "404": *a38
+        "409": *a39
+        "422": *a40
+      security: *a41
+      summary: Get a user
+      tags: *a42
+    patch:
+      description: Requires users:edit. status=inactive revokes access immediately.
+      operationId: UsersController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserResponse"
+        "400": *a35
+        "401": *a36
+        "403": *a37
+        "404": *a38
+        "409": *a39
+        "422": *a40
+      security: *a41
+      summary: Edit / deactivate a user
+      tags: *a42
+  /v1/users/{id}/roles:
+    put:
+      description: Requires users:edit.
+      operationId: UsersController_setRoles_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetUserRolesDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserResponse"
+        "400": *a35
+        "401": *a36
+        "403": *a37
+        "404": *a38
+        "409": *a39
+        "422": *a40
+      security: *a41
+      summary: Set a user’s roles
+      tags: *a42
+  /v1/users/{id}/reset-password:
+    post:
+      description: Requires users:edit. mode=link emails a reset link; mode=temp
+        emails a forced-change temporary password. The admin cannot view the
+        password — only trigger a reset.
+      operationId: UsersController_resetPassword_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminResetPasswordDto"
       responses:
         "200":
           description: ""
@@ -839,54 +792,26 @@ paths:
         "409": *a39
         "422": *a40
       security: *a41
-      summary: Change my password
+      summary: Trigger a password reset for a user (admin never sees the password)
       tags: *a42
-  /v1/account/theme:
-    patch:
-      description: Authenticated. Applies immediately, no review.
-      operationId: AccountController_setTheme_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetThemeDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ThemeResponse"
-        "400": *a35
-        "401": *a36
-        "403": *a37
-        "404": *a38
-        "409": *a39
-        "422": *a40
-      security: *a41
-      summary: Set my theme preference
-      tags: *a42
-  /v1/account/profile-change-requests:
+  /v1/users/{id}/revoke-sessions:
     post:
-      description: Authenticated. Creates a PENDING request; the live profile is not
-        changed until approved.
-      operationId: AccountController_requestProfileChange_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ProfileChangeRequestDto"
+      description: Requires users:edit. Revokes all of the user’s refresh sessions;
+        their access tokens stop working immediately.
+      operationId: UsersController_forceLogout_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
       responses:
-        "201":
+        "200":
           description: ""
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MyProfileRequestResponse"
+                $ref: "#/components/schemas/SuccessResponse"
         "400": *a35
         "401": *a36
         "403": *a37
@@ -894,11 +819,39 @@ paths:
         "409": *a39
         "422": *a40
       security: *a41
-      summary: Request a profile HR-field change
+      summary: Force-logout a user from every device
       tags: *a42
+  /v1/users/{id}/disable-mfa:
+    post:
+      description: Requires users:edit. Clears the user’s TOTP enrollment + recovery
+        codes; they re-enrol if policy requires it.
+      operationId: UsersController_disableMfa_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400": *a35
+        "401": *a36
+        "403": *a37
+        "404": *a38
+        "409": *a39
+        "422": *a40
+      security: *a41
+      summary: Disable a user’s MFA (lost-device recovery)
+      tags: *a42
+  /v1/roles:
     get:
-      description: Authenticated.
-      operationId: AccountController_listMyRequests_v1
+      description: Requires roles:view.
+      operationId: RolesController_findAll_v1
       parameters: []
       responses:
         "200":
@@ -908,31 +861,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/MyProfileRequestResponse"
-        "400": *a35
-        "401": *a36
-        "403": *a37
-        "404": *a38
-        "409": *a39
-        "422": *a40
-      security: *a41
-      summary: List my profile-change requests
-      tags: *a42
-  /v1/profile-change-requests:
-    get:
-      description: Requires profile:approve. Scoped by routing (Field Manager / Admin
-        / Super Admin).
-      operationId: ProfileChangeReviewController_listQueue_v1
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ReviewRequestResponse"
+                  $ref: "#/components/schemas/RoleSummaryResponse"
         "400": &a43
           description: Bad Request — validation failed
           content:
@@ -971,26 +900,26 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a49
         - bearer: []
-      summary: Review queue of pending profile changes
+      summary: List roles
       tags: &a50
-        - Account
-  /v1/profile-change-requests/{id}/approve:
+        - Roles
     post:
-      description: Requires profile:approve + routing authorization.
-      operationId: ProfileChangeReviewController_approve_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
+      description: Requires roles:create.
+      operationId: RolesController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoleDto"
       responses:
-        "200":
+        "201":
           description: ""
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ProfileChangeRequestResponse"
+                $ref: "#/components/schemas/RoleDetailResponse"
         "400": *a43
         "401": *a44
         "403": *a45
@@ -998,38 +927,122 @@ paths:
         "409": *a47
         "422": *a48
       security: *a49
-      summary: Approve a profile change
+      summary: Create a custom role
       tags: *a50
-  /v1/profile-change-requests/{id}/reject:
-    post:
-      description: Requires profile:approve + routing authorization.
-      operationId: ProfileChangeReviewController_reject_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProfileChangeRequestResponse"
-        "400": *a43
-        "401": *a44
-        "403": *a45
-        "404": *a46
-        "409": *a47
-        "422": *a48
-      security: *a49
-      summary: Reject a profile change
-      tags: *a50
-  /v1/account/signatures:
+  /v1/roles/{id}:
     get:
-      description: Authenticated; own-scoped.
-      operationId: UserSignaturesController_list_v1
+      description: Requires roles:view.
+      operationId: RolesController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleDetailResponse"
+        "400": *a43
+        "401": *a44
+        "403": *a45
+        "404": *a46
+        "409": *a47
+        "422": *a48
+      security: *a49
+      summary: Get a role + its granted permissions
+      tags: *a50
+    patch:
+      description: Requires roles:edit. Built-in roles cannot be renamed.
+      operationId: RolesController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoleDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleDetailResponse"
+        "400": *a43
+        "401": *a44
+        "403": *a45
+        "404": *a46
+        "409": *a47
+        "422": *a48
+      security: *a49
+      summary: Rename / edit a role
+      tags: *a50
+    delete:
+      description: Requires roles:delete. Built-in roles → 409.
+      operationId: RolesController_remove_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Role deleted.
+        "400": *a43
+        "401": *a44
+        "403": *a45
+        "404": *a46
+        "409": *a47
+        "422": *a48
+      security: *a49
+      summary: Delete a custom role
+      tags: *a50
+  /v1/roles/{id}/permissions:
+    put:
+      description: Requires roles:edit.
+      operationId: RolesController_setPermissions_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetRolePermissionsDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleDetailResponse"
+        "400": *a43
+        "401": *a44
+        "403": *a45
+        "404": *a46
+        "409": *a47
+        "422": *a48
+      security: *a49
+      summary: Set a role’s module×action grants
+      tags: *a50
+  /v1/modules:
+    get:
+      description: Requires roles:view.
+      operationId: RbacCatalogueController_listModules_v1
       parameters: []
       responses:
         "200":
@@ -1039,7 +1052,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/UserSignatureResponse"
+                  $ref: "#/components/schemas/ModuleResponse"
         "400": &a51
           description: Bad Request — validation failed
           content:
@@ -1078,8 +1091,351 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a57
         - bearer: []
-      summary: List my saved signatures
+      summary: List system modules
       tags: &a58
+        - Roles
+  /v1/permissions:
+    get:
+      description: Requires roles:view.
+      operationId: RbacCatalogueController_listPermissions_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PermissionResponse"
+        "400": *a51
+        "401": *a52
+        "403": *a53
+        "404": *a54
+        "409": *a55
+        "422": *a56
+      security: *a57
+      summary: List all (module, action) permissions
+      tags: *a58
+  /v1/account/profile:
+    get:
+      description: Authenticated. Flags any change pending review.
+      operationId: AccountController_getProfile_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountProfileResponse"
+        "400": &a59
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a60
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a61
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a62
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a63
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a64
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a65
+        - bearer: []
+      summary: View my profile
+      tags: &a66
+        - Account
+  /v1/account/change-password:
+    post:
+      description: Authenticated. Verifies the current password.
+      operationId: AccountController_changePassword_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessResponse"
+        "400": *a59
+        "401": *a60
+        "403": *a61
+        "404": *a62
+        "409": *a63
+        "422": *a64
+      security: *a65
+      summary: Change my password
+      tags: *a66
+  /v1/account/theme:
+    patch:
+      description: Authenticated. Applies immediately, no review.
+      operationId: AccountController_setTheme_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetThemeDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThemeResponse"
+        "400": *a59
+        "401": *a60
+        "403": *a61
+        "404": *a62
+        "409": *a63
+        "422": *a64
+      security: *a65
+      summary: Set my theme preference
+      tags: *a66
+  /v1/account/profile-change-requests:
+    post:
+      description: Authenticated. Creates a PENDING request; the live profile is not
+        changed until approved.
+      operationId: AccountController_requestProfileChange_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileChangeRequestDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MyProfileRequestResponse"
+        "400": *a59
+        "401": *a60
+        "403": *a61
+        "404": *a62
+        "409": *a63
+        "422": *a64
+      security: *a65
+      summary: Request a profile HR-field change
+      tags: *a66
+    get:
+      description: Authenticated.
+      operationId: AccountController_listMyRequests_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MyProfileRequestResponse"
+        "400": *a59
+        "401": *a60
+        "403": *a61
+        "404": *a62
+        "409": *a63
+        "422": *a64
+      security: *a65
+      summary: List my profile-change requests
+      tags: *a66
+  /v1/profile-change-requests:
+    get:
+      description: Requires profile:approve. Scoped by routing (Field Manager / Admin
+        / Super Admin).
+      operationId: ProfileChangeReviewController_listQueue_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReviewRequestResponse"
+        "400": &a67
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a68
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a69
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a70
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a71
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a72
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a73
+        - bearer: []
+      summary: Review queue of pending profile changes
+      tags: &a74
+        - Account
+  /v1/profile-change-requests/{id}/approve:
+    post:
+      description: Requires profile:approve + routing authorization.
+      operationId: ProfileChangeReviewController_approve_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileChangeRequestResponse"
+        "400": *a67
+        "401": *a68
+        "403": *a69
+        "404": *a70
+        "409": *a71
+        "422": *a72
+      security: *a73
+      summary: Approve a profile change
+      tags: *a74
+  /v1/profile-change-requests/{id}/reject:
+    post:
+      description: Requires profile:approve + routing authorization.
+      operationId: ProfileChangeReviewController_reject_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileChangeRequestResponse"
+        "400": *a67
+        "401": *a68
+        "403": *a69
+        "404": *a70
+        "409": *a71
+        "422": *a72
+      security: *a73
+      summary: Reject a profile change
+      tags: *a74
+  /v1/account/signatures:
+    get:
+      description: Authenticated; own-scoped.
+      operationId: UserSignaturesController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserSignatureResponse"
+        "400": &a75
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a76
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a77
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a78
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a79
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a80
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a81
+        - bearer: []
+      summary: List my saved signatures
+      tags: &a82
         - Account
     post:
       description: Authenticated; own-scoped. The first saved signature becomes the default.
@@ -1110,15 +1466,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserSignatureResponse"
-        "400": *a51
-        "401": *a52
-        "403": *a53
-        "404": *a54
-        "409": *a55
-        "422": *a56
-      security: *a57
+        "400": *a75
+        "401": *a76
+        "403": *a77
+        "404": *a78
+        "409": *a79
+        "422": *a80
+      security: *a81
       summary: Save a reusable signature (image)
-      tags: *a58
+      tags: *a82
   /v1/account/signatures/{id}/default:
     patch:
       description: Authenticated; own-scoped.
@@ -1136,15 +1492,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserSignatureResponse"
-        "400": *a51
-        "401": *a52
-        "403": *a53
-        "404": *a54
-        "409": *a55
-        "422": *a56
-      security: *a57
+        "400": *a75
+        "401": *a76
+        "403": *a77
+        "404": *a78
+        "409": *a79
+        "422": *a80
+      security: *a81
       summary: Make a signature my default
-      tags: *a58
+      tags: *a82
   /v1/account/signatures/{id}:
     delete:
       description: Authenticated; own-scoped.
@@ -1162,15 +1518,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
-        "400": *a51
-        "401": *a52
-        "403": *a53
-        "404": *a54
-        "409": *a55
-        "422": *a56
-      security: *a57
+        "400": *a75
+        "401": *a76
+        "403": *a77
+        "404": *a78
+        "409": *a79
+        "422": *a80
+      security: *a81
       summary: Delete a saved signature
-      tags: *a58
+      tags: *a82
   /v1/account/signatures/{id}/file-url:
     get:
       description: Authenticated; own-scoped. Returns a short-TTL signed URL.
@@ -1188,15 +1544,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FileUrlResponse"
-        "400": *a51
-        "401": *a52
-        "403": *a53
-        "404": *a54
-        "409": *a55
-        "422": *a56
-      security: *a57
+        "400": *a75
+        "401": *a76
+        "403": *a77
+        "404": *a78
+        "409": *a79
+        "422": *a80
+      security: *a81
       summary: Get an access-controlled URL for my signature image
-      tags: *a58
+      tags: *a82
   /v1/clients:
     get:
       description: Requires clients:view. Paginated (page/limit/sort/search) + ?status
@@ -1251,46 +1607,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClientPageResponse"
-        "400": &a59
+        "400": &a83
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a60
+        "401": &a84
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a61
+        "403": &a85
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a62
+        "404": &a86
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a63
+        "409": &a87
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a64
+        "422": &a88
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a65
+      security: &a89
         - bearer: []
       summary: List clients
-      tags: &a66
+      tags: &a90
         - Clients & Products
     post:
       description: Requires clients:create. Unique code → 409.
@@ -1309,15 +1665,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClientResponse"
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: Create a client
-      tags: *a66
+      tags: *a90
   /v1/clients/{id}:
     get:
       description: Requires clients:view.
@@ -1335,15 +1691,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClientResponse"
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: Get a client
-      tags: *a66
+      tags: *a90
     patch:
       description: Requires clients:edit. is_active=false soft-deactivates.
       operationId: ClientsController_update_v1
@@ -1366,15 +1722,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClientResponse"
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: Edit / deactivate a client
-      tags: *a66
+      tags: *a90
   /v1/clients/{id}/products:
     get:
       description: Requires clients:view.
@@ -1404,15 +1760,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ProductResponse"
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: List a client's products
-      tags: *a66
+      tags: *a90
     post:
       description: "Requires clients:edit. An optional initial_billing_rate
         ADDITIONALLY requires billing_rates:create (the rate is a billing-stream
@@ -1437,15 +1793,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductResponse"
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: Create a per-client product
-      tags: *a66
+      tags: *a90
   /v1/clients/{id}/billing-rates:
     get:
       description: Requires billing_rates:view (Super Admin only by default —
@@ -1500,15 +1856,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/BillingRateResponse"
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: List a client's billing rates (current + pending)
-      tags: *a66
+      tags: *a90
     post:
       description: Requires billing_rates:create. Supersedes the scope’s pending rate;
         back-dating → 422.
@@ -1532,15 +1888,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingRateResponse"
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: Add an effective-dated billing rate
-      tags: *a66
+      tags: *a90
   /v1/clients/{id}/billing-rates/{rateId}:
     patch:
       description: Requires billing_rates:edit. Only a pending (not-yet-effective)
@@ -1571,15 +1927,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingRateResponse"
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: Edit a PENDING billing rate
-      tags: *a66
+      tags: *a90
     delete:
       description: Requires billing_rates:delete. Only a pending rate can be deleted;
         a current/past rate is immutable (→ 422).
@@ -1598,15 +1954,15 @@ paths:
       responses:
         "204":
           description: ""
-        "400": *a59
-        "401": *a60
-        "403": *a61
-        "404": *a62
-        "409": *a63
-        "422": *a64
-      security: *a65
+        "400": *a83
+        "401": *a84
+        "403": *a85
+        "404": *a86
+        "409": *a87
+        "422": *a88
+      security: *a89
       summary: Delete a PENDING billing rate
-      tags: *a66
+      tags: *a90
   /v1/products:
     get:
       description: Requires clients:view. Paginated (page/limit/sort/search) + filters
@@ -1673,46 +2029,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductPageResponse"
-        "400": &a67
+        "400": &a91
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a68
+        "401": &a92
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a69
+        "403": &a93
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a70
+        "404": &a94
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a71
+        "409": &a95
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a72
+        "422": &a96
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a73
+      security: &a97
         - bearer: []
       summary: List products (cross-client)
-      tags: &a74
+      tags: &a98
         - Clients & Products
   /v1/products/{id}:
     patch:
@@ -1738,15 +2094,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProductResponse"
-        "400": *a67
-        "401": *a68
-        "403": *a69
-        "404": *a70
-        "409": *a71
-        "422": *a72
-      security: *a73
+        "400": *a91
+        "401": *a92
+        "403": *a93
+        "404": *a94
+        "409": *a95
+        "422": *a96
+      security: *a97
       summary: Edit / deactivate a product
-      tags: *a74
+      tags: *a98
   /v1/reps:
     get:
       description: Requires hrm:view. Paginated (page/limit/sort/search) +
@@ -1807,46 +2163,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepPageResponse"
-        "400": &a75
+        "400": &a99
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a76
+        "401": &a100
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a77
+        "403": &a101
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a78
+        "404": &a102
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a79
+        "409": &a103
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a80
+        "422": &a104
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a81
+      security: &a105
         - bearer: []
       summary: List reps
-      tags: &a82
+      tags: &a106
         - HRM / Reps
     post:
       description: Requires hrm:create. rep_code never reused → 409.
@@ -1865,15 +2221,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: Create a rep
-      tags: *a82
+      tags: *a106
   /v1/reps/bulk-assign-manager:
     post:
       description: Requires hrm:edit. Reassigns the roster the manager-scoped views
@@ -1893,15 +2249,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: Assign / reassign reps to a field manager (bulk)
-      tags: *a82
+      tags: *a106
   /v1/reps/{id}:
     get:
       description: Requires hrm:view. payment_details redacted unless hrm:edit.
@@ -1919,15 +2275,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: Get a rep
-      tags: *a82
+      tags: *a106
     patch:
       description: Requires hrm:edit. status=terminated requires termination_date.
         rep_code immutable.
@@ -1951,15 +2307,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: Edit / set field manager / terminate a rep
-      tags: *a82
+      tags: *a106
   /v1/reps/{id}/documents:
     get:
       description: Requires hrm:view. file_url shown only with hrm:edit.
@@ -1979,15 +2335,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/RepDocumentResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: List a rep's documents
-      tags: *a82
+      tags: *a106
     post:
       description: "Requires hrm:edit. Multipart: a PDF/image file + doc_type. Stored
         to object storage."
@@ -2017,15 +2373,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepDocumentResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: Attach a document to a rep (upload)
-      tags: *a82
+      tags: *a106
   /v1/reps/{id}/documents/{docId}/file-url:
     get:
       description: Requires hrm:edit (identity docs are sensitive). Returns a
@@ -2049,15 +2405,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FileUrlResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: Get an access-controlled URL for a rep document
-      tags: *a82
+      tags: *a106
   /v1/reps/{id}/equipment:
     get:
       description: Requires hrm:view.
@@ -2077,15 +2433,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/RepEquipmentResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: List a rep's equipment
-      tags: *a82
+      tags: *a106
     post:
       description: Requires hrm:edit. Deposit is exact Decimal.
       operationId: RepsController_assignEquipment_v1
@@ -2108,15 +2464,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepEquipmentResponse"
-        "400": *a75
-        "401": *a76
-        "403": *a77
-        "404": *a78
-        "409": *a79
-        "422": *a80
-      security: *a81
+        "400": *a99
+        "401": *a100
+        "403": *a101
+        "404": *a102
+        "409": *a103
+        "422": *a104
+      security: *a105
       summary: Assign equipment to a rep
-      tags: *a82
+      tags: *a106
   /v1/equipment/{id}:
     patch:
       description: Requires hrm:edit. Transition to returned (sets returned_date) or
@@ -2196,692 +2552,6 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/TierConfigResponse"
-        "400": &a83
-          description: Bad Request — validation failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a84
-          description: Unauthorized — missing/invalid token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a85
-          description: Forbidden — RBAC denied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a86
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a87
-          description: Conflict — invalid state transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a88
-          description: Unprocessable Entity — domain rule violated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a89
-        - bearer: []
-      summary: Tier schedules (current + pending)
-      tags: &a90
-        - Commission Config
-    post:
-      description: Requires commission:edit. Supersedes the pending schedule;
-        back-dating → 422.
-      operationId: CommissionController_createTiers_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateTierScheduleDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TierConfigResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Create a new effective-dated tier schedule
-      tags: *a90
-  /v1/commission/tiers/{id}:
-    patch:
-      description: Requires commission:edit. Only a pending schedule can be edited;
-        current/past → 422 (supersede).
-      operationId: CommissionController_updateTiers_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateTierScheduleDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TierConfigResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Edit a PENDING tier schedule
-      tags: *a90
-    delete:
-      description: Requires commission:edit. Only a pending schedule can be deleted;
-        current/past → 422.
-      operationId: CommissionController_removeTiers_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "204":
-          description: ""
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Delete a PENDING tier schedule
-      tags: *a90
-  /v1/commission/flat-rates:
-    get:
-      description: Requires commission:view.
-      operationId: CommissionController_listFlatRates_v1
-      parameters:
-        - name: status
-          required: false
-          in: query
-          schema:
-            default: all
-            type: string
-            enum:
-              - past
-              - current
-              - pending
-              - all
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/FlatRateResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Flat rates per product type (current + pending)
-      tags: *a90
-    post:
-      description: Requires commission:edit. greenfield_internet / tv / home_phone
-        only (internet is tiered).
-      operationId: CommissionController_createFlatRate_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateFlatRateDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FlatRateResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Set an effective-dated flat rate
-      tags: *a90
-  /v1/commission/flat-rates/{id}:
-    patch:
-      description: Requires commission:edit. Only a pending rate can be edited;
-        current/past → 422 (supersede).
-      operationId: CommissionController_updateFlatRate_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateFlatRateDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/FlatRateResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Edit a PENDING flat rate
-      tags: *a90
-    delete:
-      description: Requires commission:edit. Only a pending rate can be deleted;
-        current/past → 422.
-      operationId: CommissionController_removeFlatRate_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "204":
-          description: ""
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Delete a PENDING flat rate
-      tags: *a90
-  /v1/commission/holdback-config:
-    get:
-      description: Requires commission:view.
-      operationId: CommissionController_listHoldbackConfig_v1
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/HoldbackConfigResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Advance/holdback split (current + pending)
-      tags: *a90
-    patch:
-      description: Requires commission:edit. advance_pct + holdback_pct must equal 1;
-        back-dating → 422.
-      operationId: CommissionController_setHoldbackConfig_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetHoldbackConfigDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HoldbackConfigResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Set an effective-dated advance/holdback split
-      tags: *a90
-  /v1/commission/holdback-config/{id}:
-    patch:
-      description: Requires commission:edit. Only a pending split can be edited;
-        current/past → 422. Pair must = 1.
-      operationId: CommissionController_updateHoldbackConfig_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateHoldbackConfigDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HoldbackConfigResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Edit a PENDING advance/holdback split
-      tags: *a90
-    delete:
-      description: Requires commission:edit. Only a pending split can be deleted;
-        current/past → 422.
-      operationId: CommissionController_removeHoldbackConfig_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "204":
-          description: ""
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Delete a PENDING advance/holdback split
-      tags: *a90
-  /v1/commission/holdback-release-setting:
-    get:
-      description: Requires commission:view. PROPOSED/pending Redwave confirmation;
-        stored only.
-      operationId: CommissionController_getReleaseSetting_v1
-      parameters: []
-      responses:
-        "200":
-          description: The current sticky setting, or null if none has been set.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HoldbackReleaseSettingResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Holdback-release setting (current sticky) — PROPOSED (SRS §17)
-      tags: *a90
-    patch:
-      description: "Requires commission:edit. PROPOSED/pending Redwave confirmation:
-        release_rule is stored only; its interpretation (which cycle the 30%
-        releases into) is deferred to the Pay Run module."
-      operationId: CommissionController_setReleaseSetting_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetHoldbackReleaseSettingDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HoldbackReleaseSettingResponse"
-        "400": *a83
-        "401": *a84
-        "403": *a85
-        "404": *a86
-        "409": *a87
-        "422": *a88
-      security: *a89
-      summary: Set the holdback-release setting (bulk, sticky) — PROPOSED (SRS §17)
-      tags: *a90
-  /v1/incentives:
-    get:
-      description: Requires commission:view. ?status filter.
-      operationId: IncentivesController_list_v1
-      parameters:
-        - name: status
-          required: false
-          in: query
-          schema:
-            default: all
-            type: string
-            enum:
-              - active
-              - ended
-              - all
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/IncentiveResponse"
-        "400": &a91
-          description: Bad Request — validation failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a92
-          description: Unauthorized — missing/invalid token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a93
-          description: Forbidden — RBAC denied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a94
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a95
-          description: Conflict — invalid state transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a96
-          description: Unprocessable Entity — domain rule violated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a97
-        - bearer: []
-      summary: List incentives
-      tags: &a98
-        - Commission Config
-    post:
-      description: "Requires commission:edit. Both modes are applied by the engine
-        (threshold-relative): per_activation (bonus beyond target_count; null/0
-        = every activation) and one_time (a single bonus at target_count)."
-      operationId: IncentivesController_create_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateIncentiveDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IncentiveResponse"
-        "400": *a91
-        "401": *a92
-        "403": *a93
-        "404": *a94
-        "409": *a95
-        "422": *a96
-      security: *a97
-      summary: Create an incentive/spiff
-      tags: *a98
-  /v1/incentives/{id}:
-    patch:
-      description: Requires commission:edit.
-      operationId: IncentivesController_update_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateIncentiveDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/IncentiveResponse"
-        "400": *a91
-        "401": *a92
-        "403": *a93
-        "404": *a94
-        "409": *a95
-        "422": *a96
-      security: *a97
-      summary: Edit / end an incentive
-      tags: *a98
-    delete:
-      description: Requires commission:edit. Only an incentive never applied to a paid
-        item can be deleted; a referenced incentive is part of a frozen snapshot
-        — end it instead (→ 422).
-      operationId: IncentivesController_remove_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "204":
-          description: ""
-        "400": *a91
-        "401": *a92
-        "403": *a93
-        "404": *a94
-        "409": *a95
-        "422": *a96
-      security: *a97
-      summary: Delete an unused incentive
-      tags: *a98
-  /v1/product-types:
-    get:
-      description: Authenticated reference read. ?status=active filters to active types.
-      operationId: ProductTypesController_list_v1
-      parameters:
-        - name: status
-          required: false
-          in: query
-          schema:
-            default: all
-            type: string
-            enum:
-              - active
-              - all
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ProductTypeResponse"
-        "400": &a99
-          description: Bad Request — validation failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a100
-          description: Unauthorized — missing/invalid token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a101
-          description: Forbidden — RBAC denied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a102
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a103
-          description: Conflict — invalid state transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a104
-          description: Unprocessable Entity — domain rule violated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a105
-        - bearer: []
-      summary: List product types (catalogue)
-      tags: &a106
-        - Commission Config
-    post:
-      description: Requires commission:edit. behaviour is forced standard_addon — a
-        new type can never be tiered/greenfield (#5/#9). May carry an inline
-        commission flat rate (written to the commission stream).
-      operationId: ProductTypesController_create_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateProductTypeDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductTypeResponse"
-        "400": *a99
-        "401": *a100
-        "403": *a101
-        "404": *a102
-        "409": *a103
-        "422": *a104
-      security: *a105
-      summary: Add a product type (always a standard add-on)
-      tags: *a106
-  /v1/product-types/{key}:
-    patch:
-      description: Requires commission:edit. key + behaviour are immutable; system
-        types cannot be deactivated.
-      operationId: ProductTypesController_update_v1
-      parameters:
-        - name: key
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateProductTypeDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProductTypeResponse"
-        "400": *a99
-        "401": *a100
-        "403": *a101
-        "404": *a102
-        "409": *a103
-        "422": *a104
-      security: *a105
-      summary: Relabel / activate / deactivate a product type
-      tags: *a106
-  /v1/sales:
-    post:
-      description: Requires sales:create. Server generates the Sale ID; item snapshots
-        stay NULL.
-      operationId: SalesController_create_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateSaleDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SaleResponse"
         "400": &a107
           description: Bad Request — validation failed
           content:
@@ -2920,8 +2590,694 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a113
         - bearer: []
-      summary: Enter a sale
+      summary: Tier schedules (current + pending)
       tags: &a114
+        - Commission Config
+    post:
+      description: Requires commission:edit. Supersedes the pending schedule;
+        back-dating → 422.
+      operationId: CommissionController_createTiers_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTierScheduleDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TierConfigResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Create a new effective-dated tier schedule
+      tags: *a114
+  /v1/commission/tiers/{id}:
+    patch:
+      description: Requires commission:edit. Only a pending schedule can be edited;
+        current/past → 422 (supersede).
+      operationId: CommissionController_updateTiers_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTierScheduleDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TierConfigResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Edit a PENDING tier schedule
+      tags: *a114
+    delete:
+      description: Requires commission:edit. Only a pending schedule can be deleted;
+        current/past → 422.
+      operationId: CommissionController_removeTiers_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "204":
+          description: ""
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Delete a PENDING tier schedule
+      tags: *a114
+  /v1/commission/flat-rates:
+    get:
+      description: Requires commission:view.
+      operationId: CommissionController_listFlatRates_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: all
+            type: string
+            enum:
+              - past
+              - current
+              - pending
+              - all
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FlatRateResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Flat rates per product type (current + pending)
+      tags: *a114
+    post:
+      description: Requires commission:edit. greenfield_internet / tv / home_phone
+        only (internet is tiered).
+      operationId: CommissionController_createFlatRate_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFlatRateDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlatRateResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Set an effective-dated flat rate
+      tags: *a114
+  /v1/commission/flat-rates/{id}:
+    patch:
+      description: Requires commission:edit. Only a pending rate can be edited;
+        current/past → 422 (supersede).
+      operationId: CommissionController_updateFlatRate_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateFlatRateDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlatRateResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Edit a PENDING flat rate
+      tags: *a114
+    delete:
+      description: Requires commission:edit. Only a pending rate can be deleted;
+        current/past → 422.
+      operationId: CommissionController_removeFlatRate_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "204":
+          description: ""
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Delete a PENDING flat rate
+      tags: *a114
+  /v1/commission/holdback-config:
+    get:
+      description: Requires commission:view.
+      operationId: CommissionController_listHoldbackConfig_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HoldbackConfigResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Advance/holdback split (current + pending)
+      tags: *a114
+    patch:
+      description: Requires commission:edit. advance_pct + holdback_pct must equal 1;
+        back-dating → 422.
+      operationId: CommissionController_setHoldbackConfig_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetHoldbackConfigDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HoldbackConfigResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Set an effective-dated advance/holdback split
+      tags: *a114
+  /v1/commission/holdback-config/{id}:
+    patch:
+      description: Requires commission:edit. Only a pending split can be edited;
+        current/past → 422. Pair must = 1.
+      operationId: CommissionController_updateHoldbackConfig_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateHoldbackConfigDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HoldbackConfigResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Edit a PENDING advance/holdback split
+      tags: *a114
+    delete:
+      description: Requires commission:edit. Only a pending split can be deleted;
+        current/past → 422.
+      operationId: CommissionController_removeHoldbackConfig_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "204":
+          description: ""
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Delete a PENDING advance/holdback split
+      tags: *a114
+  /v1/commission/holdback-release-setting:
+    get:
+      description: Requires commission:view. PROPOSED/pending Redwave confirmation;
+        stored only.
+      operationId: CommissionController_getReleaseSetting_v1
+      parameters: []
+      responses:
+        "200":
+          description: The current sticky setting, or null if none has been set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HoldbackReleaseSettingResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Holdback-release setting (current sticky) — PROPOSED (SRS §17)
+      tags: *a114
+    patch:
+      description: "Requires commission:edit. PROPOSED/pending Redwave confirmation:
+        release_rule is stored only; its interpretation (which cycle the 30%
+        releases into) is deferred to the Pay Run module."
+      operationId: CommissionController_setReleaseSetting_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetHoldbackReleaseSettingDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HoldbackReleaseSettingResponse"
+        "400": *a107
+        "401": *a108
+        "403": *a109
+        "404": *a110
+        "409": *a111
+        "422": *a112
+      security: *a113
+      summary: Set the holdback-release setting (bulk, sticky) — PROPOSED (SRS §17)
+      tags: *a114
+  /v1/incentives:
+    get:
+      description: Requires commission:view. ?status filter.
+      operationId: IncentivesController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: all
+            type: string
+            enum:
+              - active
+              - ended
+              - all
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IncentiveResponse"
+        "400": &a115
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a116
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a117
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a118
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a119
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a120
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a121
+        - bearer: []
+      summary: List incentives
+      tags: &a122
+        - Commission Config
+    post:
+      description: "Requires commission:edit. Both modes are applied by the engine
+        (threshold-relative): per_activation (bonus beyond target_count; null/0
+        = every activation) and one_time (a single bonus at target_count)."
+      operationId: IncentivesController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateIncentiveDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncentiveResponse"
+        "400": *a115
+        "401": *a116
+        "403": *a117
+        "404": *a118
+        "409": *a119
+        "422": *a120
+      security: *a121
+      summary: Create an incentive/spiff
+      tags: *a122
+  /v1/incentives/{id}:
+    patch:
+      description: Requires commission:edit.
+      operationId: IncentivesController_update_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateIncentiveDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IncentiveResponse"
+        "400": *a115
+        "401": *a116
+        "403": *a117
+        "404": *a118
+        "409": *a119
+        "422": *a120
+      security: *a121
+      summary: Edit / end an incentive
+      tags: *a122
+    delete:
+      description: Requires commission:edit. Only an incentive never applied to a paid
+        item can be deleted; a referenced incentive is part of a frozen snapshot
+        — end it instead (→ 422).
+      operationId: IncentivesController_remove_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "204":
+          description: ""
+        "400": *a115
+        "401": *a116
+        "403": *a117
+        "404": *a118
+        "409": *a119
+        "422": *a120
+      security: *a121
+      summary: Delete an unused incentive
+      tags: *a122
+  /v1/product-types:
+    get:
+      description: Authenticated reference read. ?status=active filters to active types.
+      operationId: ProductTypesController_list_v1
+      parameters:
+        - name: status
+          required: false
+          in: query
+          schema:
+            default: all
+            type: string
+            enum:
+              - active
+              - all
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProductTypeResponse"
+        "400": &a123
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a124
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a125
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a126
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a127
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a128
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a129
+        - bearer: []
+      summary: List product types (catalogue)
+      tags: &a130
+        - Commission Config
+    post:
+      description: Requires commission:edit. behaviour is forced standard_addon — a
+        new type can never be tiered/greenfield (#5/#9). May carry an inline
+        commission flat rate (written to the commission stream).
+      operationId: ProductTypesController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProductTypeDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductTypeResponse"
+        "400": *a123
+        "401": *a124
+        "403": *a125
+        "404": *a126
+        "409": *a127
+        "422": *a128
+      security: *a129
+      summary: Add a product type (always a standard add-on)
+      tags: *a130
+  /v1/product-types/{key}:
+    patch:
+      description: Requires commission:edit. key + behaviour are immutable; system
+        types cannot be deactivated.
+      operationId: ProductTypesController_update_v1
+      parameters:
+        - name: key
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProductTypeDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductTypeResponse"
+        "400": *a123
+        "401": *a124
+        "403": *a125
+        "404": *a126
+        "409": *a127
+        "422": *a128
+      security: *a129
+      summary: Relabel / activate / deactivate a product type
+      tags: *a130
+  /v1/sales:
+    post:
+      description: Requires sales:create. Server generates the Sale ID; item snapshots
+        stay NULL.
+      operationId: SalesController_create_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSaleDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaleResponse"
+        "400": &a131
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a132
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a133
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a134
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a135
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a136
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a137
+        - bearer: []
+      summary: Enter a sale
+      tags: &a138
         - Sales & Validation
     get:
       description: Requires sales:view. Paginated (page/limit/sort/search) + filters
@@ -3004,15 +3360,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SalePageResponse"
-        "400": *a107
-        "401": *a108
-        "403": *a109
-        "404": *a110
-        "409": *a111
-        "422": *a112
-      security: *a113
+        "400": *a131
+        "401": *a132
+        "403": *a133
+        "404": *a134
+        "409": *a135
+        "422": *a136
+      security: *a137
       summary: List sales
-      tags: *a114
+      tags: *a138
   /v1/sales/bulk-validate:
     post:
       description: Requires sales:approve. NOT a file upload — client-report ingestion
@@ -3032,15 +3388,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BulkValidateResultResponse"
-        "400": *a107
-        "401": *a108
-        "403": *a109
-        "404": *a110
-        "409": *a111
-        "422": *a112
-      security: *a113
+        "400": *a131
+        "401": *a132
+        "403": *a133
+        "404": *a134
+        "409": *a135
+        "422": *a136
+      security: *a137
       summary: Batch-validate selected sales (queue bulk-select)
-      tags: *a114
+      tags: *a138
   /v1/sales/{id}:
     get:
       description: Requires sales:view. Includes items + derived pay period.
@@ -3058,15 +3414,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SaleResponse"
-        "400": *a107
-        "401": *a108
-        "403": *a109
-        "404": *a110
-        "409": *a111
-        "422": *a112
-      security: *a113
+        "400": *a131
+        "401": *a132
+        "403": *a133
+        "404": *a134
+        "409": *a135
+        "422": *a136
+      security: *a137
       summary: Get a sale
-      tags: *a114
+      tags: *a138
     patch:
       description: Requires sales:edit. Only Entered sales; client/sale_date/mpu_id
         are immutable.
@@ -3090,15 +3446,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SaleResponse"
-        "400": *a107
-        "401": *a108
-        "403": *a109
-        "404": *a110
-        "409": *a111
-        "422": *a112
-      security: *a113
+        "400": *a131
+        "401": *a132
+        "403": *a133
+        "404": *a134
+        "409": *a135
+        "422": *a136
+      security: *a137
       summary: Edit an entered sale
-      tags: *a114
+      tags: *a138
     delete:
       description: Requires sales:delete. entered|validated → status=deleted (row
         preserved); rejected once paid.
@@ -3116,15 +3472,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DeletedSaleResponse"
-        "400": *a107
-        "401": *a108
-        "403": *a109
-        "404": *a110
-        "409": *a111
-        "422": *a112
-      security: *a113
+        "400": *a131
+        "401": *a132
+        "403": *a133
+        "404": *a134
+        "409": *a135
+        "422": *a136
+      security: *a137
       summary: Delete a pre-payout sale (soft)
-      tags: *a114
+      tags: *a138
   /v1/sales/{id}/validate:
     post:
       description: Requires sales:approve. Approval gate; never changes the pay
@@ -3149,15 +3505,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SaleResponse"
-        "400": *a107
-        "401": *a108
-        "403": *a109
-        "404": *a110
-        "409": *a111
-        "422": *a112
-      security: *a113
+        "400": *a131
+        "401": *a132
+        "403": *a133
+        "404": *a134
+        "409": *a135
+        "422": *a136
+      security: *a137
       summary: Validate a sale (entered → validated)
-      tags: *a114
+      tags: *a138
   /v1/sales/{id}/greenfield:
     post:
       description: Requires sales:approve. PROPOSED two-step; recomputes
@@ -3182,15 +3538,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SaleResponse"
-        "400": *a107
-        "401": *a108
-        "403": *a109
-        "404": *a110
-        "409": *a111
-        "422": *a112
-      security: *a113
+        "400": *a131
+        "401": *a132
+        "403": *a133
+        "404": *a134
+        "409": *a135
+        "422": *a136
+      security: *a137
       summary: Confirm/clear greenfield (PROPOSED — SRS §17)
-      tags: *a114
+      tags: *a138
   /v1/clawbacks:
     get:
       description: Requires clawback:view. Scoped; filters status/rep_id/sale_id.
@@ -3223,46 +3579,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ClawbackResponse"
-        "400": &a115
+        "400": &a139
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a116
+        "401": &a140
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a117
+        "403": &a141
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a118
+        "404": &a142
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a119
+        "409": &a143
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a120
+        "422": &a144
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a121
+      security: &a145
         - bearer: []
       summary: List clawbacks
-      tags: &a122
+      tags: &a146
         - Clawback
     post:
       description: Requires clawback:create. Targets a PAID sale_item; amount defaults
@@ -3283,15 +3639,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClawbackResponse"
-        "400": *a115
-        "401": *a116
-        "403": *a117
-        "404": *a118
-        "409": *a119
-        "422": *a120
-      security: *a121
+        "400": *a139
+        "401": *a140
+        "403": *a141
+        "404": *a142
+        "409": *a143
+        "422": *a144
+      security: *a145
       summary: Enter a clawback
-      tags: *a122
+      tags: *a146
   /v1/clawbacks/{id}:
     get:
       description: Requires clawback:view (scoped).
@@ -3309,15 +3665,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClawbackResponse"
-        "400": *a115
-        "401": *a116
-        "403": *a117
-        "404": *a118
-        "409": *a119
-        "422": *a120
-      security: *a121
+        "400": *a139
+        "401": *a140
+        "403": *a141
+        "404": *a142
+        "409": *a143
+        "422": *a144
+      security: *a145
       summary: Get a clawback
-      tags: *a122
+      tags: *a146
   /v1/expense-items:
     post:
       description: Requires expenses:create. Item-first — no report wrapper. Any user
@@ -3342,46 +3698,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ExpenseItemResponse"
-        "400": &a123
+        "400": &a147
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a124
+        "401": &a148
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a125
+        "403": &a149
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a126
+        "404": &a150
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a127
+        "409": &a151
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a128
+        "422": &a152
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a129
+      security: &a153
         - bearer: []
       summary: Create one or several expense items
-      tags: &a130
+      tags: &a154
         - Expenses
     get:
       description: Requires expenses:view. Paginated + scoped (own/roster/all);
@@ -3483,15 +3839,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExpenseItemPageResponse"
-        "400": *a123
-        "401": *a124
-        "403": *a125
-        "404": *a126
-        "409": *a127
-        "422": *a128
-      security: *a129
+        "400": *a147
+        "401": *a148
+        "403": *a149
+        "404": *a150
+        "409": *a151
+        "422": *a152
+      security: *a153
       summary: List expense items
-      tags: *a130
+      tags: *a154
   /v1/expense-items/bulk-review:
     post:
       description: Requires expenses:approve. Applies one decision (approve | reject |
@@ -3512,15 +3868,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BulkReviewResultResponse"
-        "400": *a123
-        "401": *a124
-        "403": *a125
-        "404": *a126
-        "409": *a127
-        "422": *a128
-      security: *a129
+        "400": *a147
+        "401": *a148
+        "403": *a149
+        "404": *a150
+        "409": *a151
+        "422": *a152
+      security: *a153
       summary: Bulk review expense items
-      tags: *a130
+      tags: *a154
   /v1/expense-items/{id}:
     get:
       description: Requires expenses:view (scoped).
@@ -3538,15 +3894,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExpenseItemResponse"
-        "400": *a123
-        "401": *a124
-        "403": *a125
-        "404": *a126
-        "409": *a127
-        "422": *a128
-      security: *a129
+        "400": *a147
+        "401": *a148
+        "403": *a149
+        "404": *a150
+        "409": *a151
+        "422": *a152
+      security: *a153
       summary: Get an expense item
-      tags: *a130
+      tags: *a154
     patch:
       description: Requires expenses:edit. Editable pre-approval; once approved, only
         a Super Admin may edit (EXP-007). The full item content is re-submitted
@@ -3571,15 +3927,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExpenseItemResponse"
-        "400": *a123
-        "401": *a124
-        "403": *a125
-        "404": *a126
-        "409": *a127
-        "422": *a128
-      security: *a129
+        "400": *a147
+        "401": *a148
+        "403": *a149
+        "404": *a150
+        "409": *a151
+        "422": *a152
+      security: *a153
       summary: Edit an expense item
-      tags: *a130
+      tags: *a154
     delete:
       description: Requires expenses:delete. Only a not-yet-approved item may be
         removed (scoped).
@@ -3593,15 +3949,15 @@ paths:
       responses:
         "200":
           description: Deleted.
-        "400": *a123
-        "401": *a124
-        "403": *a125
-        "404": *a126
-        "409": *a127
-        "422": *a128
-      security: *a129
+        "400": *a147
+        "401": *a148
+        "403": *a149
+        "404": *a150
+        "409": *a151
+        "422": *a152
+      security: *a153
       summary: Delete an expense item
-      tags: *a130
+      tags: *a154
   /v1/expense-items/{id}/review:
     post:
       description: Requires expenses:approve. decision = approve | reject | send_back.
@@ -3625,15 +3981,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExpenseItemResponse"
-        "400": *a123
-        "401": *a124
-        "403": *a125
-        "404": *a126
-        "409": *a127
-        "422": *a128
-      security: *a129
+        "400": *a147
+        "401": *a148
+        "403": *a149
+        "404": *a150
+        "409": *a151
+        "422": *a152
+      security: *a153
       summary: Review an expense item
-      tags: *a130
+      tags: *a154
   /v1/expense-field-configs:
     get:
       description: Requires expenses:view.
@@ -3648,46 +4004,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/FieldConfigResponse"
-        "400": &a131
+        "400": &a155
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a132
+        "401": &a156
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a133
+        "403": &a157
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a134
+        "404": &a158
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a135
+        "409": &a159
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a136
+        "422": &a160
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a137
+      security: &a161
         - bearer: []
       summary: List expense category configs
-      tags: &a138
+      tags: &a162
         - Expenses
     post:
       description: Requires expenses:edit. Sets label, requires_receipt, is_active for
@@ -3707,15 +4063,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FieldConfigResponse"
-        "400": *a131
-        "401": *a132
-        "403": *a133
-        "404": *a134
-        "409": *a135
-        "422": *a136
-      security: *a137
+        "400": *a155
+        "401": *a156
+        "403": *a157
+        "404": *a158
+        "409": *a159
+        "422": *a160
+      security: *a161
       summary: Add / configure an expense category
-      tags: *a138
+      tags: *a162
   /v1/expense-exports:
     get:
       description: Requires expenses:view.
@@ -3730,46 +4086,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ExpenseExportResponse"
-        "400": &a139
+        "400": &a163
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a140
+        "401": &a164
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a141
+        "403": &a165
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a142
+        "404": &a166
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a143
+        "409": &a167
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a144
+        "422": &a168
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a145
+      security: &a169
         - bearer: []
       summary: List expense exports
-      tags: &a146
+      tags: &a170
         - Expenses
     post:
       description: Requires expenses:export. Records the request with a stubbed
@@ -3789,15 +4145,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExpenseExportResponse"
-        "400": *a139
-        "401": *a140
-        "403": *a141
-        "404": *a142
-        "409": *a143
-        "422": *a144
-      security: *a145
+        "400": *a163
+        "401": *a164
+        "403": *a165
+        "404": *a166
+        "409": *a167
+        "422": *a168
+      security: *a169
       summary: Generate an expense export
-      tags: *a146
+      tags: *a170
   /v1/expense-receipts:
     post:
       description: Requires expenses:create. Uploads the file to object storage and
@@ -3933,46 +4289,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PayRunSummaryResponse"
-        "400": &a147
+        "400": &a171
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a148
+        "401": &a172
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a149
+        "403": &a173
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a150
+        "404": &a174
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a151
+        "409": &a175
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a152
+        "422": &a176
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a153
+      security: &a177
         - bearer: []
       summary: List pay runs
-      tags: &a154
+      tags: &a178
         - Pay Run & Holdback
     post:
       description: Requires payrun:create. Computes preview lines via the engine;
@@ -3992,15 +4348,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PayRunResponse"
-        "400": *a147
-        "401": *a148
-        "403": *a149
-        "404": *a150
-        "409": *a151
-        "422": *a152
-      security: *a153
+        "400": *a171
+        "401": *a172
+        "403": *a173
+        "404": *a174
+        "409": *a175
+        "422": *a176
+      security: *a177
       summary: Create / refresh a DRAFT pay run
-      tags: *a154
+      tags: *a178
   /v1/pay-runs/{id}:
     get:
       description: Requires payrun:view (scoped lines).
@@ -4018,15 +4374,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PayRunResponse"
-        "400": *a147
-        "401": *a148
-        "403": *a149
-        "404": *a150
-        "409": *a151
-        "422": *a152
-      security: *a153
+        "400": *a171
+        "401": *a172
+        "403": *a173
+        "404": *a174
+        "409": *a175
+        "422": *a176
+      security: *a177
       summary: Get a pay run + lines
-      tags: *a154
+      tags: *a178
   /v1/pay-runs/{id}/lines:
     get:
       description: Requires payrun:view (scoped).
@@ -4046,15 +4402,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/PayRunLineResponse"
-        "400": *a147
-        "401": *a148
-        "403": *a149
-        "404": *a150
-        "409": *a151
-        "422": *a152
-      security: *a153
+        "400": *a171
+        "401": *a172
+        "403": *a173
+        "404": *a174
+        "409": *a175
+        "422": *a176
+      security: *a177
       summary: Per-rep computed lines
-      tags: *a154
+      tags: *a178
   /v1/pay-runs/{id}/lines/{lineId}/bonus:
     post:
       description: Requires payrun:approve. Draft only.
@@ -4083,15 +4439,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PayRunLineResponse"
-        "400": *a147
-        "401": *a148
-        "403": *a149
-        "404": *a150
-        "409": *a151
-        "422": *a152
-      security: *a153
+        "400": *a171
+        "401": *a172
+        "403": *a173
+        "404": *a174
+        "409": *a175
+        "422": *a176
+      security: *a177
       summary: Set an ad-hoc bonus on a draft line
-      tags: *a154
+      tags: *a178
   /v1/pay-runs/{id}/finalize:
     post:
       description: "Requires payrun:approve. ATOMIC + IDEMPOTENT: freezes snapshots,
@@ -4117,15 +4473,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PayRunResponse"
-        "400": *a147
-        "401": *a148
-        "403": *a149
-        "404": *a150
-        "409": *a151
-        "422": *a152
-      security: *a153
+        "400": *a171
+        "401": *a172
+        "403": *a173
+        "404": *a174
+        "409": *a175
+        "422": *a176
+      security: *a177
       summary: Finalize a pay run (the money action)
-      tags: *a154
+      tags: *a178
   /v1/pay-runs/{id}/export:
     post:
       description: Requires payrun:export. Configurable format; marks the run
@@ -4150,15 +4506,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExportResultResponse"
-        "400": *a147
-        "401": *a148
-        "403": *a149
-        "404": *a150
-        "409": *a151
-        "422": *a152
-      security: *a153
+        "400": *a171
+        "401": *a172
+        "403": *a173
+        "404": *a174
+        "409": *a175
+        "422": *a176
+      security: *a177
       summary: Generate the ADP export for a finalized run
-      tags: *a154
+      tags: *a178
   /v1/holdback-ledger:
     get:
       description: Requires payrun:view. Holds, schedule, release status.
@@ -4253,361 +4609,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ClientStatementResponse"
-        "400": &a155
-          description: Bad Request — validation failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a156
-          description: Unauthorized — missing/invalid token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a157
-          description: Forbidden — RBAC denied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a158
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a159
-          description: Conflict — invalid state transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a160
-          description: Unprocessable Entity — domain rule violated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a161
-        - bearer: []
-      summary: Generate a client statement (one line per customer)
-      tags: &a162
-        - Billing & Statements
-  /v1/clients/{id}/invoices:
-    post:
-      description: Requires billing:create. total_commission = the client-billing
-        statement total (billing stream only; never the rep commission payout).
-        Regenerating replaces the existing invoice.
-      operationId: BillingGenerationController_generateInvoice_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/GenerateBillingDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClientInvoiceResponse"
-        "400": *a155
-        "401": *a156
-        "403": *a157
-        "404": *a158
-        "409": *a159
-        "422": *a160
-      security: *a161
-      summary: Generate a one-line commission invoice
-      tags: *a162
-  /v1/statements:
-    get:
-      description: Requires billing:view.
-      operationId: StatementsController_list_v1
-      parameters:
-        - name: client_id
-          required: false
-          in: query
-          description: Filter by client.
-          schema:
-            type: string
-        - name: pay_period_id
-          required: false
-          in: query
-          description: Filter by pay period.
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ClientStatementResponse"
-        "400": &a163
-          description: Bad Request — validation failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a164
-          description: Unauthorized — missing/invalid token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a165
-          description: Forbidden — RBAC denied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a166
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a167
-          description: Conflict — invalid state transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a168
-          description: Unprocessable Entity — domain rule violated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a169
-        - bearer: []
-      summary: List generated statements
-      tags: &a170
-        - Billing & Statements
-  /v1/statements/{id}:
-    get:
-      description: Requires billing:view.
-      operationId: StatementsController_findOne_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClientStatementResponse"
-        "400": *a163
-        "401": *a164
-        "403": *a165
-        "404": *a166
-        "409": *a167
-        "422": *a168
-      security: *a169
-      summary: Get a statement with its lines
-      tags: *a170
-  /v1/statements/{id}/export:
-    post:
-      description: Requires billing:export. Updates the file_url reference; real
-        render deferred.
-      operationId: StatementsController_export_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BillingExportDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BillingExportResultResponse"
-        "400": *a163
-        "401": *a164
-        "403": *a165
-        "404": *a166
-        "409": *a167
-        "422": *a168
-      security: *a169
-      summary: Export a statement (stub file)
-      tags: *a170
-  /v1/invoices:
-    get:
-      description: Requires billing:view.
-      operationId: InvoicesController_list_v1
-      parameters:
-        - name: client_id
-          required: false
-          in: query
-          description: Filter by client.
-          schema:
-            type: string
-        - name: pay_period_id
-          required: false
-          in: query
-          description: Filter by pay period.
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/ClientInvoiceResponse"
-        "400": &a171
-          description: Bad Request — validation failed
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a172
-          description: Unauthorized — missing/invalid token
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a173
-          description: Forbidden — RBAC denied
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a174
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a175
-          description: Conflict — invalid state transition
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a176
-          description: Unprocessable Entity — domain rule violated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a177
-        - bearer: []
-      summary: List generated invoices
-      tags: &a178
-        - Billing & Statements
-  /v1/invoices/{id}:
-    get:
-      description: Requires billing:view.
-      operationId: InvoicesController_findOne_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ClientInvoiceResponse"
-        "400": *a171
-        "401": *a172
-        "403": *a173
-        "404": *a174
-        "409": *a175
-        "422": *a176
-      security: *a177
-      summary: Get an invoice
-      tags: *a178
-  /v1/invoices/{id}/export:
-    post:
-      description: Requires billing:export. Updates the file_url reference; real
-        render deferred.
-      operationId: InvoicesController_export_v1
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BillingExportDto"
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BillingExportResultResponse"
-        "400": *a171
-        "401": *a172
-        "403": *a173
-        "404": *a174
-        "409": *a175
-        "422": *a176
-      security: *a177
-      summary: Export an invoice (stub file)
-      tags: *a178
-  /v1/documents:
-    post:
-      description: "Requires documents:create. Multipart: a PDF file + title +
-        doc_type. Stored to object storage (the original is never mutated);
-        status draft, owner = caller. Non-PDF → 422 (save as PDF first)."
-      operationId: DocumentsController_upload_v1
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                file:
-                  type: string
-                  format: binary
-                title:
-                  type: string
-                doc_type:
-                  type: string
-      responses:
-        "201":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DocumentResponse"
         "400": &a179
           description: Bad Request — validation failed
           content:
@@ -4646,8 +4647,363 @@ paths:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
       security: &a185
         - bearer: []
-      summary: Upload a document (PDF)
+      summary: Generate a client statement (one line per customer)
       tags: &a186
+        - Billing & Statements
+  /v1/clients/{id}/invoices:
+    post:
+      description: Requires billing:create. total_commission = the client-billing
+        statement total (billing stream only; never the rep commission payout).
+        Regenerating replaces the existing invoice.
+      operationId: BillingGenerationController_generateInvoice_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateBillingDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientInvoiceResponse"
+        "400": *a179
+        "401": *a180
+        "403": *a181
+        "404": *a182
+        "409": *a183
+        "422": *a184
+      security: *a185
+      summary: Generate a one-line commission invoice
+      tags: *a186
+  /v1/statements:
+    get:
+      description: Requires billing:view.
+      operationId: StatementsController_list_v1
+      parameters:
+        - name: client_id
+          required: false
+          in: query
+          description: Filter by client.
+          schema:
+            type: string
+        - name: pay_period_id
+          required: false
+          in: query
+          description: Filter by pay period.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClientStatementResponse"
+        "400": &a187
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a188
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a189
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a190
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a191
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a192
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a193
+        - bearer: []
+      summary: List generated statements
+      tags: &a194
+        - Billing & Statements
+  /v1/statements/{id}:
+    get:
+      description: Requires billing:view.
+      operationId: StatementsController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientStatementResponse"
+        "400": *a187
+        "401": *a188
+        "403": *a189
+        "404": *a190
+        "409": *a191
+        "422": *a192
+      security: *a193
+      summary: Get a statement with its lines
+      tags: *a194
+  /v1/statements/{id}/export:
+    post:
+      description: Requires billing:export. Updates the file_url reference; real
+        render deferred.
+      operationId: StatementsController_export_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingExportDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingExportResultResponse"
+        "400": *a187
+        "401": *a188
+        "403": *a189
+        "404": *a190
+        "409": *a191
+        "422": *a192
+      security: *a193
+      summary: Export a statement (stub file)
+      tags: *a194
+  /v1/invoices:
+    get:
+      description: Requires billing:view.
+      operationId: InvoicesController_list_v1
+      parameters:
+        - name: client_id
+          required: false
+          in: query
+          description: Filter by client.
+          schema:
+            type: string
+        - name: pay_period_id
+          required: false
+          in: query
+          description: Filter by pay period.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClientInvoiceResponse"
+        "400": &a195
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a196
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a197
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a198
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a199
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a200
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a201
+        - bearer: []
+      summary: List generated invoices
+      tags: &a202
+        - Billing & Statements
+  /v1/invoices/{id}:
+    get:
+      description: Requires billing:view.
+      operationId: InvoicesController_findOne_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientInvoiceResponse"
+        "400": *a195
+        "401": *a196
+        "403": *a197
+        "404": *a198
+        "409": *a199
+        "422": *a200
+      security: *a201
+      summary: Get an invoice
+      tags: *a202
+  /v1/invoices/{id}/export:
+    post:
+      description: Requires billing:export. Updates the file_url reference; real
+        render deferred.
+      operationId: InvoicesController_export_v1
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingExportDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingExportResultResponse"
+        "400": *a195
+        "401": *a196
+        "403": *a197
+        "404": *a198
+        "409": *a199
+        "422": *a200
+      security: *a201
+      summary: Export an invoice (stub file)
+      tags: *a202
+  /v1/documents:
+    post:
+      description: "Requires documents:create. Multipart: a PDF file + title +
+        doc_type. Stored to object storage (the original is never mutated);
+        status draft, owner = caller. Non-PDF → 422 (save as PDF first)."
+      operationId: DocumentsController_upload_v1
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                title:
+                  type: string
+                doc_type:
+                  type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+        "400": &a203
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401": &a204
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403": &a205
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404": &a206
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409": &a207
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422": &a208
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security: &a209
+        - bearer: []
+      summary: Upload a document (PDF)
+      tags: &a210
         - Documents & E-Signature
     get:
       description: Requires documents:view. Scoped to owned or shared-with
@@ -4691,15 +5047,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/DocumentResponse"
-        "400": *a179
-        "401": *a180
-        "403": *a181
-        "404": *a182
-        "409": *a183
-        "422": *a184
-      security: *a185
+        "400": *a203
+        "401": *a204
+        "403": *a205
+        "404": *a206
+        "409": *a207
+        "422": *a208
+      security: *a209
       summary: List documents
-      tags: *a186
+      tags: *a210
   /v1/documents/{id}/file-url:
     get:
       description: Requires documents:view + visibility. Returns a short-TTL signed
@@ -4718,15 +5074,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FileUrlResponse"
-        "400": *a179
-        "401": *a180
-        "403": *a181
-        "404": *a182
-        "409": *a183
-        "422": *a184
-      security: *a185
+        "400": *a203
+        "401": *a204
+        "403": *a205
+        "404": *a206
+        "409": *a207
+        "422": *a208
+      security: *a209
       summary: Get an access-controlled URL for the original document
-      tags: *a186
+      tags: *a210
   /v1/documents/{id}/completed-file-url:
     get:
       description: Requires documents:view + visibility. 404 until the request
@@ -4745,15 +5101,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FileUrlResponse"
-        "400": *a179
-        "401": *a180
-        "403": *a181
-        "404": *a182
-        "409": *a183
-        "422": *a184
-      security: *a185
+        "400": *a203
+        "401": *a204
+        "403": *a205
+        "404": *a206
+        "409": *a207
+        "422": *a208
+      security: *a209
       summary: Get an access-controlled URL for the final all-signatures copy
-      tags: *a186
+      tags: *a210
   /v1/documents/{id}:
     get:
       description: Requires documents:view. 404 if not visible to the caller.
@@ -4771,15 +5127,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DocumentResponse"
-        "400": *a179
-        "401": *a180
-        "403": *a181
-        "404": *a182
-        "409": *a183
-        "422": *a184
-      security: *a185
+        "400": *a203
+        "401": *a204
+        "403": *a205
+        "404": *a206
+        "409": *a207
+        "422": *a208
+      security: *a209
       summary: Get a document (requests + per-signer status)
-      tags: *a186
+      tags: *a210
   /v1/documents/{id}/signature-requests:
     post:
       description: Requires documents:create AND ownership of the document (else 403).
@@ -4804,15 +5160,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SignatureRequestResponse"
-        "400": *a179
-        "401": *a180
-        "403": *a181
-        "404": *a182
-        "409": *a183
-        "422": *a184
-      security: *a185
+        "400": *a203
+        "401": *a204
+        "403": *a205
+        "404": *a206
+        "409": *a207
+        "422": *a208
+      security: *a209
       summary: Share + request a signature from one or many recipients
-      tags: *a186
+      tags: *a210
   /v1/signature-requests/{id}/sign:
     post:
       description: Authenticated; the caller must be a recipient of this request (else
@@ -4839,46 +5195,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SignActionResultResponse"
-        "400": &a187
+        "400": &a211
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a188
+        "401": &a212
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a189
+        "403": &a213
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a190
+        "404": &a214
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a191
+        "409": &a215
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a192
+        "422": &a216
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a193
+      security: &a217
         - bearer: []
       summary: Sign or decline a signature request
-      tags: &a194
+      tags: &a218
         - Documents & E-Signature
   /v1/signature-requests/{id}/sign-upload:
     post:
@@ -4909,15 +5265,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SignActionResultResponse"
-        "400": *a187
-        "401": *a188
-        "403": *a189
-        "404": *a190
-        "409": *a191
-        "422": *a192
-      security: *a193
+        "400": *a211
+        "401": *a212
+        "403": *a213
+        "404": *a214
+        "409": *a215
+        "422": *a216
+      security: *a217
       summary: Complete your signature by uploading an externally-signed PDF
-      tags: *a194
+      tags: *a218
   /v1/signature-requests/{id}/cancel:
     post:
       description: Authenticated; only the requester, the document owner, or an admin
@@ -4936,15 +5292,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CancelSignatureResultResponse"
-        "400": *a187
-        "401": *a188
-        "403": *a189
-        "404": *a190
-        "409": *a191
-        "422": *a192
-      security: *a193
+        "400": *a211
+        "401": *a212
+        "403": *a213
+        "404": *a214
+        "409": *a215
+        "422": *a216
+      security: *a217
       summary: Cancel a signature request
-      tags: *a194
+      tags: *a218
   /v1/signatures/{id}/file-url:
     get:
       description: Authenticated; visible to the document owner, a recipient, or an
@@ -5040,46 +5396,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StagedImportResponse"
-        "400": &a195
+        "400": &a219
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a196
+        "401": &a220
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a197
+        "403": &a221
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a198
+        "404": &a222
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a199
+        "409": &a223
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a200
+        "422": &a224
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a201
+      security: &a225
         - bearer: []
       summary: Upload + stage an import batch (Excel/CSV)
-      tags: &a202
+      tags: &a226
         - Data Import & Integration
     get:
       description: Requires import:view.
@@ -5127,15 +5483,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ImportBatchResponse"
-        "400": *a195
-        "401": *a196
-        "403": *a197
-        "404": *a198
-        "409": *a199
-        "422": *a200
-      security: *a201
+        "400": *a219
+        "401": *a220
+        "403": *a221
+        "404": *a222
+        "409": *a223
+        "422": *a224
+      security: *a225
       summary: Import/migration history
-      tags: *a202
+      tags: *a226
   /v1/imports/{id}:
     get:
       description: Requires import:view. Rows with match status, counts, and reconcile
@@ -5154,15 +5510,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImportBatchResponse"
-        "400": *a195
-        "401": *a196
-        "403": *a197
-        "404": *a198
-        "409": *a199
-        "422": *a200
-      security: *a201
+        "400": *a219
+        "401": *a220
+        "403": *a221
+        "404": *a222
+        "409": *a223
+        "422": *a224
+      security: *a225
       summary: Preview a staged batch
-      tags: *a202
+      tags: *a226
   /v1/imports/{id}/error-report:
     get:
       description: Requires import:view. The unmatched/duplicate/error rows for
@@ -5177,15 +5533,15 @@ paths:
       responses:
         "200":
           description: ""
-        "400": *a195
-        "401": *a196
-        "403": *a197
-        "404": *a198
-        "409": *a199
-        "422": *a200
-      security: *a201
+        "400": *a219
+        "401": *a220
+        "403": *a221
+        "404": *a222
+        "409": *a223
+        "422": *a224
+      security: *a225
       summary: Download a CSV of the rows still needing attention
-      tags: *a202
+      tags: *a226
   /v1/imports/{id}/remap:
     post:
       description: Requires import:edit. Re-maps + re-cleans + re-classifies the
@@ -5210,15 +5566,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StagedImportResponse"
-        "400": *a195
-        "401": *a196
-        "403": *a197
-        "404": *a198
-        "409": *a199
-        "422": *a200
-      security: *a201
+        "400": *a219
+        "401": *a220
+        "403": *a221
+        "404": *a222
+        "409": *a223
+        "422": *a224
+      security: *a225
       summary: Re-apply a mapping to the staged rows
-      tags: *a202
+      tags: *a226
   /v1/imports/{id}/reconcile:
     post:
       description: "Requires import:edit. Resolutions: match / edit / ignore.
@@ -5243,15 +5599,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImportBatchResponse"
-        "400": *a195
-        "401": *a196
-        "403": *a197
-        "404": *a198
-        "409": *a199
-        "422": *a200
-      security: *a201
+        "400": *a219
+        "401": *a220
+        "403": *a221
+        "404": *a222
+        "409": *a223
+        "422": *a224
+      security: *a225
       summary: Resolve unmatched/ambiguous rows
-      tags: *a202
+      tags: *a226
   /v1/imports/{id}/commit:
     post:
       description: Requires import:approve. Blocked (422) while any row is unresolved
@@ -5271,15 +5627,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImportBatchResponse"
-        "400": *a195
-        "401": *a196
-        "403": *a197
-        "404": *a198
-        "409": *a199
-        "422": *a200
-      security: *a201
+        "400": *a219
+        "401": *a220
+        "403": *a221
+        "404": *a222
+        "409": *a223
+        "422": *a224
+      security: *a225
       summary: Commit the batch (atomic + idempotent; reconcile-gated)
-      tags: *a202
+      tags: *a226
   /v1/import-mappings:
     get:
       description: Requires import:view.
@@ -5308,46 +5664,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ImportFieldMappingResponse"
-        "400": &a203
+        "400": &a227
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a204
+        "401": &a228
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a205
+        "403": &a229
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a206
+        "404": &a230
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a207
+        "409": &a231
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a208
+        "422": &a232
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a209
+      security: &a233
         - bearer: []
       summary: List saved field mappings
-      tags: &a210
+      tags: &a234
         - Data Import & Integration
     post:
       description: Requires import:create.
@@ -5366,15 +5722,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImportFieldMappingResponse"
-        "400": *a203
-        "401": *a204
-        "403": *a205
-        "404": *a206
-        "409": *a207
-        "422": *a208
-      security: *a209
+        "400": *a227
+        "401": *a228
+        "403": *a229
+        "404": *a230
+        "409": *a231
+        "422": *a232
+      security: *a233
       summary: Save a reusable field mapping
-      tags: *a210
+      tags: *a234
   /v1/import-mappings/{id}:
     patch:
       description: Requires import:edit.
@@ -5398,15 +5754,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImportFieldMappingResponse"
-        "400": *a203
-        "401": *a204
-        "403": *a205
-        "404": *a206
-        "409": *a207
-        "422": *a208
-      security: *a209
+        "400": *a227
+        "401": *a228
+        "403": *a229
+        "404": *a230
+        "409": *a231
+        "422": *a232
+      security: *a233
       summary: Update a saved field mapping
-      tags: *a210
+      tags: *a234
     delete:
       description: Requires import:edit.
       operationId: ImportMappingsController_remove_v1
@@ -5423,15 +5779,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SuccessResponse"
-        "400": *a203
-        "401": *a204
-        "403": *a205
-        "404": *a206
-        "409": *a207
-        "422": *a208
-      security: *a209
+        "400": *a227
+        "401": *a228
+        "403": *a229
+        "404": *a230
+        "409": *a231
+        "422": *a232
+      security: *a233
       summary: Delete a saved field mapping
-      tags: *a210
+      tags: *a234
   /v1/dashboards/rep:
     get:
       description: Authenticated; scoped to the caller’s own rep.
@@ -5444,46 +5800,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RepDashboardResponse"
-        "400": &a211
+        "400": &a235
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a212
+        "401": &a236
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a213
+        "403": &a237
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a214
+        "404": &a238
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a215
+        "409": &a239
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a216
+        "422": &a240
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a217
+      security: &a241
         - bearer: []
       summary: Rep's own dashboard
-      tags: &a218
+      tags: &a242
         - Reporting & Dashboards
   /v1/dashboards/manager:
     get:
@@ -5497,15 +5853,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ManagerDashboardResponse"
-        "400": *a211
-        "401": *a212
-        "403": *a213
-        "404": *a214
-        "409": *a215
-        "422": *a216
-      security: *a217
+        "400": *a235
+        "401": *a236
+        "403": *a237
+        "404": *a238
+        "409": *a239
+        "422": *a240
+      security: *a241
       summary: Manager dashboard
-      tags: *a218
+      tags: *a242
   /v1/dashboards/business:
     get:
       description: Requires reports:business (Super Admin only).
@@ -5536,15 +5892,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BusinessDashboardResponse"
-        "400": *a211
-        "401": *a212
-        "403": *a213
-        "404": *a214
-        "409": *a215
-        "422": *a216
-      security: *a217
+        "400": *a235
+        "401": *a236
+        "403": *a237
+        "404": *a238
+        "409": *a239
+        "422": *a240
+      security: *a241
       summary: Business / executive dashboard
-      tags: *a218
+      tags: *a242
   /v1/dashboards/business/trends:
     get:
       description: Requires reports:business (Super Admin). Headline series +
@@ -5567,15 +5923,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BusinessTrendsResponse"
-        "400": *a211
-        "401": *a212
-        "403": *a213
-        "404": *a214
-        "409": *a215
-        "422": *a216
-      security: *a217
+        "400": *a235
+        "401": *a236
+        "403": *a237
+        "404": *a238
+        "409": *a239
+        "422": *a240
+      security: *a241
       summary: Cross-period business trends
-      tags: *a218
+      tags: *a242
   /v1/dashboards/admin:
     get:
       description: Requires reports:view AND Admin/Super Admin.
@@ -5588,15 +5944,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AdminDashboardResponse"
-        "400": *a211
-        "401": *a212
-        "403": *a213
-        "404": *a214
-        "409": *a215
-        "422": *a216
-      security: *a217
+        "400": *a235
+        "401": *a236
+        "403": *a237
+        "404": *a238
+        "409": *a239
+        "422": *a240
+      security: *a241
       summary: Admin operational home (queues)
-      tags: *a218
+      tags: *a242
   /v1/leaderboard:
     get:
       description: Requires reports:view. Ranked by internet activation count for the
@@ -5671,46 +6027,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SalesTargetResponse"
-        "400": &a219
+        "400": &a243
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a220
+        "401": &a244
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a221
+        "403": &a245
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a222
+        "404": &a246
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a223
+        "409": &a247
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a224
+        "422": &a248
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a225
+      security: &a249
         - bearer: []
       summary: List sales targets (scoped)
-      tags: &a226
+      tags: &a250
         - Reporting & Dashboards
     put:
       description: Requires hrm:edit; a manager may only set targets for reps they manage.
@@ -5729,15 +6085,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SalesTargetResponse"
-        "400": *a219
-        "401": *a220
-        "403": *a221
-        "404": *a222
-        "409": *a223
-        "422": *a224
-      security: *a225
+        "400": *a243
+        "401": *a244
+        "403": *a245
+        "404": *a246
+        "409": *a247
+        "422": *a248
+      security: *a249
       summary: Set / replace a rep target for a period
-      tags: *a226
+      tags: *a250
   /v1/notifications:
     get:
       description: Authenticated; only the caller’s own. Paginated
@@ -5788,46 +6144,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotificationPageResponse"
-        "400": &a227
+        "400": &a251
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a228
+        "401": &a252
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a229
+        "403": &a253
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a230
+        "404": &a254
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a231
+        "409": &a255
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a232
+        "422": &a256
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a233
+      security: &a257
         - bearer: []
       summary: My notifications
-      tags: &a234
+      tags: &a258
         - Reporting & Dashboards
   /v1/notifications/unread-count:
     get:
@@ -5841,15 +6197,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnreadCountResponse"
-        "400": *a227
-        "401": *a228
-        "403": *a229
-        "404": *a230
-        "409": *a231
-        "422": *a232
-      security: *a233
+        "400": *a251
+        "401": *a252
+        "403": *a253
+        "404": *a254
+        "409": *a255
+        "422": *a256
+      security: *a257
       summary: My unread count
-      tags: *a234
+      tags: *a258
   /v1/notifications/mark-all-read:
     post:
       description: Authenticated; marks all the caller’s unread notifications read.
@@ -5862,15 +6218,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BulkMarkResultResponse"
-        "400": *a227
-        "401": *a228
-        "403": *a229
-        "404": *a230
-        "409": *a231
-        "422": *a232
-      security: *a233
+        "400": *a251
+        "401": *a252
+        "403": *a253
+        "404": *a254
+        "409": *a255
+        "422": *a256
+      security: *a257
       summary: Mark all read
-      tags: *a234
+      tags: *a258
   /v1/notifications/mark-read:
     post:
       description: Authenticated; own-scoped bulk toggle.
@@ -5889,15 +6245,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BulkMarkResultResponse"
-        "400": *a227
-        "401": *a228
-        "403": *a229
-        "404": *a230
-        "409": *a231
-        "422": *a232
-      security: *a233
+        "400": *a251
+        "401": *a252
+        "403": *a253
+        "404": *a254
+        "409": *a255
+        "422": *a256
+      security: *a257
       summary: Bulk mark read/unread
-      tags: *a234
+      tags: *a258
   /v1/notifications/broadcast:
     post:
       description: Requires notifications:broadcast (Super Admin). Fans out to a role
@@ -5917,15 +6273,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BroadcastResultResponse"
-        "400": *a227
-        "401": *a228
-        "403": *a229
-        "404": *a230
-        "409": *a231
-        "422": *a232
-      security: *a233
+        "400": *a251
+        "401": *a252
+        "403": *a253
+        "404": *a254
+        "409": *a255
+        "422": *a256
+      security: *a257
       summary: Send a manual broadcast
-      tags: *a234
+      tags: *a258
   /v1/notifications/{id}:
     patch:
       description: Authenticated; only the caller’s own.
@@ -5949,15 +6305,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AppNotificationResponse"
-        "400": *a227
-        "401": *a228
-        "403": *a229
-        "404": *a230
-        "409": *a231
-        "422": *a232
-      security: *a233
+        "400": *a251
+        "401": *a252
+        "403": *a253
+        "404": *a254
+        "409": *a255
+        "422": *a256
+      security: *a257
       summary: Mark a notification read/unread
-      tags: *a234
+      tags: *a258
   /v1/notification-settings:
     get:
       description: Requires settings:view (Super Admin).
@@ -5972,46 +6328,46 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/NotificationSettingResponse"
-        "400": &a235
+        "400": &a259
           description: Bad Request — validation failed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "401": &a236
+        "401": &a260
           description: Unauthorized — missing/invalid token
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "403": &a237
+        "403": &a261
           description: Forbidden — RBAC denied
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "404": &a238
+        "404": &a262
           description: Not Found
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "409": &a239
+        "409": &a263
           description: Conflict — invalid state transition
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-        "422": &a240
+        "422": &a264
           description: Unprocessable Entity — domain rule violated
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelopeDto"
-      security: &a241
+      security: &a265
         - bearer: []
       summary: Notification event settings
-      tags: &a242
+      tags: &a266
         - Reporting & Dashboards
     patch:
       description: Requires settings:edit (Super Admin). Per-event in-app/email
@@ -6033,15 +6389,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/NotificationSettingResponse"
-        "400": *a235
-        "401": *a236
-        "403": *a237
-        "404": *a238
-        "409": *a239
-        "422": *a240
-      security: *a241
+        "400": *a259
+        "401": *a260
+        "403": *a261
+        "404": *a262
+        "409": *a263
+        "422": *a264
+      security: *a265
       summary: Configure event×channel settings
-      tags: *a242
+      tags: *a266
   /v1/chatbot/query:
     post:
       description: Authenticated. Answers from Redwave data within the caller’s scope
@@ -6163,6 +6519,127 @@ paths:
       summary: Global search
       tags:
         - Search
+  /v1/audit-logs:
+    get:
+      description: Requires audit:view (Super Admin). Pass entity_type + entity_id for
+        a record’s History.
+      operationId: AuditController_list_v1
+      parameters:
+        - name: page
+          required: false
+          in: query
+          description: 1-based page number.
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: limit
+          required: false
+          in: query
+          description: Rows per page (max 100).
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: sort
+          required: false
+          in: query
+          description: Sort as `field:dir` (e.g. `sale_date:desc`). Unknown fields fall
+            back to the default sort.
+          schema:
+            example: sale_date:desc
+            type: string
+        - name: search
+          required: false
+          in: query
+          description: Case-insensitive free-text search across the entity’s key columns.
+          schema:
+            type: string
+        - name: actor_id
+          required: false
+          in: query
+          description: Filter by acting user id.
+          schema:
+            type: string
+        - name: entity_type
+          required: false
+          in: query
+          description: Filter by entity type (e.g. pay_runs, clawbacks, security_settings).
+          schema:
+            type: string
+        - name: entity_id
+          required: false
+          in: query
+          description: Filter by a specific record id (powers the per-record History tab).
+          schema:
+            type: string
+        - name: action
+          required: false
+          in: query
+          description: Filter by action (create / update / finalize / access_denied …).
+          schema:
+            type: string
+        - name: date_from
+          required: false
+          in: query
+          description: Inclusive start date (YYYY-MM-DD).
+          schema:
+            type: string
+        - name: date_to
+          required: false
+          in: query
+          description: Inclusive end date (YYYY-MM-DD).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLogPageResponse"
+        "400":
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401":
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403":
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409":
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422":
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security:
+        - bearer: []
+      summary: List audit-log entries (filter by actor / entity / action / date)
+      tags:
+        - Audit
 info:
   title: Redwave ERP / HRM API
   description: Versioned REST contract for the Redwave platform. Each protected
@@ -6223,25 +6700,43 @@ components:
       properties:
         access_token:
           type: string
-          description: Short-lived access JWT (Bearer).
-        refresh_token:
+          nullable: true
+          description: Short-lived access JWT (Bearer). Absent when mfa_required is true.
+        csrf_token:
           type: string
-          description: Long-lived refresh JWT.
+          nullable: true
+          description: The CSRF token (also set as the readable rw_csrf cookie). Echo it
+            in the X-CSRF-Token header.
         must_change_password:
           type: boolean
+          nullable: true
           description: When true, the user must change their password before continuing.
-      required:
-        - access_token
-        - refresh_token
-        - must_change_password
-    RefreshDto:
+        mfa_enrollment_required:
+          type: boolean
+          nullable: true
+          description: When true, policy requires this user to enrol in MFA before
+            continuing.
+        mfa_required:
+          type: boolean
+          nullable: true
+          description: When true, the user has MFA enabled — redeem mfa_token at
+            /auth/mfa/verify.
+        mfa_token:
+          type: string
+          nullable: true
+          description: Short-lived MFA challenge token (when mfa_required).
+    MfaVerifyDto:
       type: object
       properties:
-        refresh_token:
+        mfa_token:
           type: string
-          description: A valid refresh token previously issued by /auth/login.
+          description: The mfa_token returned by /auth/login when mfa_required is true.
+        code:
+          type: string
+          description: A 6-digit TOTP code from the authenticator app, or a recovery code.
       required:
-        - refresh_token
+        - mfa_token
+        - code
     RefreshResponse:
       type: object
       properties:
@@ -6352,6 +6847,132 @@ components:
         - is_super_admin
         - rep_id
         - effective_permissions
+    MfaStatusResponse:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether TOTP MFA is currently enabled for the caller.
+      required:
+        - enabled
+    MfaSetupResponse:
+      type: object
+      properties:
+        otpauth_url:
+          type: string
+          description: otpauth:// provisioning URI for manual entry.
+        qr_data_url:
+          type: string
+          description: A data-URL PNG QR code encoding the otpauth URI.
+        secret:
+          type: string
+          description: The base32 secret (for manual entry if the QR cannot be scanned).
+      required:
+        - otpauth_url
+        - qr_data_url
+        - secret
+    MfaCodeDto:
+      type: object
+      properties:
+        code:
+          type: string
+          description: A 6-digit TOTP code (or a recovery code where allowed).
+      required:
+        - code
+    MfaRecoveryCodesResponse:
+      type: object
+      properties:
+        recovery_codes:
+          description: One-time recovery codes — shown ONCE. Store them safely.
+          type: array
+          items:
+            type: string
+      required:
+        - recovery_codes
+    SessionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        user_agent:
+          type: string
+          nullable: true
+          description: The browser/device user-agent string.
+        ip_address:
+          type: string
+          nullable: true
+          description: IP address last seen for this session.
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        is_current:
+          type: boolean
+          description: True for the session the caller is currently using.
+      required:
+        - id
+        - user_agent
+        - ip_address
+        - created_at
+        - last_used_at
+        - expires_at
+        - is_current
+    RoleMfaResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mfa_required:
+          type: boolean
+      required:
+        - id
+        - name
+        - mfa_required
+    SecuritySettingsResponse:
+      type: object
+      properties:
+        mfa_enforced:
+          type: boolean
+          description: Master MFA-enforcement switch.
+        roles:
+          description: Every role with its MFA-required flag.
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleMfaResponse"
+      required:
+        - mfa_enforced
+        - roles
+    RoleMfaDto:
+      type: object
+      properties:
+        role_id:
+          type: string
+          description: Role id.
+        mfa_required:
+          type: boolean
+          description: Whether members of this role must use MFA when enforcement is on.
+      required:
+        - role_id
+        - mfa_required
+    UpdateSecuritySettingsDto:
+      type: object
+      properties:
+        mfa_enforced:
+          type: boolean
+          description: Master switch — when true, roles flagged mfa_required force
+            enrollment at login.
+        role_mfa:
+          description: Per-role MFA-required flags to set.
+          type: array
+          items:
+            $ref: "#/components/schemas/RoleMfaDto"
     UserRoleRoleResponse:
       type: object
       properties:
@@ -7483,7 +8104,7 @@ components:
           type: string
         status:
           type: string
-          enum: &a243
+          enum: &a267
             - current
             - pending
             - past
@@ -7580,7 +8201,7 @@ components:
           type: string
         status:
           type: string
-          enum: *a243
+          enum: *a267
       required:
         - id
         - product_type
@@ -7649,7 +8270,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: *a243
+          enum: *a267
       required:
         - id
         - advance_pct
@@ -8356,7 +8977,7 @@ components:
       properties:
         category:
           type: string
-          enum: &a244
+          enum: &a268
             - km
             - meals
             - hotel
@@ -8616,7 +9237,7 @@ components:
       properties:
         category:
           type: string
-          enum: *a244
+          enum: *a268
           example: meals
         client_id:
           type: string
@@ -8815,7 +9436,7 @@ components:
           format: date-time
         status:
           type: string
-          enum: &a245
+          enum: &a269
             - draft
             - finalized
             - exported
@@ -8923,7 +9544,7 @@ components:
           format: date-time
         status:
           type: string
-          enum: *a245
+          enum: *a269
         executed_by:
           type: string
         created_at:
@@ -9536,13 +10157,13 @@ components:
           type: string
         source_type:
           type: string
-          enum: &a246
+          enum: &a270
             - client_report
             - master_migration
             - balance_migration
         import_type:
           type: string
-          enum: &a247
+          enum: &a271
             - reps
             - clients
             - products
@@ -9559,7 +10180,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: &a248
+          enum: &a272
             - staged
             - committed
             - failed
@@ -9580,7 +10201,7 @@ components:
           description: Decimal string — operator-provided source total.
         error_summary:
           type: object
-          additionalProperties: &a249
+          additionalProperties: &a273
             type: number
           nullable: true
           description: Counts by classification (matched/unmatched/...).
@@ -9633,10 +10254,10 @@ components:
           type: string
         source_type:
           type: string
-          enum: *a246
+          enum: *a270
         import_type:
           type: string
-          enum: *a247
+          enum: *a271
         client_id:
           type: string
           nullable: true
@@ -9645,7 +10266,7 @@ components:
           nullable: true
         status:
           type: string
-          enum: *a248
+          enum: *a272
         total_rows:
           type: number
           example: 3
@@ -9662,7 +10283,7 @@ components:
           description: Decimal string — operator-provided source total.
         error_summary:
           type: object
-          additionalProperties: *a249
+          additionalProperties: *a273
           nullable: true
           description: Counts by classification (matched/unmatched/...).
         run_by:
@@ -10781,6 +11402,7 @@ components:
             - roster_summary
             - business_summary
             - unknown
+            - rate_limited
           description: The recognised intent (or "unknown").
         answer:
           type: string
@@ -10850,3 +11472,75 @@ components:
         - reps
         - clients
         - sales
+    AuditActorResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        full_name:
+          type: string
+        email:
+          type: string
+      required:
+        - id
+        - full_name
+        - email
+    AuditLogResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        actor:
+          nullable: true
+          description: The acting user (name + email).
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/AuditActorResponse"
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+        action:
+          type: string
+        before_json:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Pre-mutation state.
+        after_json:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Post-mutation state.
+        ip_address:
+          type: string
+          nullable: true
+          description: Actor IP at the time of the action.
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - user_id
+        - actor
+        - entity_type
+        - entity_id
+        - action
+        - before_json
+        - after_json
+        - ip_address
+        - created_at
+    AuditLogPageResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditLogResponse"
+        meta:
+          $ref: "#/components/schemas/PageMetaResponse"
+      required:
+        - data
+        - meta
