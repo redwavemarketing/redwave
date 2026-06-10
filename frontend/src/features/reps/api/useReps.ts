@@ -4,7 +4,7 @@
  * (this batch builds the roster view; rep CRUD is its own future screen). `hrm:view` server-enforced.
  */
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../../api/client';
 import { unwrap } from '../../../lib/query/unwrap';
 import type { Rep, RepPage, RepSortKey, RepsFilters, RepsListParams } from '../reps.types';
@@ -13,8 +13,19 @@ const LIMIT = 20;
 const LOOKUP_LIMIT = 100;
 
 export const repsListKeys = {
+  all: ['reps'] as const,
   page: (params: RepsListParams) => ['reps', 'list', params] as const,
 };
+
+/** Assign / reassign reps to a field manager (bulk). — hrm:edit (server-enforced) */
+export function useBulkAssignManager() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { rep_ids: string[]; field_manager_id: string }) =>
+      unwrap<{ success: true; count: number }>(api.POST('/v1/reps/bulk-assign-manager', { body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: repsListKeys.all }),
+  });
+}
 
 export function useRepsPage(params: RepsListParams, enabled = true) {
   return useQuery({

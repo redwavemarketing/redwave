@@ -10,6 +10,7 @@ import { AccessDenied } from '../../dashboards/components/AccessDenied';
 import { ExportMenu } from '../../../components/data/ExportMenu';
 import type { ExportColumn } from '../../../lib/export/exportRows';
 import { displayDate } from '../../../lib/format/date';
+import { useUsers } from '../../admin/api/useUsers';
 import { RepsTable } from '../components/RepsTable';
 import { fetchAllReps } from '../api/useReps';
 import type { Rep, RepStatusFilter, RepsFilters } from '../reps.types';
@@ -19,6 +20,7 @@ const STATUS_OPTIONS = [
   { value: 'terminated', label: 'Terminated' },
   { value: 'all', label: 'All' },
 ];
+const ALL_MANAGERS = '__all__';
 
 /** Debounced free-text search — commits after the user pauses typing (server-side search). */
 function SearchBox({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -36,10 +38,26 @@ function SearchBox({ value, onChange }: { value: string; onChange: (v: string) =
 
 export default function RepsListPage() {
   const canView = useCan('hrm:view');
+  const canViewUsers = useCan('users:view');
   const [status, setStatus] = useState<RepStatusFilter>('active');
   const [search, setSearch] = useState('');
+  const [managerId, setManagerId] = useState<string>(ALL_MANAGERS);
 
-  const filters = useMemo<RepsFilters>(() => ({ status, search: search || undefined }), [status, search]);
+  const users = useUsers(canView && canViewUsers);
+  const managerOptions = useMemo(
+    () => [
+      { value: ALL_MANAGERS, label: 'All managers' },
+      ...(users.data ?? [])
+        .filter((u) => u.user_roles.some((r) => r.role.name === 'Manager'))
+        .map((u) => ({ value: u.id, label: u.full_name })),
+    ],
+    [users.data],
+  );
+
+  const filters = useMemo<RepsFilters>(
+    () => ({ status, search: search || undefined, fieldManagerId: managerId === ALL_MANAGERS ? undefined : managerId }),
+    [status, search, managerId],
+  );
 
   const exportColumns: ExportColumn<Rep>[] = [
     { header: 'Code', value: (r) => r.rep_code },
@@ -61,6 +79,9 @@ export default function RepsListPage() {
           <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <SearchBox value={search} onChange={setSearch} />
             <Select options={STATUS_OPTIONS} value={status} onValueChange={(v) => setStatus(v as RepStatusFilter)} aria-label="Status filter" />
+            {canViewUsers && managerOptions.length > 1 && (
+              <Select options={managerOptions} value={managerId} onValueChange={setManagerId} aria-label="Manager filter" />
+            )}
             <ExportMenu filename="reps" title="Reps" columns={exportColumns} getRows={() => fetchAllReps(filters)} />
           </div>
         }
