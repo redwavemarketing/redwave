@@ -42,7 +42,7 @@ const ENGINE_RESULT = {
 
 const decLike = (s: string) => ({ toString: () => s });
 
-function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknown[]; clawbackTotal?: string } = {}) {
+function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknown[]; clawbackTotal?: string; scopeRepIds?: string[] } = {}) {
   const runStatus = opts.runStatus ?? 'draft';
   const period = {
     id: 'P1',
@@ -85,6 +85,7 @@ function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknow
         .mockResolvedValue({ id: 'run-1', status: runStatus, pay_period: period }),
       findFirst: jest.fn(),
       create: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
     },
     payRunLine: {
       findMany: jest.fn().mockResolvedValue(opts.bonuses ?? []),
@@ -99,7 +100,11 @@ function make(opts: { runStatus?: string; dueHolds?: unknown[]; bonuses?: unknow
     $transaction: jest.fn().mockImplementation(async (cb: (t: typeof tx) => unknown) => cb(tx)),
   };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
-  const scope = { getRepScope: jest.fn().mockResolvedValue({ level: 'all' }) };
+  const scope = {
+    getRepScope: jest
+      .fn()
+      .mockResolvedValue(opts.scopeRepIds ? { level: 'roster', repIds: opts.scopeRepIds } : { level: 'all' }),
+  };
   const config = { getEngineConfig: jest.fn().mockResolvedValue({}) };
   const engine = { computePeriod: jest.fn().mockReturnValue(ENGINE_RESULT) };
   const emitter = { emit: jest.fn(), emitMany: jest.fn(), emitRole: jest.fn() };
@@ -244,5 +249,27 @@ describe('PayRunService.setBonus', () => {
         data: expect.objectContaining({ bonus_amount: '50.00', net_payout: '127.00' }),
       }),
     );
+  });
+});
+
+describe('PayRunService.exportRun — RBAC scope (PII; a manager exports only their roster)', () => {
+  const finalizedRun = { id: 'run-1', status: 'finalized', pay_period: { id: 'P1' } };
+
+  it('a roster-scoped caller filters the exported lines to their reps', async () => {
+    const { service, prisma } = make({ runStatus: 'finalized', scopeRepIds: ['rep-1', 'rep-2'] });
+    prisma.payRun.findUnique.mockResolvedValue(finalizedRun);
+    prisma.payRunLine.findMany.mockResolvedValue([]);
+    await service.exportRun('run-1', { format: 'csv' }, user);
+    const where = (prisma.payRunLine.findMany.mock.calls[0][0] as { where: Record<string, unknown> }).where;
+    expect(where).toMatchObject({ pay_run_id: 'run-1', rep_id: { in: ['rep-1', 'rep-2'] } });
+  });
+
+  it('an all-scope caller (admin/SA) exports every line (no rep_id filter)', async () => {
+    const { service, prisma } = make({ runStatus: 'finalized' });
+    prisma.payRun.findUnique.mockResolvedValue(finalizedRun);
+    prisma.payRunLine.findMany.mockResolvedValue([]);
+    await service.exportRun('run-1', { format: 'csv' }, user);
+    const where = (prisma.payRunLine.findMany.mock.calls[0][0] as { where: Record<string, unknown> }).where;
+    expect(where).toEqual({ pay_run_id: 'run-1' });
   });
 });

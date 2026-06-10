@@ -15,6 +15,7 @@ const CHAT_INTENTS = [
   'roster_summary',
   'business_summary',
   'unknown',
+  'rate_limited', // soft cap — a graceful "try again shortly" answer, not an error
 ] as const;
 type ChatIntent = (typeof CHAT_INTENTS)[number];
 

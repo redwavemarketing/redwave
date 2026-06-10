@@ -333,8 +333,11 @@ export class PayRunService {
     if (run.status !== 'finalized' && run.status !== 'exported') {
       throw new ConflictException('only a finalized pay run can be exported');
     }
+    // Scope the exported rows to the caller's reps — a manager exports only their roster, a rep only their
+    // own; admin/SA (null) export all. Without this an export would leak every rep's pay. — CLAUDE §5 (PII)
+    const repIds = await this.scopeRepIds(user);
     const lines = await this.prisma.payRunLine.findMany({
-      where: { pay_run_id: runId },
+      where: { pay_run_id: runId, ...(repIds ? { rep_id: { in: repIds } } : {}) },
       include: { rep: { select: { rep_code: true, full_name: true } } },
       orderBy: { rep: { rep_code: 'asc' } },
     });
