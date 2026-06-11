@@ -19,6 +19,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
     "seed:reset": "ts-node --transpile-only prisma/reset.ts",
+    "sa:reset": "ts-node --transpile-only scripts/reset-superadmin.ts",
     "prisma:studio": "prisma studio",
     "contract:export": "ts-node --transpile-only scripts/export-openapi.ts"
   },
