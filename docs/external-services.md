@@ -9,15 +9,24 @@
 > reads every credential from the **environment / secret store** — real keys go in
 > `backend/.env` (dev) or the host's secret manager (prod), **never into code or chat.**
 
-## 1. Object storage (file uploads) — REQUIRED for go-live
-- **WIRED → Supabase Storage (the same provider for all of):** expense receipts (`POST /v1/expense-receipts`),
-  **documents** (`POST /v1/documents` — the PDF original, per-signer stamped copies, the final all-signatures
-  copy, and saved-signature images), and **rep documents** (`POST /v1/reps/{id}/documents`). Files are stored
-  by **object path**; bytes are served only through RBAC/visibility-gated `…/file-url` endpoints that mint a
-  short-TTL **signed URL** on each access (never public). Env-gated + graceful: with the env below it's a real
-  upload; unset → a `local://` reference and file-url endpoints 404 (the workflow still functions).
+## 1. Object storage (file uploads) — IMPLEMENTED → Supabase Storage (private bucket)
+- **The unified pipeline (`POST /v1/files`)** backs user uploads — **expense receipts** (purpose=receipt) and
+  **document originals** (purpose=document): JPEG/PNG/PDF, ≤10 MB, the storage **path is SERVER-generated**
+  (`{purpose}s/yyyy/mm/uuid.ext` — never client-supplied), every upload is recorded in **`stored_files`**
+  (who/what/when + sha256 + original/display name), and consumers **CLAIM** the path at use time (must be the
+  caller's own upload; Admin/SA exempt) so a foreign/unknown reference can never be attached to a record.
+  Images are compressed in-browser before upload (max 2000px long edge → JPEG 0.8; HEIC decoded on iOS).
+- **Also on the same provider:** e-sign per-signer/final stamped copies + saved-signature images
+  (server-generated), and **rep documents** (`POST /v1/reps/{id}/documents`, its own multipart flow).
+- **Access:** the bucket is **PRIVATE — no public access ever**; bytes are served only through
+  RBAC/visibility-gated endpoints that mint a **short-TTL signed URL** per access (receipts: 60s via
+  `GET /v1/expense-items/{id}/receipt-url`; documents/signatures: the `…/file-url` endpoints). Upload AND
+  signed-URL issuance are **audited**.
+- **Fail-safe:** with the env unset, `POST /v1/files` + the new download endpoints return a clear **503
+  "file storage not configured"** — never a silent stub reference. (The legacy flows — rep docs, e-sign
+  copies, imports — keep their graceful `local://` fallback.)
   - **Credentials (env):** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (server-only secret),
-    `SUPABASE_STORAGE_BUCKET` (default `receipts`). Create the bucket first.
+    `SUPABASE_STORAGE_BUCKET` (default `receipts`). Create the PRIVATE bucket first.
 - **STILL STUBBED `s3://…`:** expense exports + billing statement/invoice exports (the server-recorded export
   artifact; the client-side file export is real). **Word→PDF conversion** for documents is deferred (PDF-only
   today) — a later enhancement (headless LibreOffice or a hosted converter, env-gated).

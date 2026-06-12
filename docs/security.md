@@ -78,6 +78,29 @@ The chatbot endpoint is per-user rate-limited (`CHATBOT_RPM`, in-memory 60s wind
 (`CHATBOT_DAILY_CAP`, from the persisted conversation count) to bound Gemini spend. Over the limit returns a
 **graceful 200** ("try again shortly"), never an error. Align `CHATBOT_DAILY_CAP` with the GCP budget alert.
 
+## 6b. File storage (Supabase — private bucket)
+
+- **Private bucket only — no public access ever.** Bytes are served exclusively through RBAC/visibility-gated
+  endpoints that mint a **short-TTL signed URL per access** (receipts 60s via
+  `GET /v1/expense-items/{id}/receipt-url`; documents/signatures via the `…/file-url` endpoints, which apply
+  the same scoping as the record reads). No long-lived URL is ever stored on a row.
+- **Service-role key is server-only** (`SUPABASE_SERVICE_ROLE_KEY`) — never shipped to the browser; the SPA
+  only ever sees minted signed URLs.
+- **Server-generated paths.** The unified `POST /v1/files` pipeline builds `{purpose}s/yyyy/mm/uuid.ext`
+  itself — a client never supplies a path or influences the key (no traversal, no collisions, no spoofed
+  extensions; the extension comes from the validated mime). Allowlist JPEG/PNG/PDF, ≤10 MB (422 otherwise).
+- **Claim validation.** Every upload is recorded in `stored_files` (uploader, mime, size, sha256, names,
+  timestamp). A consumer (expense receipt, document original) may only attach a path that exists there AND
+  was uploaded by the caller (Admin/SA exempt); unknown and foreign paths get the same 422 — no existence
+  leak. Document claims must be PDFs.
+- **Fail-safe, never fail-open:** storage unconfigured → `POST /v1/files` and the new download endpoints
+  return **503 "file storage not configured"** — broken/stub references are never minted on this pipeline.
+- **Audited:** uploads (`action: 'upload'`) and signed-URL issuance (`action: 'download'`, who/path/when)
+  land in the append-only audit log.
+- **No new permission** — `POST /v1/files` is authenticated-only (uploading creates only the caller's own
+  metadata row); the real gates are at claim time (expense create rules, `documents:create`) and at download
+  (the existing per-record visibility). The role-permission matrix is unchanged.
+
 ## 7. Secrets & rotation
 
 **No secret lives in the repo** — only `backend/.env.example` (placeholders). Production secrets stay only in
