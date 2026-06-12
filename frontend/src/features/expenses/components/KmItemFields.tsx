@@ -10,17 +10,12 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Controller, useFieldArray, useFormContext, useWatch } from 'react-hook-form';
 import { Banner, Button, DatePicker, FormField, IconButton, Input, RadioGroup } from '../../../components/ui';
 import { money } from '../../../lib/format/money';
-import { kmPreview } from '../km';
+import { kmPreview, TRIP_OPTIONS } from '../km';
 import { mapsEnabled } from '../maps.config';
 import { MapStops } from './MapStops';
 import type { TripType } from '../expenses.types';
 import type { ExpenseFormValues } from './expenseForm.schema';
 import styles from './expenses.module.css';
-
-const TRIP_OPTIONS = [
-  { value: 'single', label: 'Single trip (−30 km)' },
-  { value: 'round', label: 'Round trip (−60 km)' },
-];
 
 export function KmItemFields({ index }: { index: number }) {
   const { control, register, getValues, setValue, formState } = useFormContext<ExpenseFormValues>();
@@ -64,7 +59,10 @@ export function KmItemFields({ index }: { index: number }) {
       {mapsEnabled ? (
         <>
           <MapStops index={index} stopsError={stopsError} />
-          <FormField label="Total distance (km)" help="Auto-derived from the route — the server re-computes it.">
+          <FormField
+            label="Total distance (km)"
+            help="Auto-derived from the route (round trips include the return to the first stop) — the server re-computes it."
+          >
             <Input inputMode="decimal" readOnly value={totalKm ?? ''} placeholder="—" aria-label="Total distance" />
           </FormField>
         </>

@@ -11,6 +11,8 @@ import { Autocomplete, DirectionsRenderer, GoogleMap, useJsApiLoader } from '@re
 import { useFieldArray, useFormContext, useWatch } from 'react-hook-form';
 import { Button, FormField, IconButton, Input, LoadingSpinner } from '../../../components/ui';
 import { MAPS_BROWSER_KEY, MAPS_LIBRARIES, MAPS_LOADER_ID } from '../maps.config';
+import { routeCoords } from '../km';
+import type { TripType } from '../expenses.types';
 import type { ExpenseFormValues } from './expenseForm.schema';
 import styles from './expenses.module.css';
 
@@ -28,6 +30,7 @@ export function MapStops({ index, stopsError }: { index: number; stopsError?: st
   });
 
   const stops = useWatch({ control, name: `items.${index}.stops` }) ?? [];
+  const trip = (useWatch({ control, name: `items.${index}.trip_type` }) ?? 'round') as TripType;
   const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const acRefs = useRef<(google.maps.places.Autocomplete | null)[]>([]);
 
@@ -40,21 +43,24 @@ export function MapStops({ index, stopsError }: { index: number; stopsError?: st
     setValue(`items.${index}.stops.${k}.lng`, loc.lng().toFixed(SIX));
   };
 
-  // Geo-coordinates of stops that have been picked (in order). Re-derive the route when they change.
+  // Geo-coordinates of stops that have been picked (in order). Re-derive the route when they (or the
+  // trip type) change. A ROUND trip measures the CLOSED LOOP back to the first stop — mirrors the
+  // server's authoritative derivation (the map + auto-distance show what will be paid). — SRS EXP-004
   const coords = stops
     .map((s) => (s?.lat && s?.lng && s.lat !== '0' ? { lat: Number(s.lat), lng: Number(s.lng) } : null))
     .filter((c): c is { lat: number; lng: number } => c !== null);
-  const coordsKey = coords.map((c) => `${c.lat},${c.lng}`).join('|');
+  const measured = routeCoords(coords, trip);
+  const coordsKey = measured.map((c) => `${c.lat},${c.lng}`).join('|');
 
   useEffect(() => {
-    if (!isLoaded || coords.length < 2) {
+    if (!isLoaded || measured.length < 2) {
       setDirections(null);
       return;
     }
     const service = new google.maps.DirectionsService();
-    const origin = coords[0];
-    const destination = coords[coords.length - 1];
-    const waypoints = coords.slice(1, -1).map((location) => ({ location, stopover: true }));
+    const origin = measured[0];
+    const destination = measured[measured.length - 1];
+    const waypoints = measured.slice(1, -1).map((location) => ({ location, stopover: true }));
     let cancelled = false;
     service.route(
       { origin, destination, waypoints, travelMode: google.maps.TravelMode.DRIVING },
