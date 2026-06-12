@@ -385,7 +385,9 @@ export class ExpensesService {
       const tripType = item.km.trip_type as TripType;
       // Distance is AUTHORITATIVE server-side: re-derive from the stops via Maps when configured,
       // else fall back to the client total_km (no-geocoder mode). The amount is always computed here.
-      const routeKm = await this.maps.routeDistanceKm(item.km.stops);
+      // A ROUND trip measures the closed loop (return to the first stop appended automatically);
+      // the −30/−60 deduction itself is unchanged (km.logic). — BRD §6.3 / SRS EXP-004
+      const routeKm = await this.maps.routeDistanceKm(item.km.stops, { roundTrip: tripType === 'round' });
       const totalKm = routeKm ?? new Decimal(item.km.total_km);
       const { deductionKm, billableKm, computedAmount } = computeKm(totalKm, tripType);
       return {
