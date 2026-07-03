@@ -9,15 +9,23 @@ function make() {
 }
 
 describe('ExpensePayrunProvider.getApprovedExpenseTotal (Pay Run seam)', () => {
-  it('sums the rep’s approved item amounts for the period (exact Decimal)', async () => {
+  it('sums the rep’s approved item FROZEN CAD values for the period (exact Decimal, #12)', async () => {
     const { provider, prisma } = make();
     prisma.expenseItem.findMany.mockResolvedValue([
-      { amount: decLike('31.50') },
-      { amount: decLike('42.50') },
-      { amount: decLike('0.01') },
+      { amount_cad: decLike('31.50') },
+      { amount_cad: decLike('42.50') }, // e.g. a foreign item already converted at approval
+      { amount_cad: decLike('0.01') },
     ]);
     const total = await provider.getApprovedExpenseTotal('rep-1', 'P1');
     expect(total.toFixed(2)).toBe('74.01');
+  });
+
+  it('reads amount_cad (NOT amount) — a foreign expense reaches the pay run already in CAD (#12)', async () => {
+    const { provider, prisma } = make();
+    prisma.expenseItem.findMany.mockResolvedValue([]);
+    await provider.getApprovedExpenseTotal('rep-1', 'P1');
+    const select = (prisma.expenseItem.findMany.mock.calls[0][0] as { select: Record<string, unknown> }).select;
+    expect(select).toEqual({ amount_cad: true });
   });
 
   // ITEM-FIRST + EXP-009: the sum is scoped on the ITEM's own pay_period_id (derived from its

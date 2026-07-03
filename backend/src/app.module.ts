@@ -17,6 +17,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { AuditModule } from './common/audit/audit.module';
 import { ScopeModule } from './common/scope/scope.module';
 import { EmailModule } from './common/email/email.module';
+import { FxModule } from './common/fx/fx.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { RolesModule } from './modules/roles/roles.module';
@@ -45,6 +46,7 @@ import { ReconciliationModule } from './modules/reconciliation/reconciliation.mo
     AuditModule,
     ScopeModule,
     EmailModule,
+    FxModule,
     AuthModule,
     UsersModule,
     RolesModule,

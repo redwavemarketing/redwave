@@ -9390,8 +9390,14 @@ components:
         amount:
           type: string
           example: "42.50"
-          description: Amount (decimal string). Required for non-km items; ignored for km
-            (server-computed).
+          description: Amount (decimal string) in `currency`. Required for non-km items;
+            ignored for km (server-computed, CAD).
+        currency:
+          type: string
+          example: CAD
+          description: Currency the amount is in (ISO 4217; default CAD). A foreign amount
+            freezes its FX rate + CAD value at APPROVAL (#12). km items are
+            always CAD.
         is_personal:
           type: boolean
           description: Personal / do-not-reimburse (EXP-012). Excluded from the
@@ -9538,7 +9544,28 @@ components:
         amount:
           type: string
           example: "45.00"
-          description: Decimal string. For km, the server computes it.
+          description: Decimal string in `original_currency`. For km, the server computes
+            it (CAD).
+        original_currency:
+          type: string
+          example: CAD
+          description: Currency of `amount` (ISO 4217).
+        fx_rate:
+          type: string
+          nullable: true
+          example: "1.00000000"
+          description: Frozen original→CAD rate (8 dp); null until an approved foreign
+            item is converted; 1 for CAD.
+        fx_rate_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: The frozen rate’s day (audit).
+        amount_cad:
+          type: string
+          nullable: true
+          example: "45.00"
+          description: Frozen CAD value (= amount × fx_rate); the pay run reads THIS (#12).
         is_personal:
           type: boolean
           description: Personal / do-not-reimburse — excluded from reimbursable total +
@@ -9594,6 +9621,10 @@ components:
         - client_id
         - expense_date
         - amount
+        - original_currency
+        - fx_rate
+        - fx_rate_date
+        - amount_cad
         - is_personal
         - tags
         - description
@@ -9675,8 +9706,14 @@ components:
         amount:
           type: string
           example: "42.50"
-          description: Amount (decimal string). Required for non-km items; ignored for km
-            (server-computed).
+          description: Amount (decimal string) in `currency`. Required for non-km items;
+            ignored for km (server-computed, CAD).
+        currency:
+          type: string
+          example: CAD
+          description: Currency the amount is in (ISO 4217; default CAD). A foreign amount
+            freezes its FX rate + CAD value at APPROVAL (#12). km items are
+            always CAD.
         is_personal:
           type: boolean
           description: Personal / do-not-reimburse (EXP-012). Excluded from the
@@ -9715,6 +9752,13 @@ components:
         note:
           type: string
           description: Optional note (reason for rejection / send-back).
+        fx_rate:
+          type: string
+          example: "1.36500000"
+          description: "FX override (decimal string, up to 8 dp): the confirmed
+            original→CAD rate to FREEZE when approving a FOREIGN expense.
+            Omitted → the FX source (Bank of Canada) supplies it; if neither,
+            approving a foreign item is rejected (422). Ignored for CAD items."
       required:
         - decision
     FieldConfigResponse:
@@ -10207,6 +10251,13 @@ components:
         pay_period_id:
           type: string
           description: "The pay period to bill (governs which sales by sale_date, #7)."
+        fx_rate:
+          type: string
+          example: "1.36500000"
+          description: "FX override (decimal string, up to 8 dp): the confirmed
+            currency→CAD rate to FREEZE at issue for a FOREIGN client. Omitted →
+            the FX source supplies it; if neither, issuing a foreign document is
+            rejected (422). Ignored for CAD clients."
       required:
         - pay_period_id
     StatementPreviewLineResponse:
@@ -10297,7 +10348,27 @@ components:
         total_amount:
           type: string
           example: "140.00"
-          description: Decimal string. Server-computed statement total (CAD, no GST).
+          description: Decimal string. Server-computed statement total in `currency`, no
+            GST.
+        currency:
+          type: string
+          example: CAD
+          description: Billing currency (the client’s currency at issue).
+        fx_rate:
+          type: string
+          example: "1.00000000"
+          description: Frozen currency→CAD rate (8 dp); 1 for CAD; never re-converted (#12).
+        fx_rate_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: The frozen rate’s day (audit).
+        amount_cad:
+          type: string
+          nullable: true
+          example: "140.00"
+          description: Frozen CAD value (= total_amount × fx_rate); reconciliation reads
+            THIS.
         file_url:
           type: string
           nullable: true
@@ -10324,6 +10395,10 @@ components:
         - client_id
         - pay_period_id
         - total_amount
+        - currency
+        - fx_rate
+        - fx_rate_date
+        - amount_cad
         - file_url
         - generated_by
         - generated_at
@@ -10350,7 +10425,26 @@ components:
         total_commission:
           type: string
           example: "140.00"
-          description: "Decimal string = the billing-stream statement total (CAD, #3)."
+          description: Decimal string = the billing-stream statement total in `currency`
+            (#3).
+        currency:
+          type: string
+          example: CAD
+          description: Billing currency (the client’s currency at issue).
+        fx_rate:
+          type: string
+          example: "1.00000000"
+          description: Frozen currency→CAD rate (8 dp); 1 for CAD; never re-converted (#12).
+        fx_rate_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: The frozen rate’s day (audit).
+        amount_cad:
+          type: string
+          nullable: true
+          example: "140.00"
+          description: Frozen CAD value (= total_commission × fx_rate).
         file_url:
           type: string
           nullable: true
@@ -10370,6 +10464,10 @@ components:
         - client_id
         - pay_period_id
         - total_commission
+        - currency
+        - fx_rate
+        - fx_rate_date
+        - amount_cad
         - file_url
         - generated_by
         - generated_at

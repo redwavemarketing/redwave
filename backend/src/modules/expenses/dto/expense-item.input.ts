@@ -86,11 +86,20 @@ export class ExpenseItemInput {
 
   @ApiPropertyOptional({
     example: '42.50',
-    description: 'Amount (decimal string). Required for non-km items; ignored for km (server-computed).',
+    description: 'Amount (decimal string) in `currency`. Required for non-km items; ignored for km (server-computed, CAD).',
   })
   @IsOptional()
   @Matches(MONEY, { message: 'amount must be a decimal string with up to 2 decimal places' })
   amount?: string;
+
+  @ApiPropertyOptional({
+    example: 'CAD',
+    description:
+      'Currency the amount is in (ISO 4217; default CAD). A foreign amount freezes its FX rate + CAD value at APPROVAL (#12). km items are always CAD.',
+  })
+  @IsOptional()
+  @Matches(/^[A-Z]{3}$/, { message: 'currency must be a 3-letter ISO 4217 code' })
+  currency?: string;
 
   @ApiPropertyOptional({
     description:
