@@ -9266,6 +9266,12 @@ components:
           description: Personal / do-not-reimburse (EXP-012). Excluded from the
             reimbursable total, the pay run, and all client output. Default
             false.
+        tags:
+          description: Custom free-form tags (client + channel, EXP-002a). Up to 20 tags,
+            ≤50 chars each.
+          type: array
+          items:
+            type: string
         description:
           type: string
           example: Lunch with client
@@ -9406,6 +9412,13 @@ components:
           type: boolean
           description: Personal / do-not-reimburse — excluded from reimbursable total +
             pay run + client output (EXP-012).
+        tags:
+          nullable: true
+          description: Custom free-form tags (client + channel, EXP-002a). Null on legacy
+            rows.
+          type: array
+          items:
+            type: string
         description:
           type: string
         receipt_url:
@@ -9451,6 +9464,7 @@ components:
         - expense_date
         - amount
         - is_personal
+        - tags
         - description
         - receipt_url
         - status
@@ -9537,6 +9551,12 @@ components:
           description: Personal / do-not-reimburse (EXP-012). Excluded from the
             reimbursable total, the pay run, and all client output. Default
             false.
+        tags:
+          description: Custom free-form tags (client + channel, EXP-002a). Up to 20 tags,
+            ≤50 chars each.
+          type: array
+          items:
+            type: string
         description:
           type: string
           example: Lunch with client

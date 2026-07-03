@@ -7,6 +7,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ExpenseCategory, TripType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -98,6 +99,17 @@ export class ExpenseItemInput {
   @IsOptional()
   @IsBoolean()
   is_personal?: boolean;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Custom free-form tags (client + channel, EXP-002a). Up to 20 tags, ≤50 chars each.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  @MaxLength(50, { each: true })
+  tags?: string[];
 
   @ApiProperty({ example: 'Lunch with client' })
   @IsString()

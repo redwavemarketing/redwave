@@ -6,7 +6,7 @@
  */
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Button, Card, PageHeader } from '../../../components/ui';
+import { Badge, Button, Card, PageHeader } from '../../../components/ui';
 import { DataState } from '../../../components/data/DataState';
 import { useAuth } from '../../../auth/useAuth';
 import { useCan } from '../../../auth/useCan';
@@ -93,6 +93,26 @@ export default function ExpenseDetailPage() {
                   <dd className="mono">{displayDate(item.expense_date)}</dd>
                   <dt>Description</dt>
                   <dd>{item.description}</dd>
+                  {item.tags && item.tags.length > 0 && (
+                    <>
+                      <dt>Tags</dt>
+                      <dd className={styles.tagList}>
+                        {item.tags.map((t) => (
+                          <Badge key={t} tone="info">
+                            {t}
+                          </Badge>
+                        ))}
+                      </dd>
+                    </>
+                  )}
+                  {item.is_personal && (
+                    <>
+                      <dt>Personal</dt>
+                      <dd>
+                        <Badge tone="neutral">Do not reimburse</Badge>
+                      </dd>
+                    </>
+                  )}
                   {canViewReps && (
                     <>
                       <dt>Rep</dt>

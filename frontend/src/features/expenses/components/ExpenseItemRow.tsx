@@ -5,7 +5,7 @@
  */
 import { Trash2 } from 'lucide-react';
 import { Controller, useFormContext, useWatch } from 'react-hook-form';
-import { FormField, IconButton, Select, Switch } from '../../../components/ui';
+import { FormField, IconButton, Input, Select, Switch } from '../../../components/ui';
 import { todayIso } from '../../../lib/format/date';
 import { KmItemFields } from './KmItemFields';
 import { StandardItemFields } from './StandardItemFields';
@@ -67,7 +67,27 @@ export function ExpenseItemRow({
         <StandardItemFields index={index} requiresReceipt={requiresReceipt} clientOptions={clientOptions} />
       )}
 
-      {/* Common field (all categories): personal / do-not-reimburse (EXP-012). */}
+      {/* Common fields (all categories): custom tags (EXP-002a) + personal toggle (EXP-012). */}
+      <Controller
+        control={control}
+        name={`items.${index}.tags`}
+        render={({ field }) => (
+          <FormField label="Tags" help="Comma-separated (e.g. channel, campaign).">
+            <Input
+              value={(field.value ?? []).join(', ')}
+              onChange={(e) =>
+                field.onChange(
+                  e.target.value
+                    .split(',')
+                    .map((t) => t.trim())
+                    .filter(Boolean),
+                )
+              }
+              placeholder="e.g. door-to-door, spring-promo"
+            />
+          </FormField>
+        )}
+      />
       <Controller
         control={control}
         name={`items.${index}.is_personal`}

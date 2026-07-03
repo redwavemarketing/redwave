@@ -88,6 +88,9 @@ export class ExpenseItemResponse {
   @ApiProperty({ description: 'Personal / do-not-reimburse — excluded from reimbursable total + pay run + client output (EXP-012).' })
   is_personal!: boolean;
 
+  @ApiProperty({ type: [String], nullable: true, description: 'Custom free-form tags (client + channel, EXP-002a). Null on legacy rows.' })
+  tags!: string[] | null;
+
   @ApiProperty()
   description!: string;
 
