@@ -85,6 +85,9 @@ export class ExpenseItemResponse {
   @ApiProperty({ type: String, example: '45.00', description: 'Decimal string. For km, the server computes it.' })
   amount!: string;
 
+  @ApiProperty({ description: 'Personal / do-not-reimburse — excluded from reimbursable total + pay run + client output (EXP-012).' })
+  is_personal!: boolean;
+
   @ApiProperty()
   description!: string;
 

@@ -56,6 +56,7 @@ interface ItemContent {
   client_id: string | null;
   expense_date: Date;
   amount: string;
+  is_personal: boolean;
   description: string;
   receipt_url: string | null;
   pay_period_id: string | null;
@@ -245,6 +246,7 @@ export class ExpensesService {
           client_id: content.client_id,
           expense_date: content.expense_date,
           amount: content.amount,
+          is_personal: content.is_personal,
           description: content.description,
           receipt_url: content.receipt_url,
           pay_period_id: content.pay_period_id,
@@ -437,6 +439,7 @@ export class ExpensesService {
         client_id: item.client_id ?? null,
         expense_date: dateOnly(item.expense_date),
         amount: computedAmount.toFixed(2),
+        is_personal: item.is_personal ?? false,
         description: item.description,
         receipt_url: null, // km never requires a receipt
         pay_period_id: payPeriodId,
@@ -487,6 +490,7 @@ export class ExpensesService {
       client_id: item.client_id ?? null,
       expense_date: dateOnly(item.expense_date),
       amount: item.amount,
+      is_personal: item.is_personal ?? false,
       description: item.description,
       receipt_url: item.receipt_url ?? null,
       pay_period_id: payPeriodId,

@@ -69,6 +69,7 @@ export function ExpenseItemsTable({ filters, canReview }: { filters: ExpenseFilt
           <span className={styles.categoryCell}>
             {categoryLabel(it.category, configs.data)}
             {it.km_log && <Badge tone="info">KM</Badge>}
+            {it.is_personal && <Badge tone="neutral">Personal</Badge>}
           </span>
         ),
       },

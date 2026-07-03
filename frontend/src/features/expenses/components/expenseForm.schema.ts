@@ -25,6 +25,8 @@ export interface ItemValue {
   description: string;
   amount?: string;
   receipt_url?: string;
+  /** Personal / do-not-reimburse (EXP-012) — excluded from reimbursable totals + pay run + client output. */
+  is_personal?: boolean;
   trip_type?: TripType;
   total_km?: string;
   stops?: StopValue[];
@@ -44,6 +46,7 @@ export function makeExpenseSchema(requiresReceipt: (category: string) => boolean
       description: z.string().min(1, 'Required').max(255),
       amount: z.string().optional(),
       receipt_url: z.string().optional(),
+      is_personal: z.boolean().optional(),
       trip_type: z.enum(['single', 'round']).optional(),
       total_km: z.string().optional(),
       stops: z
@@ -81,6 +84,7 @@ function toItemInput(it: ItemValue): ExpenseItemInput {
     client_id: it.client_id || undefined,
     expense_date: it.expense_date,
     description: it.description,
+    is_personal: it.is_personal || undefined,
   };
   if (it.category === 'km') {
     return {
@@ -110,7 +114,7 @@ export function buildItemBody(values: ExpenseFormValues): UpdateItemBody {
 /** A fresh blank item for a given category (km gets a trip type + two empty stops). */
 export function blankItem(category: string, expense_date: string): ItemValue {
   if (category === 'km') {
-    return { category, expense_date, description: '', trip_type: 'round', total_km: '', stops: [{ address: '' }, { address: '' }] };
+    return { category, expense_date, description: '', is_personal: false, trip_type: 'round', total_km: '', stops: [{ address: '' }, { address: '' }] };
   }
-  return { category, expense_date, description: '', amount: '', receipt_url: undefined };
+  return { category, expense_date, description: '', amount: '', receipt_url: undefined, is_personal: false };
 }

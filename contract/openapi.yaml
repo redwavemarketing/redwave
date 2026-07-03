@@ -9261,6 +9261,11 @@ components:
           example: "42.50"
           description: Amount (decimal string). Required for non-km items; ignored for km
             (server-computed).
+        is_personal:
+          type: boolean
+          description: Personal / do-not-reimburse (EXP-012). Excluded from the
+            reimbursable total, the pay run, and all client output. Default
+            false.
         description:
           type: string
           example: Lunch with client
@@ -9397,6 +9402,10 @@ components:
           type: string
           example: "45.00"
           description: Decimal string. For km, the server computes it.
+        is_personal:
+          type: boolean
+          description: Personal / do-not-reimburse — excluded from reimbursable total +
+            pay run + client output (EXP-012).
         description:
           type: string
         receipt_url:
@@ -9441,6 +9450,7 @@ components:
         - client_id
         - expense_date
         - amount
+        - is_personal
         - description
         - receipt_url
         - status
@@ -9522,6 +9532,11 @@ components:
           example: "42.50"
           description: Amount (decimal string). Required for non-km items; ignored for km
             (server-computed).
+        is_personal:
+          type: boolean
+          description: Personal / do-not-reimburse (EXP-012). Excluded from the
+            reimbursable total, the pay run, and all client output. Default
+            false.
         description:
           type: string
           example: Lunch with client

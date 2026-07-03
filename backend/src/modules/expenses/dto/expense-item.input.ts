@@ -9,6 +9,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -89,6 +90,14 @@ export class ExpenseItemInput {
   @IsOptional()
   @Matches(MONEY, { message: 'amount must be a decimal string with up to 2 decimal places' })
   amount?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Personal / do-not-reimburse (EXP-012). Excluded from the reimbursable total, the pay run, and all client output. Default false.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  is_personal?: boolean;
 
   @ApiProperty({ example: 'Lunch with client' })
   @IsString()

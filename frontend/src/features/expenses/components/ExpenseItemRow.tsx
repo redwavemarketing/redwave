@@ -5,7 +5,7 @@
  */
 import { Trash2 } from 'lucide-react';
 import { Controller, useFormContext, useWatch } from 'react-hook-form';
-import { FormField, IconButton, Select } from '../../../components/ui';
+import { FormField, IconButton, Select, Switch } from '../../../components/ui';
 import { todayIso } from '../../../lib/format/date';
 import { KmItemFields } from './KmItemFields';
 import { StandardItemFields } from './StandardItemFields';
@@ -66,6 +66,19 @@ export function ExpenseItemRow({
       ) : (
         <StandardItemFields index={index} requiresReceipt={requiresReceipt} clientOptions={clientOptions} />
       )}
+
+      {/* Common field (all categories): personal / do-not-reimburse (EXP-012). */}
+      <Controller
+        control={control}
+        name={`items.${index}.is_personal`}
+        render={({ field }) => (
+          <Switch
+            label="Personal (do not reimburse)"
+            checked={!!field.value}
+            onCheckedChange={(c) => field.onChange(c === true)}
+          />
+        )}
+      />
     </div>
   );
 }

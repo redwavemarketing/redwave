@@ -959,6 +959,7 @@ model ExpenseItem {
   client            Client?             @relation(fields: [client_id], references: [id])
   expense_date      DateTime            @db.Date
   amount            Decimal             @db.Decimal(12, 2)
+  is_personal       Boolean             @default(false) // do-not-reimburse: excluded from reimbursable total + pay run + client output (EXP-012)
   description       String
   receipt_url       String? // mandatory except km
   status            ExpenseReportStatus
