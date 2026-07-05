@@ -52,6 +52,8 @@ export default function ClientDetailPage() {
               <dl className={styles.dl} style={{ marginTop: 'var(--space-3)' }}>
                 <dt>Market</dt>
                 <dd>{c.market}</dd>
+                <dt>Billing currency</dt>
+                <dd className="mono">{c.currency}</dd>
                 <dt>Supplies MPU IDs</dt>
                 <dd>{c.supplies_mpu_id ? 'Yes' : 'No'}</dd>
                 <dt>Created</dt>
@@ -81,7 +83,7 @@ export default function ClientDetailPage() {
             </Card>
 
             <Card title="Billing rates">
-              <BillingRatesPanel clientId={c.id} products={productRows} />
+              <BillingRatesPanel clientId={c.id} products={productRows} currency={c.currency} />
             </Card>
           </>
         )}

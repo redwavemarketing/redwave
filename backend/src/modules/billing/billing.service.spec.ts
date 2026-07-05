@@ -1,4 +1,5 @@
 import { UnprocessableEntityException, NotFoundException } from '@nestjs/common';
+import { Decimal } from 'decimal.js';
 import { StatementService } from './statement.service';
 
 const d = (s: string) => new Date(`${s}T00:00:00.000Z`);
@@ -190,6 +191,24 @@ describe('StatementService.generate — FX frozen at ISSUE (#12)', () => {
     expect(data.fx_rate).toBe('1.00000000');
     expect(data.amount_cad).toBe('60.00');
     expect(fx.getRateToCad).not.toHaveBeenCalled();
+  });
+
+  // The FIRST real source-driven conversion: a USD client, NO override → resolveIssueFx pulls the rate from
+  // the FX source (Bank of Canada). 250 USD × 1.365 = 341.25 CAD frozen at issue. — Meeting 3 rate-grid track
+  it('USD client + FX SOURCE (no override) → freezes the source rate + amount_cad = total × rate', async () => {
+    const { service, tx, prisma, fx } = make({
+      sales: [sale('s1', 'CTI-Cust', '2026-01-10', [{ product_id: 'p', name: 'Internet' }])],
+      rates: [rate('p', '2026-01-01', null, '250.00')],
+    });
+    prisma.client.findUnique.mockResolvedValueOnce({ id: 'c1', client_code: 'CTI', currency: 'USD' });
+    fx.getRateToCad.mockResolvedValue(new Decimal('1.365'));
+    await service.generate('c1', 'P1', 'admin'); // NO override → the source supplies the rate
+    expect(fx.getRateToCad).toHaveBeenCalledWith('USD', expect.any(Date));
+    const data = fxData(tx);
+    expect(data.currency).toBe('USD');
+    expect(data.fx_rate).toBe('1.36500000');
+    expect(data.total_amount).toBe('250.00'); // in USD
+    expect(data.amount_cad).toBe('341.25'); // 250 × 1.365, frozen
   });
 
   it('USD client + override → freezes currency USD, the override rate, and amount_cad', async () => {

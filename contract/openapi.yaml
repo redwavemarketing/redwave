@@ -104,6 +104,62 @@ paths:
                       additionalProperties: true
       tags:
         - Health
+  /v1/currencies:
+    get:
+      description: Authenticated reference read (no permission) — the allowed
+        billing/expense currencies.
+      operationId: CurrenciesController_list_v1
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CurrencyResponse"
+        "400":
+          description: Bad Request — validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "401":
+          description: Unauthorized — missing/invalid token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "403":
+          description: Forbidden — RBAC denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "409":
+          description: Conflict — invalid state transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+        "422":
+          description: Unprocessable Entity — domain rule violated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelopeDto"
+      security:
+        - bearer: []
+      summary: List active currencies (catalogue)
+      tags:
+        - Currencies
   /v1/auth/login:
     post:
       description: "Public. On success sets the rw_refresh (httpOnly) + rw_csrf
@@ -7071,6 +7127,30 @@ components:
           $ref: "#/components/schemas/ErrorBodyDto"
       required:
         - error
+    CurrencyResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          example: CAD
+          description: ISO 4217 code (the catalogue key).
+        name:
+          type: string
+          example: Canadian Dollar
+        symbol:
+          type: string
+          example: $
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - code
+        - name
+        - symbol
+        - is_active
+        - created_at
     LoginDto:
       type: object
       properties:
@@ -7942,6 +8022,11 @@ components:
           enum:
             - CA
             - US
+        currency:
+          type: string
+          example: CAD
+          description: Billing currency (ISO 4217). All billing rates/documents are in it;
+            rolls up to CAD via frozen FX (#12).
         supplies_mpu_id:
           type: boolean
         is_active:
@@ -7959,6 +8044,7 @@ components:
         - client_code
         - name
         - market
+        - currency
         - supplies_mpu_id
         - is_active
         - created_at
@@ -8025,6 +8111,12 @@ components:
           enum:
             - CA
             - US
+        currency:
+          type: string
+          example: CAD
+          description: Billing currency (ISO 4217; default CAD). All of this client’s
+            billing rates + documents are in it; rolls up to CAD via frozen FX
+            (#12).
         supplies_mpu_id:
           type: boolean
           description: Whether the partner supplies per-house MPU IDs.
@@ -8050,6 +8142,12 @@ components:
           enum:
             - CA
             - US
+        currency:
+          type: string
+          example: USD
+          description: "Billing currency (ISO 4217). Editable only while the client has no
+            ISSUED statement/invoice (then locked to keep frozen billing history
+            coherent, #12)."
         supplies_mpu_id:
           type: boolean
         is_active:

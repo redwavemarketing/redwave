@@ -7,6 +7,7 @@ import { Trash2 } from 'lucide-react';
 import { Controller, useFormContext, useWatch } from 'react-hook-form';
 import { FormField, IconButton, Input, Select, Switch } from '../../../components/ui';
 import { todayIso } from '../../../lib/format/date';
+import { useCurrencies } from '../../currencies/api/useCurrencies';
 import { KmItemFields } from './KmItemFields';
 import { StandardItemFields } from './StandardItemFields';
 import { blankItem, type ExpenseFormValues } from './expenseForm.schema';
@@ -30,6 +31,18 @@ export function ExpenseItemRow({
   const category = useWatch({ control, name: `items.${index}.category` });
   const requiresReceipt = !!configs.find((c) => c.category_key === category)?.requires_receipt;
   const categoryOptions = configs.filter((c) => c.is_active).map((c) => ({ value: c.category_key, label: c.label }));
+  // Per-item currency (km is always CAD server-side → the picker is locked for km).
+  const currencies = useCurrencies();
+  const isKm = category === 'km';
+  const currentCurrency = useWatch({ control, name: `items.${index}.currency` });
+  // Always include CAD + the item's current currency, so an edited foreign item's value still renders even
+  // while the catalogue loads or the fetch fails — never a CAD-only list that drops the value (H1).
+  const currencyOptions = (() => {
+    const opts = new Map<string, string>([['CAD', 'CAD · Canadian Dollar']]);
+    for (const c of currencies.data ?? []) opts.set(c.code, `${c.code} · ${c.name}`);
+    if (currentCurrency && !opts.has(currentCurrency)) opts.set(currentCurrency, currentCurrency);
+    return [...opts].map(([value, label]) => ({ value, label }));
+  })();
 
   const changeCategory = (newCat: string) => {
     // Reset category-specific fields when the category changes (keep the date + description).
@@ -67,7 +80,24 @@ export function ExpenseItemRow({
         <StandardItemFields index={index} requiresReceipt={requiresReceipt} clientOptions={clientOptions} />
       )}
 
-      {/* Common fields (all categories): custom tags (EXP-002a) + personal toggle (EXP-012). */}
+      {/* Common fields (all categories): currency (#12) + custom tags (EXP-002a) + personal toggle (EXP-012). */}
+      <Controller
+        control={control}
+        name={`items.${index}.currency`}
+        render={({ field }) => (
+          <FormField
+            label="Currency"
+            help={isKm ? 'Kilometres are always reimbursed in CAD.' : 'A foreign amount freezes its CAD value at approval.'}
+          >
+            <Select
+              options={currencyOptions}
+              value={isKm ? 'CAD' : field.value || 'CAD'}
+              onValueChange={field.onChange}
+              disabled={isKm || currencies.isLoading}
+            />
+          </FormField>
+        )}
+      />
       <Controller
         control={control}
         name={`items.${index}.tags`}

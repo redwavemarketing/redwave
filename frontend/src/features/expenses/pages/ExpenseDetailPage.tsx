@@ -84,11 +84,19 @@ export default function ExpenseDetailPage() {
               <Card title="Details">
                 <div className={styles.detailHead}>
                   <ExpenseStatusBadge status={item.status} />
-                  <strong className="mono">{money(item.amount)}</strong>
+                  <strong className="mono">{money(item.amount, item.original_currency)}</strong>
                 </div>
                 <dl className={styles.dl} style={{ marginTop: 'var(--space-3)' }}>
                   <dt>Category</dt>
                   <dd>{categoryLabel(item.category, configs.data)}</dd>
+                  {item.original_currency !== 'CAD' && (
+                    <>
+                      <dt>CAD value</dt>
+                      <dd className="mono">
+                        {item.amount_cad ? `${money(item.amount_cad)} (rate ${item.fx_rate})` : 'Will freeze at approval'}
+                      </dd>
+                    </>
+                  )}
                   <dt>Date</dt>
                   <dd className="mono">{displayDate(item.expense_date)}</dd>
                   <dt>Description</dt>
@@ -176,7 +184,7 @@ export default function ExpenseDetailPage() {
                     Edit
                   </Button>
                 )}
-                {reviewable && <ReviewActions itemId={item.id} onDone={() => q.refetch()} />}
+                {reviewable && <ReviewActions item={item} onDone={() => q.refetch()} />}
                 <Button variant="tertiary" onClick={() => navigate('/expenses')}>
                   Back to expenses
                 </Button>
