@@ -340,9 +340,9 @@ export async function seedBootstrap(prisma: PrismaClient): Promise<{ superAdminU
     });
   }
 
-  // 9b. Document sequences — the gapless statement/invoice counters. Idempotent: NEVER reset an existing
-  //     counter (that would repeat/gap numbers); only create it if missing. — BRD §8 (gapless numbering)
-  for (const key of ['statement', 'invoice']) {
+  // 9b. Document sequences — the gapless statement/invoice/client-expense-doc counters. Idempotent: NEVER
+  //     reset an existing counter (that would repeat/gap numbers); only create it if missing. — BRD §8
+  for (const key of ['statement', 'invoice', 'client_expense']) {
     await prisma.documentSequence.upsert({
       where: { key },
       update: {}, // preserve the current value on re-seed
