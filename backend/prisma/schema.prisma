@@ -680,17 +680,21 @@ model Product {
 // CLIENT BILLING RATE — what Redwave charges the CLIENT. Separate stream from
 // commission_* and never joined with it. — CLAUDE.md §3 #3
 model ClientBillingRate {
-  id             String    @id @default(uuid()) @db.Uuid
-  client_id      String    @db.Uuid
-  client         Client    @relation(fields: [client_id], references: [id])
-  product_id     String?   @db.Uuid
-  product        Product?  @relation(fields: [product_id], references: [id])
-  rate_kind      RateKind
-  amount         Decimal   @db.Decimal(12, 2)
-  effective_from DateTime  @db.Date
-  effective_to   DateTime? @db.Date
-  created_by     String    @db.Uuid
-  creator        User      @relation("BillingRateCreatedBy", fields: [created_by], references: [id])
+  id                   String    @id @default(uuid()) @db.Uuid
+  client_id            String    @db.Uuid
+  client               Client    @relation(fields: [client_id], references: [id])
+  product_id           String?   @db.Uuid
+  product              Product?  @relation(fields: [product_id], references: [id])
+  rate_kind            RateKind
+  amount               Decimal   @db.Decimal(12, 2)
+  // For rate_kind='bundle_bonus' ONLY: the product-type catalogue keys that must ALL be present on a sale
+  // for the bundle to apply (e.g. ['home_phone','tv']). Stored SORTED (deterministic scope key). Empty for
+  // every other kind. — Meeting 3 (configurable bundles, not special-cased), SRS CLNT-003/BILL-013
+  bundle_product_types String[]  @default([])
+  effective_from       DateTime  @db.Date
+  effective_to         DateTime? @db.Date
+  created_by           String    @db.Uuid
+  creator              User      @relation("BillingRateCreatedBy", fields: [created_by], references: [id])
 
   @@map("client_billing_rates")
 }
