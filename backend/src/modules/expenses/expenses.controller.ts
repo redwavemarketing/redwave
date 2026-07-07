@@ -127,12 +127,13 @@ export class ExpenseItemsController {
   }
 
   @Patch(':id')
-  @RequirePermission('expenses', 'edit')
+  @RequirePermission('expenses', 'create')
   @ApiOperation({
     summary: 'Edit an expense item',
     description:
-      'Requires expenses:edit. Editable pre-approval; once approved, only a Super Admin may edit (EXP-007). ' +
-      'The full item content is re-submitted and replaces the item (km log re-derived).',
+      'Floor: expenses:create; the SERVICE is the real gate (§5) — the OWNER may edit while UNAPPROVED, and ' +
+      'once APPROVED only an Admin/Super Admin may correct it (EXP-007). The full item content is re-submitted ' +
+      '(km log re-derived).',
   })
   @ApiOkResponse({ type: ExpenseItemResponse })
   edit(
@@ -144,10 +145,10 @@ export class ExpenseItemsController {
   }
 
   @Delete(':id')
-  @RequirePermission('expenses', 'delete')
+  @RequirePermission('expenses', 'create')
   @ApiOperation({
     summary: 'Delete an expense item',
-    description: 'Requires expenses:delete. Only a not-yet-approved item may be removed (scoped).',
+    description: 'Floor: expenses:create; service gate (§5) — the OWNER (or expenses:delete) may remove an UNAPPROVED item; approved items are preserved (422).',
   })
   @ApiOkResponse({ description: 'Deleted.' })
   remove(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user: AuthUser) {

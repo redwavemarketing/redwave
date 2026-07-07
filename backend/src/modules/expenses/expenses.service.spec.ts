@@ -43,10 +43,13 @@ function make() {
     payPeriod: { findFirst: jest.fn().mockResolvedValue({ id: 'P1' }) },
     expenseFieldConfig: { findMany: jest.fn().mockResolvedValue(CONFIGS) },
     rep: { findUnique: jest.fn().mockResolvedValue(null) },
+    // The folder every item lives in (owner = 'u1', rep = 'rep-1') — assertManageableReport reads it.
+    expenseReport: { findUnique: jest.fn().mockResolvedValue({ id: 'r1', submitted_by: 'u1', rep_id: 'rep-1' }) },
     expenseItem: {
       findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       update: jest
         .fn()
         .mockResolvedValue({ id: 'i1', status: 'approved', submitted_by: 'u1', expense_date: new Date('2026-03-10T00:00:00.000Z'), pay_period_id: 'P1' }),
@@ -102,7 +105,7 @@ const mealItem = (receipt = true): ExpenseItemInput => ({
   ...(receipt ? { receipt_url: 'receipts/2026/06/r.jpg' } : {}),
 });
 
-const dto = (items: ExpenseItemInput[]): CreateExpenseItemsDto => ({ items });
+const dto = (items: ExpenseItemInput[]): CreateExpenseItemsDto => ({ expense_report_id: 'r1', items });
 
 const createdItems = (tx: ReturnType<typeof make>['tx']) =>
   tx.expenseItem.create.mock.calls.map((c) => (c[0] as { data: Record<string, unknown> }).data);
@@ -186,12 +189,19 @@ describe('ExpensesService.createItems (SRS §11, item-first)', () => {
     expect(item.amount).toBe('18.00'); // 40 × $0.45
   });
 
-  it('defaults rep_id to the submitter’s rep; status starts submitted', async () => {
+  it('inherits rep_id from the folder + links expense_report_id; status starts draft', async () => {
     const { service, tx } = make();
     await service.createItems(dto([kmItem()]), user);
-    const data = createdItems(tx)[0] as { rep_id: string; status: string };
-    expect(data.rep_id).toBe('rep-1');
-    expect(data.status).toBe('submitted');
+    const data = createdItems(tx)[0] as { rep_id: string; status: string; expense_report_id: string };
+    expect(data.rep_id).toBe('rep-1'); // from the folder, not user.repId
+    expect(data.expense_report_id).toBe('r1');
+    expect(data.status).toBe('draft'); // folder model: created draft, submitted via the folder
+  });
+
+  it('rejects creating items into a folder the caller cannot manage (404 unknown folder)', async () => {
+    const { service, prisma } = make();
+    prisma.expenseReport.findUnique.mockResolvedValue(null);
+    await expect(service.createItems(dto([kmItem()]), user)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   // BE-3: the pay period is derived from the item's OWN expense_date (same-cycle payout, EXP-009).
@@ -326,20 +336,41 @@ describe('ExpensesService.bulkReview', () => {
   });
 });
 
-describe('ExpensesService.editItem (edit-rights gating — EXP-007)', () => {
-  const submitted = { id: 'i1', status: 'submitted', rep_id: 'rep-1', category: 'meals', amount: { toString: () => '42.50' }, expense_date: new Date('2026-03-11T00:00:00.000Z') };
+describe('ExpensesService.editItem (owner/state gating — EXP-007)', () => {
+  // owner = 'u1' (the default `user`).
+  const submitted = { id: 'i1', status: 'submitted', submitted_by: 'u1', rep_id: 'rep-1', category: 'meals', amount: { toString: () => '42.50' }, expense_date: new Date('2026-03-11T00:00:00.000Z') };
   const approved = { ...submitted, status: 'approved' };
+  const manager: AuthUser = { ...user, id: 'mgr', roleNames: ['Manager'], permissions: new Set(['expenses:edit']) };
+  const admin: AuthUser = { ...user, id: 'adm', roleNames: ['Admin'] };
 
-  it('pre-approval edit (status submitted) is allowed with expenses:edit', async () => {
+  it('the OWNER may edit their own UNAPPROVED item (no expenses:edit needed)', async () => {
     const { service, prisma } = make();
-    prisma.expenseItem.findFirst.mockResolvedValue(submitted);
+    prisma.expenseItem.findFirst.mockResolvedValue(submitted); // owner = u1 = the caller
     await expect(service.editItem('i1', mealItem(true), user)).resolves.toBeDefined();
   });
 
-  it('after approval, a non-Super-Admin edit is FORBIDDEN → 403', async () => {
+  it('a non-owner WITHOUT expenses:edit cannot edit an unapproved item → 403', async () => {
+    const { service, prisma } = make();
+    prisma.expenseItem.findFirst.mockResolvedValue({ ...submitted, submitted_by: 'someone-else' });
+    await expect(service.editItem('i1', mealItem(true), user)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('after approval, the owner (non-admin) is FORBIDDEN → 403', async () => {
     const { service, prisma } = make();
     prisma.expenseItem.findFirst.mockResolvedValue(approved);
     await expect(service.editItem('i1', mealItem(true), user)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('after approval, a Manager (expenses:edit) is STILL FORBIDDEN → only Admin/SA correct', async () => {
+    const { service, prisma } = make();
+    prisma.expenseItem.findFirst.mockResolvedValue(approved);
+    await expect(service.editItem('i1', mealItem(true), manager)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('after approval, an Admin edit is allowed (correction)', async () => {
+    const { service, prisma } = make();
+    prisma.expenseItem.findFirst.mockResolvedValue(approved);
+    await expect(service.editItem('i1', mealItem(true), admin)).resolves.toBeDefined();
   });
 
   it('after approval, a Super Admin edit is allowed', async () => {

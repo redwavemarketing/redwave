@@ -1,37 +1,22 @@
 /**
- * ExpenseForm — the ITEM-FIRST add/edit form (SRS EXP-001..005). RHF + zod + useFieldArray over items.
- * CREATE adds one or several items at once ("Add another item") → POST /v1/expense-items; EDIT shows a
- * SINGLE item → PATCH /v1/expense-items/{id}. Categories come from the field configs (dynamic), the receipt
- * rule is config-driven, and the km amount is computed SERVER-SIDE (the form sends `km`, never `amount`, for
- * km items). On-behalf rep shows for admins/managers. Tokens only.
+ * ExpenseForm — EDIT a single expense item (report-as-folder, EXP-001: item CREATION now happens inline
+ * inside a folder, not here). RHF + zod over a single-item array so `ExpenseItemRow` (which reads
+ * `items.${index}.*` from the form context) is reused unchanged. PATCH replaces the item; the km amount is
+ * computed server-side. On success → the item detail. Tokens only.
  */
 import { useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Plus } from 'lucide-react';
-import { Controller, FormProvider, useFieldArray, useForm } from 'react-hook-form';
+import { FormProvider, useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
-import { Button, Card, FormField, Select, useToast } from '../../../components/ui';
-import { useAuth } from '../../../auth/useAuth';
-import { useCan } from '../../../auth/useCan';
+import { Button, useToast } from '../../../components/ui';
 import { useApiErrorToast } from '../../../lib/api/apiError';
-import { todayIso } from '../../../lib/format/date';
-import { useReps } from '../api/useLookups';
-import { useCreateItems, useUpdateItem } from '../api/useExpenseMutations';
+import { useUpdateItem } from '../api/useExpenseMutations';
 import { ExpenseItemRow } from './ExpenseItemRow';
-import {
-  blankItem,
-  buildItemBody,
-  buildItemsBody,
-  makeExpenseSchema,
-  type ExpenseFormValues,
-  type ItemValue,
-} from './expenseForm.schema';
+import { buildItemBody, makeExpenseSchema, type ExpenseFormValues, type ItemValue } from './expenseForm.schema';
 import type { ExpenseItem, FieldConfig } from '../expenses.types';
 import styles from './expenses.module.css';
 
-const SELF = '__self__';
-
-/** Map an existing item → form values (single item) for editing. */
+/** Map an existing item → the single-item form values. */
 function itemToValues(item: ExpenseItem): ExpenseFormValues {
   const base = {
     category: item.category,
@@ -45,123 +30,58 @@ function itemToValues(item: ExpenseItem): ExpenseFormValues {
   };
   const value: ItemValue =
     item.category === 'km' && item.km_log
-      ? {
-          ...base,
-          trip_type: item.km_log.trip_type,
-          total_km: item.km_log.total_km,
-          stops: item.km_log.stops.map((s) => ({ address: s.address, lat: s.lat, lng: s.lng })),
-        }
+      ? { ...base, trip_type: item.km_log.trip_type, total_km: item.km_log.total_km, stops: item.km_log.stops.map((s) => ({ address: s.address, lat: s.lat, lng: s.lng })) }
       : { ...base, amount: item.amount, receipt_url: item.receipt_url ?? undefined };
-  return { rep_id: item.rep_id ?? '', items: [value] };
+  return { items: [value] };
 }
 
 export function ExpenseForm({
-  mode,
   item,
   configs,
   clientOptions,
+  onSaved,
 }: {
-  mode: 'create' | 'edit';
-  item?: ExpenseItem;
+  item: ExpenseItem;
   configs: FieldConfig[];
   clientOptions: { value: string; label: string }[];
+  /** Called on a successful save instead of navigating (used by the inline folder-workspace edit). */
+  onSaved?: (updated: ExpenseItem) => void;
 }) {
   const navigate = useNavigate();
   const { toast } = useToast();
   const onError = useApiErrorToast();
-  const { isSuperAdmin, roles } = useAuth();
-  const canSeeReps = useCan('hrm:view') && (isSuperAdmin || roles.includes('Admin') || roles.includes('Manager'));
-  const reps = useReps(canSeeReps);
-
-  const create = useCreateItems();
   const update = useUpdateItem();
-
-  // The schema is driven by the field configs (the dynamic receipt rule + required per-type fields, EXP-013).
   const resolver = useMemo(() => zodResolver(makeExpenseSchema(configs)), [configs]);
 
-  const defaults: ExpenseFormValues =
-    mode === 'edit' && item ? itemToValues(item) : { rep_id: '', items: [blankItem('', todayIso())] };
-
-  const methods = useForm<ExpenseFormValues>({
-    resolver,
-    defaultValues: defaults,
-  });
-  const { control, handleSubmit, formState } = methods;
-  const { fields, append, remove } = useFieldArray({ control, name: 'items' });
+  const methods = useForm<ExpenseFormValues>({ resolver, defaultValues: itemToValues(item) });
+  const { handleSubmit } = methods;
 
   const onSubmit = (values: ExpenseFormValues) => {
-    if (mode === 'edit' && item) {
-      update.mutate(
-        { id: item.id, body: buildItemBody(values) },
-        {
-          onSuccess: (updated) => {
-            toast({ title: 'Expense updated', tone: 'success' });
-            navigate(`/expenses/${updated.id}`);
-          },
-          onError,
-        },
-      );
-    } else {
-      create.mutate(buildItemsBody(values), {
-        onSuccess: (created) => {
-          toast({ title: `Added ${created.length} expense item(s)`, tone: 'success' });
-          navigate('/expenses');
+    update.mutate(
+      { id: item.id, body: buildItemBody(values) },
+      {
+        onSuccess: (updated) => {
+          toast({ title: 'Expense updated', tone: 'success' });
+          if (onSaved) onSaved(updated);
+          else navigate(`/expenses/${updated.id}`);
         },
         onError,
-      });
-    }
+      },
+    );
   };
-
-  const itemsError = formState.errors.items?.message ?? (formState.errors.items?.root?.message as string | undefined);
 
   return (
     <FormProvider {...methods}>
       <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
-        {canSeeReps && (
-          <Card title="Rep">
-            <Controller
-              control={control}
-              name="rep_id"
-              render={({ field }) => (
-                <FormField label="Rep (on behalf of)" help="Defaults to you.">
-                  <Select
-                    options={[{ value: SELF, label: 'Myself' }, ...(reps.data ?? []).map((r) => ({ value: r.id, label: `${r.full_name} (${r.rep_code})` }))]}
-                    value={field.value || SELF}
-                    onValueChange={(v) => field.onChange(v === SELF ? '' : v)}
-                  />
-                </FormField>
-              )}
-            />
-          </Card>
-        )}
-
-        <div className={styles.itemsHead}>
-          <h3 className={styles.itemsTitle}>{mode === 'edit' ? 'Expense item' : 'Items'}</h3>
-          {mode === 'create' && (
-            <Button variant="secondary" type="button" leftIcon={<Plus size={16} />} onClick={() => append(blankItem('', todayIso()))}>
-              Add another item
+        <ExpenseItemRow index={0} configs={configs} clientOptions={clientOptions} canRemove={false} onRemove={() => {}} />
+        <div className={styles.footer}>
+          {!onSaved && (
+            <Button variant="secondary" type="button" onClick={() => navigate(-1)}>
+              Cancel
             </Button>
           )}
-        </div>
-        {itemsError && <p className={styles.itemsError}>{itemsError}</p>}
-
-        {fields.map((f, i) => (
-          <ExpenseItemRow
-            key={f.id}
-            index={i}
-            configs={configs}
-            clientOptions={clientOptions}
-            canRemove={mode === 'create' && fields.length > 1}
-            onRemove={() => remove(i)}
-          />
-        ))}
-
-        <div className={styles.footer}>
-          <Button variant="secondary" type="button" onClick={() => navigate('/expenses')}>
-            Cancel
-          </Button>
-          <Button variant="primary" type="submit" loading={create.isPending || update.isPending}>
-            {mode === 'edit' ? 'Save changes' : 'Add expense(s)'}
+          <Button variant="primary" type="submit" loading={update.isPending}>
+            Save changes
           </Button>
         </div>
       </form>

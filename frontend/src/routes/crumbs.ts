@@ -15,6 +15,7 @@ export type DynamicKind =
   | 'payrun'
   | 'document'
   | 'expenseItem'
+  | 'expenseReport'
   | 'statement'
   | 'expenseDoc'
   | 'role'
@@ -50,8 +51,8 @@ export const CRUMBS: Record<string, CrumbMeta> = {
 
   // ── Expenses ───────────────────────────────────────────────────────────────────────
   '/expenses': { label: 'Expenses' },
-  '/expenses/new': { label: 'Add expense', parent: '/expenses' },
   '/expenses/approvals': { label: 'Approvals', parent: '/expenses' },
+  '/expenses/reports/:id': { dynamic: 'expenseReport', parent: '/expenses' },
   '/expenses/:id': { dynamic: 'expenseItem', parent: '/expenses' },
   '/expenses/:id/edit': { label: 'Edit', parent: '/expenses/:id' },
 

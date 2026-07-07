@@ -76,10 +76,10 @@ interface ItemContent {
 }
 
 /** Category key → its resolved field schema (per-type fields + soft caps), for validation. — EXP-002a/013 */
-type ConfigMap = Map<string, CategorySchema>;
+export type ConfigMap = Map<string, CategorySchema>;
 
 /** A validatable Prisma-row shape (km_log optionally included). */
-type ItemForValidation = {
+export type ItemForValidation = {
   category: ExpenseCategory;
   amount: Prisma.Decimal;
   receipt_url: string | null;
@@ -101,9 +101,13 @@ export class ExpensesService {
     @Inject(NOTIFICATION_EMITTER) private readonly emitter: NotificationEmitter,
   ) {}
 
-  // ── Create (one or several items) ─────────────────────────────────────────────────
+  // ── Create (one or several items INTO a folder) ─────────────────────────────────────
   async createItems(dto: CreateExpenseItemsDto, user: AuthUser) {
-    const repId = dto.rep_id ?? user.repId ?? null;
+    // Every item belongs to a folder (report-as-folder, EXP-001). The caller must be able to manage it
+    // (owner or an editor in scope); the item inherits the folder's rep. Items are created as DRAFT — the
+    // approver notification fires only when the FOLDER is submitted (submitReport). — EXP-001/006
+    const report = await this.assertManageableReport(dto.expense_report_id, user);
+    const repId = report.rep_id ?? null;
     const configs = await this.loadConfigs();
 
     // KM dedup: one km item per (rep, expense_date) — within the batch and against existing items.
@@ -122,7 +126,7 @@ export class ExpensesService {
       Promise.all(
         contents.map((content) =>
           tx.expenseItem.create({
-            data: { ...content, submitted_by: user.id, rep_id: repId, status: 'submitted' },
+            data: { ...content, expense_report_id: report.id, submitted_by: user.id, rep_id: repId, status: 'draft' },
             include: ITEM_INCLUDE,
           }),
         ),
@@ -134,33 +138,72 @@ export class ExpensesService {
       entityType: 'expense_items',
       entityId: created[0].id,
       action: 'create',
-      after: {
-        rep_id: repId,
-        status: 'submitted',
-        item_ids: created.map((i) => i.id),
-        count: created.length,
-      },
+      after: { expense_report_id: report.id, rep_id: repId, status: 'draft', item_ids: created.map((i) => i.id), count: created.length },
     });
+    return created;
+  }
 
+  /**
+   * Load a folder the caller may MANAGE (add/submit/rename/delete): the OWNER (submitted_by), or an editor
+   * whose scope covers the folder's rep (roster) or all (Admin/SA). Throws 404/403. Reused by item create +
+   * the folder service. — §5 (server-side authorization)
+   */
+  async assertManageableReport(reportId: string, user: AuthUser): Promise<{ id: string; submitted_by: string; rep_id: string | null }> {
+    const report = await this.prisma.expenseReport.findUnique({
+      where: { id: reportId },
+      select: { id: true, submitted_by: true, rep_id: true },
+    });
+    if (!report) {
+      throw new NotFoundException('Expense report not found');
+    }
+    if (report.submitted_by === user.id) return report; // the owner
+    const scope = await this.scope.getRepScope(user);
+    if (scope.level === 'all') return report; // Admin / Super Admin
+    if (report.rep_id && scope.repIds.includes(report.rep_id)) return report; // a manager's roster
+    throw new ForbiddenException('you cannot modify this expense report');
+  }
+
+  /**
+   * Submit a folder: transition its DRAFT/SENT_BACK items → submitted (per rep/day km rules already hold),
+   * then notify the approver (moved off item create). Only reviewable-forward items move; approved/rejected
+   * are untouched. Returns the count moved. — EXP-001/006
+   */
+  async submitReportItems(reportId: string, user: AuthUser): Promise<number> {
+    await this.assertManageableReport(reportId, user);
+    const items = await this.prisma.expenseItem.findMany({
+      where: { expense_report_id: reportId, status: { in: ['draft', 'sent_back'] } },
+      select: { id: true, rep_id: true },
+    });
+    if (items.length === 0) return 0;
+    await this.prisma.expenseItem.updateMany({
+      where: { id: { in: items.map((i) => i.id) } },
+      data: { status: 'submitted' },
+    });
+    await this.audit.log({
+      actorId: user.id,
+      entityType: 'expense_reports',
+      entityId: reportId,
+      action: 'submit',
+      after: { submitted_item_ids: items.map((i) => i.id), count: items.length },
+    });
     // Best-effort: notify the approver — the rep's field manager, else Admins/Super Admins. — expense_submitted
+    const repId = items.find((i) => i.rep_id)?.rep_id ?? null;
     const base = {
       eventType: 'expense_submitted' as const,
-      title: `New expense items from ${user.full_name}`,
-      body: `${created.length} expense item(s) need your review.`,
-      relatedEntityType: 'expense_items',
-      relatedEntityId: created[0].id,
-      variables: { submitter_name: user.full_name, count: String(created.length) },
+      title: `Expense report submitted by ${user.full_name}`,
+      body: `${items.length} expense item(s) need your review.`,
+      relatedEntityType: 'expense_reports',
+      relatedEntityId: reportId,
+      variables: { submitter_name: user.full_name, count: String(items.length) },
     };
-    const manager = repId
-      ? await this.prisma.rep.findUnique({ where: { id: repId }, select: { field_manager_id: true } })
-      : null;
+    const manager = repId ? await this.prisma.rep.findUnique({ where: { id: repId }, select: { field_manager_id: true } }) : null;
     if (manager?.field_manager_id) {
       await this.emitter.emitMany([manager.field_manager_id], base);
     } else {
       await this.emitter.emitRole('Admin', base);
       await this.emitter.emitRole('Super Admin', base);
     }
-    return created;
+    return items.length;
   }
 
   // ── List / detail ───────────────────────────────────────────────────────────────
@@ -274,21 +317,38 @@ export class ExpensesService {
     return { url };
   }
 
-  // ── Edit (gated, EXP-007) ──────────────────────────────────────────────────────────
-  async editItem(id: string, dto: UpdateExpenseItemDto, user: AuthUser) {
-    const item = await this.findOneRaw(id, user); // also enforces scope
+  /** Admin-level actor (Admin or Super Admin) — allowed to correct an already-approved item. — EXP-007 */
+  private isElevated(user: AuthUser): boolean {
+    return user.isSuperAdmin || user.roleNames.includes('Admin');
+  }
 
-    // Once approved, only a Super Admin may edit; otherwise the controller's expenses:edit suffices.
-    if (item.status === 'approved' && !user.isSuperAdmin) {
-      await this.audit.log({
-        actorId: user.id,
-        entityType: 'expense_items',
-        entityId: id,
-        action: 'access_denied',
-        after: { reason: 'edit of an approved item requires Super Admin', status: item.status },
-      });
-      throw new ForbiddenException('an approved expense item can only be edited by a Super Admin');
+  /**
+   * Authorize an item edit: while UNAPPROVED the OWNER may edit (or an editor holding expenses:edit, whose
+   * scope findOneRaw already applied); once APPROVED only an Admin/Super Admin may correct it. — EXP-007 / §5
+   */
+  private async assertCanEditItem(item: { id: string; submitted_by: string; status: string }, user: AuthUser): Promise<void> {
+    if (item.status === 'approved') {
+      if (!this.isElevated(user)) {
+        await this.audit.log({
+          actorId: user.id,
+          entityType: 'expense_items',
+          entityId: item.id,
+          action: 'access_denied',
+          after: { reason: 'edit of an approved item requires Admin or Super Admin', status: item.status },
+        });
+        throw new ForbiddenException('an approved expense item can only be corrected by an Admin or Super Admin');
+      }
+      return;
     }
+    if (item.submitted_by !== user.id && !user.permissions.has('expenses:edit')) {
+      throw new ForbiddenException('you cannot edit this expense item');
+    }
+  }
+
+  // ── Edit (gated by ownership + state, EXP-007) ──────────────────────────────────────
+  async editItem(id: string, dto: UpdateExpenseItemDto, user: AuthUser) {
+    const item = await this.findOneRaw(id, user); // also enforces scope (a non-admin sees only own/roster)
+    await this.assertCanEditItem(item, user); // owner while unapproved; Admin/SA once approved — §5
 
     const configs = await this.loadConfigs();
     if (dto.category === ExpenseCategory.km) {
@@ -347,6 +407,10 @@ export class ExpensesService {
     // Only a not-yet-approved item may be removed; approved items are preserved (ledger). — EXP-007
     if (item.status === 'approved') {
       throw new UnprocessableEntityException('an approved expense item cannot be deleted');
+    }
+    // The OWNER may remove their own unapproved item; otherwise expenses:delete is required. — §5
+    if (item.submitted_by !== user.id && !user.permissions.has('expenses:delete')) {
+      throw new ForbiddenException('you cannot delete this expense item');
     }
     await this.prisma.$transaction(async (tx) => {
       const log = await tx.expenseKmLog.findUnique({ where: { expense_item_id: id }, select: { id: true } });
@@ -650,7 +714,8 @@ export class ExpensesService {
     return id;
   }
 
-  private async loadConfigs(): Promise<ConfigMap> {
+  /** Load the per-category field schemas (public — reused by the folder service for aggregate validation). */
+  async loadConfigs(): Promise<ConfigMap> {
     const rows = await this.prisma.expenseFieldConfig.findMany({
       select: { category_key: true, requires_receipt: true, is_active: true, fields: true, amount_soft_cap: true },
     });
@@ -689,7 +754,7 @@ export class ExpensesService {
   }
 
   /** Compute the derived validation (alerts + warnings + counts) for a stored item, from the loaded configs. */
-  private itemValidation(item: ItemForValidation, configs: ConfigMap): ValidationResult & { alert_count: number; warning_count: number } {
+  itemValidation(item: ItemForValidation, configs: ConfigMap): ValidationResult & { alert_count: number; warning_count: number } {
     const input: ValidatableItem = {
       category: item.category,
       amount: item.amount?.toString() ?? null,

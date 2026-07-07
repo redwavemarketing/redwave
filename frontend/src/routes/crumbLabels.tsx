@@ -12,6 +12,7 @@ import { useClient } from '../features/clients/api/useClients';
 import { usePayRun } from '../features/payrun/api/usePayRun';
 import { useDocument } from '../features/documents/api/useDocuments';
 import { useExpenseItem } from '../features/expenses/api/useExpenseItems';
+import { useExpenseReport } from '../features/expenses/api/useExpenseReports';
 import { useStatement } from '../features/billing/api/useBilling';
 import { useExpenseDoc } from '../features/expenseDocs/api/useExpenseDocs';
 import { expenseDocNo } from '../features/expenseDocs/expenseDocs.download';
@@ -51,6 +52,10 @@ function ExpenseItemCrumb({ id }: { id: string }) {
   const q = useExpenseItem(id);
   return <Resolved label={q.data ? categoryLabel(q.data.category) : undefined} isLoading={q.isLoading} id={id} />;
 }
+function ExpenseReportCrumb({ id }: { id: string }) {
+  const q = useExpenseReport(id);
+  return <Resolved label={q.data?.name} isLoading={q.isLoading} id={id} />;
+}
 function StatementCrumb({ id }: { id: string }) {
   const q = useStatement(id);
   return (
@@ -81,6 +86,7 @@ export const DYNAMIC_CRUMBS: Record<DynamicKind, ComponentType<{ id: string }>> 
   payrun: PayRunCrumb,
   document: DocumentCrumb,
   expenseItem: ExpenseItemCrumb,
+  expenseReport: ExpenseReportCrumb,
   statement: StatementCrumb,
   expenseDoc: ExpenseDocCrumb,
   role: RoleCrumb,

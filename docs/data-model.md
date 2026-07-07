@@ -598,24 +598,19 @@ Indexes: `(rep_id, pay_period_id, status)` (the Pay Run aggregation), `(expense_
 
 #### `expense_reports`
 
-*The LIVE weekly submission unit (report-as-folder, Meeting 3 — EXP-001). A folder of `expense_items` for one business week; the whole report is submitted, approved, or sent back as one unit. Report-level status + aggregated alert count.*
+*The LIVE weekly folder (report-as-folder, Meeting 3 — EXP-001; BUILT, migration `20260619000000`). A user creates + names it and adds `expense_items` into it; the whole folder is submitted/reviewed as one unit. It has **NO stored approval state** — its status, reimbursable total, and aggregated alert count are all **DERIVED** from its items on read (`folder-status.logic`); the `week_start`/`week_end` are a **label only** (each item keeps its own `expense_date` → pay period). Money reads key off the item, never the folder — a pure grouping layer (#1/#12).*
 
 | **Field**         | **Type**  | **Key** | **Notes**                                            |
 |-------------------|-----------|---------|------------------------------------------------------|
 | **id**            | uuid      | **PK**  |                                                      |
-| **name**          | varchar   | —       | Report label (shown in the report list).            |
-| **submitted_by**  | uuid      | **FK**  | -> users.id (any user).                             |
-| **rep_id**        | uuid      | **FK**  | -> reps.id (nullable; for rep reporting).           |
-| **week_start**    | date      | —       | Business-week start (Sun/Mon confirmed at build).    |
-| **week_end**      | date      | —       |                                                      |
-| **status**        | enum      | —       | not_submitted / submitted / approved / sent_back (report-level, EXP-001a). |
-| **submitted_at**  | timestamp | —       | Nullable; set when the report is submitted as one unit. |
-| **alert_count**   | int       | —       | Aggregated Alert/Warning count across items (EXP-013); shown on the header. |
-| **reimbursable_total** | decimal | —     | Running Σ `amount_cad` of non-personal items (display; not a money source of truth). |
-| **approved_by**   | uuid      | **FK**  | -> users.id (nullable).                             |
-| **approved_at**   | timestamp | —       | Nullable.                                            |
-| **pay_period_id** | uuid      | **FK**  | -> pay_periods.id (cycle it pays in).               |
+| **name**          | varchar   | —       | The rep-given folder name (shown in the list).       |
+| **submitted_by**  | uuid      | **FK**  | -> users.id (the owner who created it).             |
+| **rep_id**        | uuid      | **FK**  | -> reps.id (nullable; the rep the folder is for; items inherit it). |
+| **week_start**    | date      | —       | Business-week start = **Monday** (Mon–Sun). A label only. |
+| **week_end**      | date      | —       | **Sunday.**                                          |
 | **created_at**    | timestamp | —       |                                                      |
+
+*Derived on read (never stored): `status` (empty / needs_attention / draft / pending / approved / rejected — aggregate of item statuses), `total_reimbursable_cad` (Σ non-personal `amount_cad`), and the aggregated `{alert_count, warning_count, flagged}`. The prior spec's `status`/`submitted_at`/`alert_count`/`reimbursable_total`/`approved_by`/`approved_at`/`pay_period_id` columns are NOT stored. `expense_items.expense_report_id` is **NOT NULL** — every item belongs to a folder.*
 
 #### `expense_km_logs`
 

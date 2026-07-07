@@ -31,7 +31,7 @@ export function ExpenseItemsTable({ filters, canReview }: { filters: ExpenseFilt
   const navigate = useNavigate();
   const { toast } = useToast();
   const onError = useApiErrorToast();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, roles } = useAuth();
   const canEdit = useCan('expenses:edit');
   const canDelete = useCan('expenses:delete');
   const canViewReps = useCan('hrm:view');
@@ -49,7 +49,7 @@ export function ExpenseItemsTable({ filters, canReview }: { filters: ExpenseFilt
   const repName = (id: string | null) => (id ? reps.data?.find((r) => r.id === id)?.full_name ?? id.slice(0, 8) : '—');
   const clientName = (id: string | null) => (id ? clients.data?.find((c) => c.id === id)?.name ?? '—' : '—');
 
-  const isItemEditable = (it: ExpenseItem) => (it.status === 'approved' ? isSuperAdmin : canEdit);
+  const isItemEditable = (it: ExpenseItem) => (it.status === 'approved' ? isSuperAdmin || roles.includes('Admin') : canEdit);
   const isItemDeletable = (it: ExpenseItem) => canDelete && it.status !== 'approved';
 
   const rowMenu = (it: ExpenseItem): MenuEntry[] => {

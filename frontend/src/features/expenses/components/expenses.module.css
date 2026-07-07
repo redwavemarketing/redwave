@@ -351,3 +351,121 @@
   gap: var(--space-1);
   font-size: var(--text-sm);
 }
+
+/* ── Report folders (report-as-folder) ─────────────────────────────────── */
+.folderCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.folderPeriod {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+
+.segmentRow {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* Folder workspace */
+.folderHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.folderActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.itemList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.itemRow {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface-1);
+}
+
+.itemSummary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.itemSummary:hover {
+  background: var(--surface-2);
+}
+
+.itemSummaryMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.itemSummaryMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.itemBody {
+  padding: var(--space-4);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.addExpenseBtn {
+  width: 100%;
+}
+
+/* Mobile-first: at narrow widths the summary badges/amount wrap under the item label, and folder actions
+   stack full-width so nothing overflows a 360px viewport. — design-system §8 */
+@media (max-width: 640px) {
+  .itemSummary {
+    flex-wrap: wrap;
+  }
+
+  .itemSummaryMain {
+    flex-basis: 100%;
+  }
+
+  .folderActions {
+    width: 100%;
+  }
+
+  .folderActions > * {
+    flex: 1 1 auto;
+  }
+}

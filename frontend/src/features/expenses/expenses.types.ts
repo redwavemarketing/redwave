@@ -22,6 +22,17 @@ export type KmLog = components['schemas']['KmLogResponse'];
 export type ExpenseItem = components['schemas']['ExpenseItemResponse'];
 export type ExpenseItemPage = components['schemas']['ExpenseItemPageResponse'];
 
+/** A report FOLDER (report-as-folder, EXP-001) — its `status` is the DERIVED aggregate of its items. */
+export type ExpenseReport = components['schemas']['ExpenseReportResponse'];
+export type ExpenseReportPage = components['schemas']['ExpenseReportPageResponse'];
+/** The derived folder status (empty | needs_attention | draft | pending | approved | rejected). */
+export type FolderStatus = ExpenseReport['status'];
+export type FolderValidation = components['schemas']['FolderValidationResponse'];
+// Folder request bodies.
+export type CreateReportBody = components['schemas']['CreateExpenseReportDto'];
+export type UpdateReportBody = components['schemas']['UpdateExpenseReportDto'];
+export type ReviewReportBody = components['schemas']['ReviewReportDto'];
+
 /** A category config row — drives the dynamic category list, the receipt rule, and the per-type field schema. */
 export type FieldConfig = components['schemas']['FieldConfigResponse'];
 /** One per-type capture field definition (EXP-002a). */

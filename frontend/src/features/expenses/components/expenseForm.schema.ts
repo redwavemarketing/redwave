@@ -103,7 +103,7 @@ function pickNonBlank(values: Record<string, string> | undefined): Record<string
 }
 
 /** Build ONE item payload from a validated form item (km amount omitted — server computes it). */
-function toItemInput(it: ItemValue): ExpenseItemInput {
+export function toItemInput(it: ItemValue): ExpenseItemInput {
   const base = {
     category: it.category as ExpenseItemInput['category'],
     client_id: it.client_id || undefined,
@@ -131,9 +131,9 @@ function toItemInput(it: ItemValue): ExpenseItemInput {
   return { ...base, amount: it.amount!, receipt_url: it.receipt_url || undefined };
 }
 
-/** Build the CREATE payload (one or several items) from validated form values. */
-export function buildItemsBody(values: ExpenseFormValues): CreateItemsBody {
-  return { rep_id: values.rep_id || undefined, items: values.items.map(toItemInput) };
+/** Build the ADD-to-folder payload (one or several items) — the item inherits the folder's rep. — EXP-001 */
+export function buildAddItemsBody(reportId: string, values: ExpenseFormValues): CreateItemsBody {
+  return { expense_report_id: reportId, items: values.items.map(toItemInput) };
 }
 
 /** Build the EDIT payload (a single item) from the first form item. */

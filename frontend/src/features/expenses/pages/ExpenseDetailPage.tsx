@@ -35,7 +35,7 @@ const isNotFound = (error: unknown): boolean =>
 export default function ExpenseDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, roles } = useAuth();
   const canEdit = useCan('expenses:edit');
   const canApprove = useCan('expenses:approve');
   const canViewReps = useCan('hrm:view');
@@ -70,7 +70,7 @@ export default function ExpenseDetailPage() {
   const repName = (rid: string | null) => (rid ? reps.data?.find((r) => r.id === rid)?.full_name ?? rid.slice(0, 8) : '—');
   const clientName = (cid: string | null) => (cid ? clients.data?.find((c) => c.id === cid)?.name ?? '—' : '—');
 
-  const editable = item ? (item.status === 'approved' ? isSuperAdmin : canEdit) : false;
+  const editable = item ? (item.status === 'approved' ? isSuperAdmin || roles.includes('Admin') : canEdit) : false;
   const reviewable = !!item && canApprove && REVIEWABLE.has(item.status);
   const km = item?.km_log ?? null;
   // Per-type capture fields to show (label from the category schema; only non-empty values). — EXP-002a

@@ -24,6 +24,11 @@ export function isForbidden(error: unknown): boolean {
   return !!error && typeof error === 'object' && 'status' in error && (error as { status: unknown }).status === 403;
 }
 
+/** True when a thrown query/mutation error is a server 404 (a not-visible / missing record). */
+export function isNotFound(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'status' in error && (error as { status: unknown }).status === 404;
+}
+
 /**
  * Returns a handler that surfaces any thrown error (ApiError or otherwise) as a danger toast. Its
  * signature is `(err) => void` so it drops straight into a React Query mutation `onError` (extra
