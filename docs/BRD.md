@@ -279,7 +279,7 @@ Per rep per cycle the pay run produces: 70% advance for the period, any 30% hold
 
 ## 7. Expense Module
 
-> **Reversed in Meeting 3 — report-as-folder model (supersedes the earlier item-first / "list, not folders" decision).** Expenses are now captured in a **weekly report** (the business week) — a folder that holds many expense line items and is **submitted as one unit** for approval. Approval is per report: an approver **approves the whole report**, or **sends it back → the rep fixes → resubmits**. A report list shows name / date / status (Not Submitted / Submitted / Approved) / total / an **alert count**, plus a running reimbursable total. Report detail has **Details / Expenses / Receipts** tabs and a **Submit** action. Each approved report's items still follow the pay cycle of the period **their own expense date falls in** (same-cycle payout). (This reverses the v1.2 item-first rule; `expense_reports` becomes the live submission entity.)
+> **Report-as-folder model (Meeting 3 — BUILT).** Expenses are captured in a **weekly report** (the business week, **Monday–Sunday**) — a named folder a rep creates and adds line items into, **submitted as one unit** for approval. Approval acts on the folder (**approve / send back → rep fixes → resubmits / reject**) as a bulk over its items, or item by item. The report list shows name / week / **status** / **reimbursable total** / an **alert-flag count** — all **derived** from the folder's items (the folder stores no approval state). The workspace holds the items + a **Submit** action; each item follows the pay cycle of **its own expense date** (same-cycle payout) — the folder is a pure grouping layer, so pay-run/billing money reads are unchanged. (This reversed the v1.2 item-first rule; `expense_reports` is the live folder entity.)
 
 ### 7.1 Expense Categories (confirmed)
 
@@ -305,13 +305,13 @@ Per rep per cycle the pay run produces: 70% advance for the period, any 30% hold
 
 ### 7.2 Submission, Approval & Visibility
 
-- All users (reps, managers, admins, partners) can add their own expense items — one or several at a time; receipts upload to cloud storage and are stored as access-controlled digital copies.
+- All users (reps, managers, admins, partners) create a **report folder** and add their own expense items into it (one or several at a time); receipts upload to cloud storage and are stored as access-controlled digital copies.
 
-- Submitted items go to a Pending Approval queue for the Field Manager / Admin. Approval is **per item, with bulk select** to act on many at once (approve / reject / send back).
+- A **submitted report** goes to the Pending Approval queue (folder queue) for the Field Manager / Admin. Approval acts on the **folder** — a bulk over its submitted items (approve / reject / send back) — or **item by item** from the workspace.
 
-- Manager/Admin can edit an item before approval and can send it back for correction. After approval, only the Super Admin can change it; a not-yet-approved item can be deleted.
+- The **owner** can edit/delete an item while it is **unapproved**; after approval only an **Admin or Super Admin** can correct it (approved items are preserved).
 
-- **List view, not folders.** Expenses display as a filterable, paginated list of items — default filter is the current pay cycle — filterable by Date range, Rep, Client, Category, and Status, and **groupable daily/weekly/monthly/custom**.
+- **Folder-first list + an "All items" view.** The primary list is the report folders (name / week / status / total / alert count); a secondary **All items** view is the filterable, paginated item list (default = current pay cycle; filter by Date range, Rep, Client, Category, Status; **groupable daily/weekly/monthly/custom**) kept for cross-folder scanning + export.
 
 - **Export.** Exportable to Excel/PDF/CSV — per-item rows or grouped period totals: per-rep KM logs for client submission (KM only where that is all the client needs), and select-all for internal accounting/bookkeeping; each server-recorded export is stored.
 

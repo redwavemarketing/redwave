@@ -311,7 +311,6 @@ model User {
   pay_runs_executed             PayRun[]                   @relation("PayRunExecutedBy")
   clawbacks_entered             Clawback[]                 @relation("ClawbackEnteredBy")
   expense_reports_submitted     ExpenseReport[]            @relation("ExpenseSubmittedBy")
-  expense_reports_approved      ExpenseReport[]            @relation("ExpenseApprovedBy")
   expense_items_submitted       ExpenseItem[]              @relation("ExpenseItemSubmittedBy")
   expense_items_approved        ExpenseItem[]              @relation("ExpenseItemApprovedBy")
   expense_field_configs_created ExpenseFieldConfig[]       @relation("ExpenseFieldConfigCreatedBy")
@@ -865,7 +864,6 @@ model PayPeriod {
   pay_runs            PayRun[]
   holdback_origin     HoldbackLedger[]        @relation("HoldbackOrigin")
   holdback_scheduled  HoldbackLedger[]        @relation("HoldbackScheduledRelease")
-  expense_reports     ExpenseReport[]
   expense_items       ExpenseItem[]
   expense_exports     ExpenseExport[]
   client_statements   ClientStatement[]
@@ -959,35 +957,35 @@ model Clawback {
 // MODULE 8 — Expenses
 // ════════════════════════════════════════════════════════════════════════════════
 
+// REPORT-AS-FOLDER (EXP-001, Meeting 3): a named folder a rep creates + adds items into; submitted +
+// reviewed as a unit. The folder has NO independent approval state — its status is the DERIVED aggregate
+// of its items (folder-status.logic). `week_start`/`week_end` (business week Mon–Sun) are a LABEL only;
+// each item keeps its own expense_date → pay_period (never overridden by the folder). — SRS §11
 model ExpenseReport {
-  id            String              @id @default(uuid()) @db.Uuid
-  submitted_by  String              @db.Uuid
-  submitter     User                @relation("ExpenseSubmittedBy", fields: [submitted_by], references: [id])
-  rep_id        String?             @db.Uuid
-  rep           Rep?                @relation(fields: [rep_id], references: [id])
-  week_start    DateTime            @db.Date
-  week_end      DateTime            @db.Date
-  status        ExpenseReportStatus
-  approved_by   String?             @db.Uuid
-  approver      User?               @relation("ExpenseApprovedBy", fields: [approved_by], references: [id])
-  approved_at   DateTime?
-  pay_period_id String?             @db.Uuid
-  pay_period    PayPeriod?          @relation(fields: [pay_period_id], references: [id])
-  created_at    DateTime            @default(now())
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String // the rep-given folder name (EXP-001a)
+  submitted_by String   @db.Uuid
+  submitter    User     @relation("ExpenseSubmittedBy", fields: [submitted_by], references: [id])
+  rep_id       String?  @db.Uuid
+  rep          Rep?     @relation(fields: [rep_id], references: [id])
+  week_start   DateTime @db.Date
+  week_end     DateTime @db.Date
+  created_at   DateTime @default(now())
 
   expense_items ExpenseItem[]
 
+  @@index([submitted_by])
   @@map("expense_reports")
 }
 
-// ITEM-FIRST (Config batch): the expense ITEM is the atomic unit. It carries its own submitter,
-// status, approver, and a pay_period DERIVED from its expense_date (same-cycle payout, EXP-009).
-// expense_report_id is NULLABLE — new items are created report-less; the report wrapper is kept
-// only as optional internal grouping/history. — SRS §11 / BRD §7
+// The expense ITEM — the atomic unit, living inside a report FOLDER (report-as-folder, EXP-001). It carries
+// its own submitter, status, approver, and a pay_period DERIVED from its expense_date (same-cycle payout,
+// EXP-009). expense_report_id is REQUIRED — every item belongs to a folder (backfilled in migration
+// 20260619000000). Money reads key off the item's own status/pay_period/amount_cad, never the folder. — SRS §11
 model ExpenseItem {
   id                String              @id @default(uuid()) @db.Uuid
-  expense_report_id String?             @db.Uuid
-  expense_report    ExpenseReport?      @relation(fields: [expense_report_id], references: [id])
+  expense_report_id String              @db.Uuid
+  expense_report    ExpenseReport       @relation(fields: [expense_report_id], references: [id])
   rep_id            String?             @db.Uuid
   rep               Rep?                @relation(fields: [rep_id], references: [id])
   submitted_by      String              @db.Uuid

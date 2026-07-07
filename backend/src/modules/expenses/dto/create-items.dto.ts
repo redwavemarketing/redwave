@@ -1,22 +1,19 @@
 /**
- * Create one or several expense ITEMS in one call (item-first; no report wrapper required). — SRS §11
- * Each item's submitter is the caller, status starts `submitted`, rep defaults to the caller's linked
- * rep, and the pay period is DERIVED from each item's own `expense_date` (same-cycle payout, EXP-009).
+ * Create one or several expense ITEMS INTO a folder (report-as-folder, EXP-001). Each item's submitter is
+ * the caller, status starts `draft` (the folder is submitted as a unit later), the rep is inherited from the
+ * folder, and the pay period is DERIVED from each item's own `expense_date` (same-cycle payout, EXP-009).
  */
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsOptional, IsUUID, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsUUID, ValidateNested } from 'class-validator';
 import { ExpenseItemInput } from './expense-item.input';
 
 export class CreateExpenseItemsDto {
-  @ApiPropertyOptional({
-    description: 'Rep these items are for; defaults to the submitter’s linked rep.',
-  })
-  @IsOptional()
+  @ApiProperty({ description: 'The report folder these items belong to (EXP-001). The item inherits the folder’s rep.' })
   @IsUUID()
-  rep_id?: string;
+  expense_report_id!: string;
 
-  @ApiProperty({ type: [ExpenseItemInput], description: 'One or more items to submit together.' })
+  @ApiProperty({ type: [ExpenseItemInput], description: 'One or more items to add to the folder.' })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(50)

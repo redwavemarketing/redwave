@@ -7,8 +7,10 @@ import {
   ExpenseFieldConfigsController,
   ExpenseExportsController,
 } from './expenses.controller';
+import { ExpenseReportsController } from './expense-report.controller';
 import { KmRateController } from './km-rate.controller';
 import { ExpensesService } from './expenses.service';
+import { ExpenseReportsService } from './expense-report.service';
 import { FieldConfigService } from './field-config.service';
 import { ExpenseExportService } from './expense-export.service';
 import { KmRateService } from './km-rate.service';
@@ -19,12 +21,14 @@ import { MapsService } from './maps.service';
   imports: [StorageModule, FilesModule],
   controllers: [
     ExpenseItemsController,
+    ExpenseReportsController,
     ExpenseFieldConfigsController,
     ExpenseExportsController,
     KmRateController,
   ],
   providers: [
     ExpensesService,
+    ExpenseReportsService,
     FieldConfigService,
     ExpenseExportService,
     KmRateService,

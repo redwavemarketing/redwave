@@ -17,7 +17,7 @@ import styles from '../components/expenses.module.css';
 
 export default function ExpenseEditPage() {
   const { id } = useParams<{ id: string }>();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, roles } = useAuth();
   const canEdit = useCan('expenses:edit');
   const canViewClients = useCan('clients:view');
 
@@ -29,9 +29,9 @@ export default function ExpenseEditPage() {
     return <AccessDenied message="Editing expenses requires the expenses edit permission." />;
   }
 
-  // Edit-rights gate (mirrors the server): approved → Super Admin only.
-  if (item.data && item.data.status === 'approved' && !isSuperAdmin) {
-    return <AccessDenied message="An approved expense item can only be edited by a Super Admin." />;
+  // Edit-rights gate (mirrors the server, EXP-007): an APPROVED item is editable only by Admin/Super Admin.
+  if (item.data && item.data.status === 'approved' && !(isSuperAdmin || roles.includes('Admin'))) {
+    return <AccessDenied message="An approved expense item can only be corrected by an Admin or Super Admin." />;
   }
 
   const ready = !!item.data && !!configs.data;
@@ -48,7 +48,7 @@ export default function ExpenseEditPage() {
           void configs.refetch();
         }}
       >
-        {ready && <ExpenseForm mode="edit" item={item.data} configs={configs.data!} clientOptions={clientOptions} />}
+        {ready && <ExpenseForm item={item.data} configs={configs.data!} clientOptions={clientOptions} />}
       </DataState>
     </div>
   );

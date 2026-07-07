@@ -32,7 +32,7 @@ const RolesPage = lazy(() => import('../features/admin/pages/RolesPage'));
 const RoleEditorPage = lazy(() => import('../features/admin/pages/RoleEditorPage'));
 const NotificationSettingsPage = lazy(() => import('../features/admin/pages/NotificationSettingsPage'));
 const ExpensesListPage = lazy(() => import('../features/expenses/pages/ExpensesListPage'));
-const ExpenseEntryPage = lazy(() => import('../features/expenses/pages/ExpenseEntryPage'));
+const FolderDetailPage = lazy(() => import('../features/expenses/pages/FolderDetailPage'));
 const ExpenseEditPage = lazy(() => import('../features/expenses/pages/ExpenseEditPage'));
 const ExpenseDetailPage = lazy(() => import('../features/expenses/pages/ExpenseDetailPage'));
 const ExpenseApprovalsPage = lazy(() => import('../features/expenses/pages/ExpenseApprovalsPage'));
@@ -122,8 +122,8 @@ export const router = createBrowserRouter([
           { path: 'sales/new', element: lazyEl(<SaleEntryPage />) },
           { path: 'sales/:id', element: lazyEl(<SaleDetailPage />) },
           { path: 'expenses', element: lazyEl(<ExpensesListPage />) },
-          { path: 'expenses/new', element: lazyEl(<ExpenseEntryPage />) },
           { path: 'expenses/approvals', element: lazyEl(<ExpenseApprovalsPage />) },
+          { path: 'expenses/reports/:id', element: lazyEl(<FolderDetailPage />) },
           { path: 'expenses/:id', element: lazyEl(<ExpenseDetailPage />) },
           { path: 'expenses/:id/edit', element: lazyEl(<ExpenseEditPage />) },
           { path: 'pay-runs', element: lazyEl(<PayRunListPage />) },

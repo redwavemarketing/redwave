@@ -22,6 +22,7 @@ import { countsTowardTally } from '../../src/modules/sales/sale-item.logic';
 import { PayRunService } from '../../src/modules/payrun/pay-run.service';
 import { ClawbackService } from '../../src/modules/clawback/clawback.service';
 import { ExpensesService } from '../../src/modules/expenses/expenses.service';
+import { ExpenseReportsService } from '../../src/modules/expenses/expense-report.service';
 import { ReviewDecision } from '../../src/modules/expenses/dto/review.dto';
 import { StatementService } from '../../src/modules/billing/statement.service';
 import { DocumentsService } from '../../src/modules/documents/documents.service';
@@ -63,6 +64,7 @@ export async function seedDemo(
   const payRuns = app.get(PayRunService);
   const clawbacks = app.get(ClawbackService);
   const expenses = app.get(ExpensesService);
+  const expenseReports = app.get(ExpenseReportsService);
   const statements = app.get(StatementService);
   const documents = app.get(DocumentsService);
   const notifications = app.get(NotificationsService);
@@ -269,11 +271,23 @@ export async function seedDemo(
   // ── A client statement (one line per customer), priced ONLY from billing rates (#3). VF in prev2 is paid. ──
   await statements.generate(clientByCode['VF'].id, prev2.id, superAdminUserId);
 
-  // ── Expenses (ITEM-FIRST): a km item (multi-stop) + a meals item — both approved — and a standard
-  //    gas item left submitted (→ admin queue). Each item's pay period is derived from its date (EXP-009).
+  // ── Expenses (REPORT-AS-FOLDER, EXP-001): a rep's weekly folder holds a km item (multi-stop) + a meals
+  //    item — submitted, then both APPROVED; a second folder holds a gas item left submitted (→ admin queue).
+  //    Each item's pay period is still derived from its own date (EXP-009); the folder is a grouping layer.
+  const businessWeek = (iso: string): { week_start: string; week_end: string } => {
+    const d = new Date(`${iso}T00:00:00.000Z`);
+    const monday = new Date(d);
+    monday.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // back to Monday
+    const sunday = new Date(monday);
+    sunday.setUTCDate(monday.getUTCDate() + 6);
+    return { week_start: monday.toISOString().slice(0, 10), week_end: sunday.toISOString().slice(0, 10) };
+  };
+
+  const w1 = businessWeek(curMid);
+  const folder1 = await expenseReports.create({ name: `Field week of ${w1.week_start}`, ...w1, rep_id: repByCode['RW-D-0001'].id }, sa);
   const approvedItems = await expenses.createItems(
     {
-      rep_id: repByCode['RW-D-0001'].id,
+      expense_report_id: folder1.id,
       items: [
         {
           category: 'km',
@@ -289,21 +303,23 @@ export async function seedDemo(
             ],
           },
         },
-        { category: 'meals', expense_date: curMid, amount: '42.50', description: 'Lunch with prospect', receipt_url: 's3://redwave-demo/receipts/meal-1.jpg' },
+        { category: 'meals', expense_date: curMid, amount: '42.50', description: 'Lunch with prospect', receipt_url: 's3://redwave-demo/receipts/meal-1.jpg', field_values: { vendor: 'The Keg', city: 'Winnipeg' } },
       ],
     },
     sa,
   );
+  await expenseReports.submit(folder1.id, sa); // draft → submitted
   for (const item of approvedItems) {
     await expenses.review(item.id, { decision: ReviewDecision.approve }, sa);
   }
+
+  const w2 = businessWeek(p1Mid);
+  const folder2 = await expenseReports.create({ name: `Field week of ${w2.week_start}`, ...w2, rep_id: repByCode['RW-D-0002'].id }, sa);
   await expenses.createItems(
-    {
-      rep_id: repByCode['RW-D-0002'].id,
-      items: [{ category: 'gas', expense_date: p1Mid, amount: '60.00', description: 'Fuel — field route', receipt_url: 's3://redwave-demo/receipts/gas-1.jpg' }],
-    },
+    { expense_report_id: folder2.id, items: [{ category: 'gas', expense_date: p1Mid, amount: '60.00', description: 'Fuel — field route', receipt_url: 's3://redwave-demo/receipts/gas-1.jpg' }] },
     sa,
   );
+  await expenseReports.submit(folder2.id, sa); // → submitted (feeds the approval queue)
 
   // ── A document with a PENDING signature request (→ admin queue + a signature_requested notification). ──
   // A minimal valid PDF (header + EOF) — stored gracefully (local:// ref when storage is unconfigured).
