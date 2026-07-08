@@ -16,6 +16,8 @@ import { validateFormItem } from '../validation';
 import type { FieldConfig } from '../expenses.types';
 import styles from './expenses.module.css';
 
+const NONE = '__none__';
+
 /** Billable km from the entered total + trip type (single −30 / round −60, floored at 0) — for the live warning. */
 function billableKm(totalKm: string | undefined, tripType: string | undefined): number | null {
   if (!totalKm || !/^\d+(\.\d+)?$/.test(totalKm)) return null;
@@ -99,7 +101,7 @@ export function ExpenseItemRow({
         <KmItemFields index={index} />
       ) : (
         <>
-          <StandardItemFields index={index} requiresReceipt={requiresReceipt} clientOptions={clientOptions} />
+          <StandardItemFields index={index} requiresReceipt={requiresReceipt} />
           {/* Per-type CAPTURE fields (EXP-002a), config-driven; metadata only (#1). */}
           <DynamicFields index={index} fields={cfg?.fields ?? []} />
         </>
@@ -115,7 +117,31 @@ export function ExpenseItemRow({
         </Banner>
       )}
 
-      {/* Common fields (all categories): currency (#12) + custom tags (EXP-002a) + personal toggle (EXP-012). */}
+      {/* Common fields (all categories): client tag + currency (#12) + custom tags (EXP-002a) + personal
+          toggle (EXP-012). The client tag lives here (not the standard branch) so km items can be billed to
+          a client too — km on a client expense document is priced per-client (BILL-012). */}
+      {clientOptions.length > 0 && (
+        <Controller
+          control={control}
+          name={`items.${index}.client_id`}
+          render={({ field }) => (
+            <FormField
+              label="Client"
+              help={
+                isKm
+                  ? 'Tag the client this trip was for — required to bill the kilometres to that client.'
+                  : 'Optional — tag to a client/program.'
+              }
+            >
+              <Select
+                options={[{ value: NONE, label: 'No client' }, ...clientOptions]}
+                value={field.value || NONE}
+                onValueChange={(v) => field.onChange(v === NONE ? undefined : v)}
+              />
+            </FormField>
+          )}
+        />
+      )}
       <Controller
         control={control}
         name={`items.${index}.currency`}

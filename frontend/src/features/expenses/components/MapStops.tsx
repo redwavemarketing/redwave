@@ -2,12 +2,14 @@
  * MapStops — the Maps-enabled KM stop editor (FE-3). Each stop is a Google Places autocomplete that
  * captures the real address + lat/lng; the ordered route renders on a map and the total distance is
  * AUTO-DERIVED from the Directions result and written to `total_km` (the server re-derives it
- * authoritatively). Only mounted when a browser Maps key is configured — otherwise KmItemFields uses the
- * manual fallback. Tokens only. — SRS §11 (KM map automation)
+ * authoritatively). A stop can also be dropped by CLICKING the map — the point is reverse-geocoded to an
+ * address (falling back to the lat/lng) and fills the next empty stop (or appends one). Only mounted when a
+ * browser Maps key is configured — otherwise KmItemFields uses the manual fallback. Tokens only.
+ * — SRS §11 (KM map automation)
  */
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { Autocomplete, DirectionsRenderer, GoogleMap, useJsApiLoader } from '@react-google-maps/api';
+import { Autocomplete, DirectionsRenderer, GoogleMap, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { useFieldArray, useFormContext, useWatch } from 'react-hook-form';
 import { Button, FormField, IconButton, Input, LoadingSpinner } from '../../../components/ui';
 import { MAPS_BROWSER_KEY, MAPS_LIBRARIES, MAPS_LOADER_ID } from '../maps.config';
@@ -33,6 +35,7 @@ export function MapStops({ index, stopsError }: { index: number; stopsError?: st
   const trip = (useWatch({ control, name: `items.${index}.trip_type` }) ?? 'round') as TripType;
   const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
   const acRefs = useRef<(google.maps.places.Autocomplete | null)[]>([]);
+  const geocoderRef = useRef<google.maps.Geocoder | null>(null);
 
   const onPlaceChanged = (k: number) => {
     const place = acRefs.current[k]?.getPlace();
@@ -41,6 +44,33 @@ export function MapStops({ index, stopsError }: { index: number; stopsError?: st
     setValue(`items.${index}.stops.${k}.address`, place?.formatted_address ?? place?.name ?? '', { shouldValidate: true });
     setValue(`items.${index}.stops.${k}.lat`, loc.lat().toFixed(SIX));
     setValue(`items.${index}.stops.${k}.lng`, loc.lng().toFixed(SIX));
+  };
+
+  const setStop = (k: number, address: string, lat: string, lng: string) => {
+    setValue(`items.${index}.stops.${k}.address`, address, { shouldValidate: true });
+    setValue(`items.${index}.stops.${k}.lat`, lat);
+    setValue(`items.${index}.stops.${k}.lng`, lng);
+  };
+
+  // Click the map to drop a stop: capture the point's lat/lng immediately (so the route can derive even if
+  // the reverse-geocode is slow/unavailable) into the first EMPTY stop — or append a new one — then fill
+  // the human-readable address once the geocoder responds.
+  const onMapClick = (e: google.maps.MapMouseEvent) => {
+    const loc = e.latLng;
+    if (!loc) return;
+    const lat = loc.lat().toFixed(SIX);
+    const lng = loc.lng().toFixed(SIX);
+    const fallback = `Dropped pin (${lat}, ${lng})`;
+    const emptyIdx = stops.findIndex((s) => !s?.address || !s.address.trim());
+    const target = emptyIdx >= 0 ? emptyIdx : fields.length;
+    if (emptyIdx >= 0) setStop(emptyIdx, fallback, lat, lng);
+    else append({ address: fallback, lat, lng });
+    if (!geocoderRef.current) geocoderRef.current = new google.maps.Geocoder();
+    geocoderRef.current.geocode({ location: loc.toJSON() }, (results, status) => {
+      if (status === google.maps.GeocoderStatus.OK && results?.[0]) {
+        setValue(`items.${index}.stops.${target}.address`, results[0].formatted_address, { shouldValidate: true });
+      }
+    });
   };
 
   // Geo-coordinates of stops that have been picked (in order). Re-derive the route when they (or the
@@ -93,7 +123,12 @@ export function MapStops({ index, stopsError }: { index: number; stopsError?: st
 
   return (
     <>
-      <FormField label="Stops" required error={stopsError} help="Search an address; the route distance fills in automatically.">
+      <FormField
+        label="Stops"
+        required
+        error={stopsError}
+        help="Search an address or click the map to drop a stop; the route distance fills in automatically."
+      >
         <div className={styles.stops}>
           {fields.map((f, k) => (
             <div className={styles.stopRow} key={f.id}>
@@ -134,8 +169,18 @@ export function MapStops({ index, stopsError }: { index: number; stopsError?: st
       </FormField>
 
       <div className={styles.mapWrap}>
-        <GoogleMap mapContainerStyle={MAP_CONTAINER} center={coords[0] ?? DEFAULT_CENTER} zoom={coords.length ? 11 : 10}>
-          {directions && <DirectionsRenderer directions={directions} />}
+        <GoogleMap
+          mapContainerStyle={MAP_CONTAINER}
+          center={coords[0] ?? DEFAULT_CENTER}
+          zoom={coords.length ? 11 : 10}
+          onClick={onMapClick}
+        >
+          {/* Once a route renders it draws its own ordered markers; before that, show a pin per dropped stop. */}
+          {directions ? (
+            <DirectionsRenderer directions={directions} />
+          ) : (
+            coords.map((c, i) => <Marker key={`${c.lat},${c.lng}`} position={c} label={String(i + 1)} />)
+          )}
         </GoogleMap>
       </div>
     </>
