@@ -1,24 +1,21 @@
 /**
- * StandardItemFields — the non-km item sub-form: date + amount (MoneyInput) + description + optional client
- * + receipt. The receipt is REQUIRED when the category config says so (config-driven, EXP-003); the server
- * is the real gate. Uses the form context. Tokens only.
+ * StandardItemFields — the non-km item sub-form: date + amount (MoneyInput) + description + receipt. The
+ * receipt is REQUIRED when the category config says so (config-driven, EXP-003); the server is the real
+ * gate. The Client tag is a COMMON field (lifted to ExpenseItemRow so km items get it too). Uses the form
+ * context. Tokens only.
  */
 import { Controller, useFormContext } from 'react-hook-form';
-import { DatePicker, FormField, Input, MoneyInput, Select } from '../../../components/ui';
+import { DatePicker, FormField, Input, MoneyInput } from '../../../components/ui';
 import { ReceiptField } from './ReceiptField';
 import type { ExpenseFormValues } from './expenseForm.schema';
 import styles from './expenses.module.css';
 
-const NONE = '__none__';
-
 export function StandardItemFields({
   index,
   requiresReceipt,
-  clientOptions,
 }: {
   index: number;
   requiresReceipt: boolean;
-  clientOptions: { value: string; label: string }[];
 }) {
   const { control, register, formState } = useFormContext<ExpenseFormValues>();
   const itemErrors = formState.errors.items?.[index];
@@ -38,21 +35,6 @@ export function StandardItemFields({
         <FormField label="Amount" required error={itemErrors?.amount?.message}>
           <MoneyInput {...register(`items.${index}.amount`)} placeholder="0.00" />
         </FormField>
-        {clientOptions.length > 0 && (
-          <Controller
-            control={control}
-            name={`items.${index}.client_id`}
-            render={({ field }) => (
-              <FormField label="Client" help="Optional — tag to a client/program.">
-                <Select
-                  options={[{ value: NONE, label: 'No client' }, ...clientOptions]}
-                  value={field.value || NONE}
-                  onValueChange={(v) => field.onChange(v === NONE ? undefined : v)}
-                />
-              </FormField>
-            )}
-          />
-        )}
       </div>
 
       <FormField label="Description" required error={itemErrors?.description?.message}>
